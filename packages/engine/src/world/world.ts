@@ -18,7 +18,7 @@ import type { DeepReadonly, EntityId, ReadView } from "./contracts.ts";
 import type { CapturedRuleset } from "./ruleset.ts";
 
 /** The versions that a snapshot header records, so that replay can require equal ones. */
-type WorldHeader = {
+export type WorldHeader = {
   readonly engineVersion: string;
   readonly rulesetVersion: string;
   readonly generatorVersion: string;
@@ -178,8 +178,12 @@ export function healthyState(value: unknown, api: string): WorldState {
   throw new EngineError("world_faulted", [{ path: "", message }]);
 }
 
-/** Poisons `state` with `fault`, at the tick its kernel is at. */
+/**
+ * Poisons `state` with `fault`, at the tick its kernel is at. A world keeps its first fault, which
+ * is the diagnosis worldStatus gives: poisoning a world that is already poisoned changes nothing.
+ */
 export function poison(state: WorldState, fault: EngineError): void {
+  if (state.status.kind === "faulted") return;
   state.status = {
     kind: "faulted",
     tick: state.kernel.tick,

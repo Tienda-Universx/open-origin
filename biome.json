@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/*.md"]
+    "includes": ["**", "!**/*.md", "!packages/engine/test/fixtures/snapshot-v1.canonical.json"]
   },
   "formatter": {
     "enabled": true,

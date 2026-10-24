@@ -4,9 +4,12 @@ import {
   chunkHashes,
   createWorld,
   type EngineErrorCode,
+  encodeSnapshot,
   fullChecksum,
   readView,
+  snapshotBytes,
   stateRoot,
+  versionDifferences,
   World,
   type WorldInit,
   worldStatus,
@@ -540,6 +543,9 @@ describe("a value that is not a world the engine made", () => {
     ["stateRoot", stateRoot],
     ["fullChecksum", fullChecksum],
     ["chunkHashes", chunkHashes],
+    ["encodeSnapshot", encodeSnapshot],
+    ["snapshotBytes", snapshotBytes],
+    ["versionDifferences", versionDifferences],
   ];
 
   test.each(forgeries)("%s is rejected by every function with invalid_input", (_name, forged) => {

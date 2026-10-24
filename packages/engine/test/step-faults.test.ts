@@ -3,16 +3,20 @@ import {
   type Command,
   chunkHashes,
   type EngineErrorCode,
+  encodeSnapshot,
   fullChecksum,
   type Issue,
   type ReadView,
   readView,
+  snapshotBytes,
   stateRoot,
   step,
+  versionDifferences,
   type World,
   worldStatus,
 } from "../src/index.ts";
 import { worldState } from "../src/world/world.ts";
+import { BARRIER_CASES, bypassTick } from "./support/barrier-rulesets.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import {
   type Ctx,
@@ -25,7 +29,7 @@ import {
   stepWorld,
   system,
   type Value,
-  writable,
+  writing,
 } from "./support/step-rulesets.ts";
 
 /**
@@ -50,15 +54,6 @@ const throwing = (where: "check" | "apply"): Handler =>
   where === "check"
     ? { check: boom, apply: () => undefined }
     : { check: () => undefined, apply: boom };
-
-/** A world whose system writes chunk 0,0 every tick, and `value` at tick `at`. */
-function writing(at: number, value: unknown): StepRuleset {
-  return stepRuleset([
-    system("growth", (ctx) => {
-      writable(ctx, "0,0").grass = ctx.tick === at ? (value as Value) : ctx.tick;
-    }),
-  ]);
-}
 
 /** Three systems; the one at `index` throws at tick `at`. */
 function systemsThrowingAt(index: number, at: number): StepRuleset {
@@ -227,6 +222,9 @@ function expectPoisoned(
     () => chunkHashes(world),
     () => fullChecksum(world),
     () => stateRoot(world),
+    () => encodeSnapshot(world),
+    () => snapshotBytes(world),
+    () => versionDifferences(world),
   ];
   for (const use of uses) {
     const error = engineErrorOf(use);
@@ -419,77 +417,7 @@ describe("poisoning", () => {
 });
 
 describe("audit detects writes that bypass the barrier, at the tick they happen", () => {
-  const STALE_CHUNK = "the chunk changed without writeChunk: its cached term no longer matches it";
-  const STALE_GLOBAL =
-    "the global value changed without writeGlobal: its cached digest no longer matches it";
-  let stashed: Data | undefined;
-
-  const barrierCases: [string, (at: number) => StepRuleset, Issue[]][] = [
-    [
-      "a write through readChunk",
-      (at) =>
-        stepRuleset([
-          system("sneaky", (ctx) => {
-            if (ctx.tick === at) (ctx.readChunk("0,0") as Data).grass = 9;
-          }),
-        ]),
-      [{ path: "/chunks/0,0", message: STALE_CHUNK }],
-    ],
-    [
-      "a reference from writeChunk kept and changed in a later tick",
-      (at) =>
-        stepRuleset([
-          system("hoarder", (ctx) => {
-            if (ctx.tick === 1) stashed = writable(ctx, "1,0");
-            if (ctx.tick === at + 1 && stashed !== undefined) stashed.grass = 7;
-          }),
-        ]),
-      [{ path: "/chunks/1,0", message: STALE_CHUNK }],
-    ],
-    [
-      "a change to the global value without writeGlobal",
-      (at) =>
-        stepRuleset([
-          system("sneaky", (ctx) => {
-            if (ctx.tick === at) (ctx.readGlobal() as Data).population = 1;
-          }),
-        ]),
-      [{ path: "/global", message: STALE_GLOBAL }],
-    ],
-    [
-      "a commit-time validator that changes the chunk it checks",
-      (at) => ({
-        ...writing(0, 0),
-        validateChunk: (key, chunk) => {
-          if (key === "0,0" && (chunk as Data).grass === at) (chunk as Data).checked = true;
-          return [];
-        },
-      }),
-      [{ path: "/chunks/0,0", message: STALE_CHUNK }],
-    ],
-    [
-      "a write through readChunk of a value that is not canonical",
-      (at) =>
-        stepRuleset([
-          system("sneaky", (ctx) => {
-            if (ctx.tick === at) (ctx.readChunk("1,0") as Data).grass = Number.NaN;
-          }),
-        ]),
-      [
-        {
-          path: "/chunks/1,0",
-          message:
-            "the chunk changed without writeChunk, and it is not canonical: at /grass: NaN is not a safe integer",
-        },
-      ],
-    ],
-  ];
-
-  /** The tick at which each case's bypass happens. */
-  const bypassTick = (name: string, at: number) => (name.includes("later tick") ? at + 1 : at);
-
-  test.each(barrierCases)("%s, as integrity_violation", (name, ruleset, issues) => {
-    stashed = undefined;
+  test.each(BARRIER_CASES)("%s, as integrity_violation", (name, ruleset, issues) => {
     const at = 3;
     const world = stepWorld(ruleset(at), {}, true);
     const tick = bypassTick(name, at);
@@ -502,21 +430,23 @@ describe("audit detects writes that bypass the barrier, at the tick they happen"
     expectPoisoned(world, tick, "integrity_violation", issues);
   });
 
-  test.each(barrierCases)("%s, undetected without audit until a full checksum", (name, ruleset) => {
-    stashed = undefined;
-    const at = 3;
-    const world = stepWorld(ruleset(at));
-    const tick = bypassTick(name, at);
-    for (let ticks = 1; ticks <= tick; ticks += 1) step(world, []);
-    expect(worldStatus(world)).toEqual({ kind: "ok", tick });
-    if (name.includes("not canonical")) {
-      const error = engineErrorOf(() => fullChecksum(world));
-      expect({ code: error.code, issues: error.issues }).toEqual({
-        code: "invalid_value",
-        issues: [{ path: "/chunks/1,0/grass", message: "NaN is not a safe integer" }],
-      });
-    } else expect(fullChecksum(world)).not.toBe(stateRoot(world));
-  });
+  test.each(BARRIER_CASES)(
+    "%s, undetected without audit until a full checksum",
+    (name, ruleset) => {
+      const at = 3;
+      const world = stepWorld(ruleset(at));
+      const tick = bypassTick(name, at);
+      for (let ticks = 1; ticks <= tick; ticks += 1) step(world, []);
+      expect(worldStatus(world)).toEqual({ kind: "ok", tick });
+      if (name.includes("not canonical")) {
+        const error = engineErrorOf(() => fullChecksum(world));
+        expect({ code: error.code, issues: error.issues }).toEqual({
+          code: "invalid_value",
+          issues: [{ path: "/chunks/1,0/grass", message: "NaN is not a safe integer" }],
+        });
+      } else expect(fullChecksum(world)).not.toBe(stateRoot(world));
+    },
+  );
 
   test("fullChecksum names the global value when it is not canonical", () => {
     const world = stepWorld(

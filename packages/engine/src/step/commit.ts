@@ -17,11 +17,12 @@
 import { canonicalize } from "../canonical/encode.ts";
 import { compareCodeUnits } from "../canonical/order.ts";
 import { type CanonicalValue, pointer } from "../canonical/value.ts";
-import { type Digest, Digester, digest, hexOf } from "../digest/digest.ts";
+import { type Digest, Digester, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes, subtractLanes } from "../digest/lanes.ts";
-import { describePath, EngineError, type Issue, IssueList } from "../errors.ts";
+import { EngineError, IssueList } from "../errors.ts";
 import { composeRoot, kernelDigest, recomputeRoot, relocatePath } from "../world/checksum.ts";
 import type { ChunkKey } from "../world/chunk.ts";
+import { integrityError } from "../world/integrity.ts";
 import { runValidator } from "../world/validators.ts";
 import type { WorldState } from "../world/world.ts";
 import type { TickSession } from "./session.ts";
@@ -114,50 +115,6 @@ export function commit(session: TickSession): Commit {
   return { checksum, changedChunks, hashedBytes: digester.hashedBytes };
 }
 
-/** What a stale cached digest is, for audit. */
-type Cached = {
-  readonly path: string;
-  /** What changed behind the barrier, as the start of a sentence. */
-  readonly change: string;
-  /** What the cache keeps: "term" or "digest". */
-  readonly noun: string;
-  /** The tagged value whose digest the cache keeps, its value last. */
-  readonly tagged: readonly CanonicalValue[];
-  readonly cached: Digest;
-};
-
-/** Why the cached digest of `cached` is stale; undefined when it still matches. */
-function staleIssue({ path, change, noun, tagged, cached }: Cached): Issue | undefined {
-  try {
-    if (digest(tagged) === cached) return undefined;
-    return { path, message: `${change}: its cached ${noun} no longer matches it` };
-  } catch (error) {
-    if (!EngineError.isEngineError(error)) throw error;
-    const [first] = error.issues;
-    const at = describePath(relocatePath(first?.path ?? "", tagged, ""));
-    return { path, message: `${change}, and it is not canonical: at ${at}: ${first?.message}` };
-  }
-}
-
-/** Every chunk and global value whose cached digest no longer matches it: O(N). */
-function staleDigests(state: WorldState): Issue[] {
-  const cached: Cached[] = state.chunks.sortedEntries().map(([key, entry]) => ({
-    path: `/chunks${pointer([key])}`,
-    change: "the chunk changed without writeChunk",
-    noun: "term",
-    tagged: ["chunk", key, entry.value],
-    cached: hexOf(entry.term),
-  }));
-  cached.push({
-    path: "/global",
-    change: "the global value changed without writeGlobal",
-    noun: "digest",
-    tagged: ["global", state.global],
-    cached: state.digests.globalDigest,
-  });
-  return cached.flatMap((item) => staleIssue(item) ?? []);
-}
-
 /** The full root of `state`, or undefined when a value that bypassed the barrier is not canonical. */
 function fullRoot(state: WorldState): Digest | undefined {
   try {
@@ -177,9 +134,5 @@ function fullRoot(state: WorldState): Digest | undefined {
 export function audit(session: TickSession): void {
   const { state } = session;
   if (fullRoot(state) === state.digests.stateRoot) return;
-  const issues = staleDigests(state);
-  if (issues.length === 0) {
-    issues.push({ path: "", message: "the full checksum differs from the incremental state root" });
-  }
-  throw session.record(new EngineError("integrity_violation", issues));
+  throw session.record(integrityError(state));
 }

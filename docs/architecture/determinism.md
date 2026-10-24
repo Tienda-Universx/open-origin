@@ -4,8 +4,7 @@ The engine must turn the same inputs into the same results on every run and ever
 ([ADR 0003](../decisions/0003-authoritative-deterministic-engine.md)). This document specifies the
 rules that make it so, as the code implements them;
 [ADR 0020](../decisions/0020-deterministic-core-design.md) records why they were chosen. Each
-section names its code and its tests, and the next T2 pull request adds the section still to
-come: snapshots.
+section names its code and its tests.
 
 ## Canonical values
 
@@ -442,7 +441,10 @@ looks up and never iterates: this is the reviewed lint exception of `step/contex
 - Poisoning sets the status to `{ kind: "faulted", tick, code, issues }`, where `tick` is the tick
   being computed (for `tick_overflow`, the last tick). The tick's events are discarded and `step`
   throws the fault. `step`, `readView` and every method of a view read before, `chunkHashes`,
-  `fullChecksum`, and `stateRoot` throw `world_faulted`. Recovery starts from the last snapshot.
+  `fullChecksum`, `stateRoot`, `encodeSnapshot`, `snapshotBytes`, and `versionDifferences` throw
+  `world_faulted`. Recovery starts from the last snapshot, with `decodeSnapshot`.
+- A world keeps its first fault: poisoning a world that is already poisoned changes nothing, so
+  `worldStatus` always gives the diagnosis of the fault that stopped it.
 - Faults are recorded, not only thrown: ruleset code that catches one still poisons the world, and
   every later use of the context throws the same fault again. The first fault of a tick is the one
   reported.
@@ -457,7 +459,8 @@ looks up and never iterates: this is the reviewed lint exception of `step/contex
 
 From the first read of a command to the end of the tick, every function that reads or steps the
 world (`step`, `readView` and the methods of every view, `fullChecksum`, `stateRoot`,
-`chunkHashes`, and `worldStatus`) throws `world_busy`, so nothing sees or saves a partial state:
+`chunkHashes`, `worldStatus`, `encodeSnapshot`, `snapshotBytes`, and `versionDifferences`) throws
+`world_busy`, so nothing sees or saves a partial state:
 
 - Ruleset code that holds the world and calls one of them during the tick also faults the tick,
   at the system or command that made the call, so catching the error hides nothing.
@@ -465,6 +468,10 @@ world (`step`, `readView` and the methods of every view, `fullChecksum`, `stateR
   refused the same way. Step then sees the trap's own result: a descriptor, which it validates as
   any other, or the thrown error, which makes that command an `invalid_input` issue. The world is
   unchanged either way, so a command always applies at the tick it names.
+- Step checks that the world's tick and health did not change while it read the commands. Only an
+  engine function that skipped the busy guard could change them, so the check guards that rule:
+  step then throws `world_busy`, naming the engine defect, and poisons the world, which keeps its
+  first fault if it already had one.
 
 ### What is detected, and when
 
@@ -476,7 +483,7 @@ Inside the tick, isolation is checked, not prevented (ADR 0020, ownership):
 | A value that is not canonical (`NaN`, `1.5`, `undefined`, a `Map`, `-0`), written through the barrier | At the commit of that tick: `system_fault` at its path |
 | Data that the ruleset's validators reject | At the commit of that tick: `system_fault` with the validator's issues |
 | A `Proxy` written into the state, which `biome.json` denies in the engine but ruleset code can still create | Not when its traps answer as plain data would: JavaScript cannot tell a Proxy from its target, so the commit accepts it, and its traps then run on every read, the host's included. Only a change in its answers is detected, as the next row describes |
-| A write through `readChunk` or `readGlobal`, a reference kept from an earlier tick, a validator that changes the value it checks, or a Proxy whose answers change | With audit: after the commit of that tick, `integrity_violation` naming each stale chunk and the global value. Without audit: not in this pull request; snapshot encoding (next pull request) recomputes every digest and refuses a state that disagrees with them |
+| A write through `readChunk` or `readGlobal`, a reference kept from an earlier tick, a validator that changes the value it checks, or a Proxy whose answers change | With audit: after the commit of that tick, `integrity_violation` naming each stale chunk and the global value. Without audit: at the next `encodeSnapshot` or `snapshotBytes`, which recomputes every digest, poisons the world with the same `integrity_violation`, and returns no text ([snapshots](#snapshots)) |
 
 The commit takes each chunk's term, and the global digest, before its validator runs, so a
 validator that changes its value is found like any other write that bypasses the barrier.
@@ -556,11 +563,98 @@ about 10 µs at the commit, far more than the per-byte figure of ADR 0020 (68 to
 predicts, so that figure underestimates the cost of small chunks. The benchmark of the next
 pull requests measures it properly.
 
-### What arrives with snapshots
+## Snapshots
 
-The next pull request encodes and decodes snapshots. Encoding recomputes every digest and refuses
-a state that disagrees with its incremental ones, which detects in production the writes that
-only audit detects now; decoding a snapshot is how a poisoned world is recovered.
+A snapshot is a world as canonical text, so a host can save it, hash it, and load it on any host
+(ADR 0020, snapshots). Encoding checks the world's integrity; decoding checks the text, the schema,
+the ruleset's validators, and the state root; step checks that the versions allow a replay. Code:
+`packages/engine/src/snapshot/` and `src/world/versions.ts`. Tests: `packages/engine/test/`
+(`snapshot`, `snapshot-decode`, `snapshot-resume`, and `snapshot-fixture`), and
+`tests/repo/format-exclusions.test.ts` for the fixture's exclusion from Biome.
+
+### Format: version 1
+
+```text
+{ header: { snapshotSchemaVersion: 1, engineVersion, rulesetVersion, generatorVersion, brainVersion },
+  stateRoot,
+  world: { epoch, tick, nextEntityId, rng: { algorithm: "ctr-mix32@1", seed },
+           config: { simSecondsPerTick }, global, chunks } }
+```
+
+- The text is canonical, so its members are in canonical key order, and one world has one text.
+- It holds no world id, which is host metadata, so replicas of a world encode to the same text.
+- `stateRoot` covers the world, not the header. The header records the versions that made the
+  world; integrity against corruption and tampering, header included, is SHA-256 over
+  `snapshotBytes`, in the adapter.
+- The snapshot holds the seed, so it is C3 as a whole
+  ([data classification](data-classification.md#why-the-world-seed-is-c3)).
+
+| Function | Cost | Result |
+|---|---|---|
+| `encodeSnapshot(world)` | O(N) | The text, after the integrity check below. The world is busy while it is read, so a Proxy in the state cannot step or read it meanwhile |
+| `snapshotBytes(world)` | O(N) | The UTF-8 bytes of the same text, in a fresh array, which adapters hash with SHA-256 |
+| `decodeSnapshot(text, ruleset, options?)` | O(N) | A new world, after the gates below; `options.audit` as in `createWorld` |
+| `versionDifferences(world)` | O(1) | Each difference between the header and the running versions, in a fresh array |
+
+Encoding and decoding cost O(N) for N chunks, so they run at checkpoints and on load, never every
+tick.
+
+### Integrity check at encoding
+
+`encodeSnapshot` canonicalizes the global value and each chunk once. Each text goes into the
+snapshot and into its digest (`["global", global]` and `["chunk", key, chunk]`, as the
+[state root](#state-root) defines them), so the root is recomputed from the very text the snapshot
+holds. When it differs from the world's incremental root, a write bypassed the barrier: the world
+is poisoned with `integrity_violation`, which names each stale chunk and the global value as audit
+does, and no text is returned. This is how such a write is found when audit is off.
+
+### Gates
+
+| Gate | Where | Refuses with |
+|---|---|---|
+| Integrity | `encodeSnapshot`, `snapshotBytes` | `integrity_violation`; the world is poisoned and no text is returned |
+| Options | `decodeSnapshot`, first | `invalid_input` at `/options/audit` |
+| Canonical text | `decodeSnapshot`, with `parseCanonical` | `invalid_snapshot` with the parser's issue: whitespace, reordered keys, a float, or text that is not JSON |
+| Schema version | `decodeSnapshot` | `unsupported_schema`, reported alone: a snapshot of another version may have other members |
+| Schema | `decodeSnapshot` | `invalid_snapshot` with every problem at once, in path order: each missing and each extra member of the snapshot, the header, the world, `rng`, and `config`; versions that are not non-empty strings; a `stateRoot` that is not 32 lowercase hexadecimal digits; `epoch` and `tick` outside the safe integers from 0; `nextEntityId` outside the safe integers from 1; an algorithm other than `ctr-mix32@1`; a seed that is not two u32 words; `simSecondsPerTick` that is not a positive safe integer; and chunk keys that `parseChunkKey` rejects |
+| Ruleset | `decodeSnapshot`, after the schema | `invalid_ruleset`, as `createWorld` reports it |
+| Content | `decodeSnapshot`, last | `invalid_snapshot` with every issue the ruleset's validators return for the global value and each chunk, and a stored `stateRoot` that differs from the recomputed one, at once |
+| Replay | `step`, after the brand, busy, and health guards | `version_mismatch` with every difference between the header and `ENGINE_VERSION` and the ruleset's versions; the world stays healthy and unchanged |
+
+A decoded world keeps the versions its header records, even when they differ from the running
+engine or ruleset: it loads, but it cannot be replayed. Worlds that `createWorld` makes always
+match.
+
+### What is promised, and what is not
+
+| Promised | Not promised |
+|---|---|
+| Encode, decode, encode is byte-identical, with equal state roots and full checksums | Replay across versions: a snapshot from another engine or ruleset version loads, but `step` refuses it |
+| A world resumed from a snapshot, with a fresh ruleset object, continues exactly as the world that was never interrupted | Migrations: the `vN -> vN+1` chain arrives with the first version 2, in T7 |
+| The frozen version 1 fixture keeps loading in every future engine, through migrations once version 2 exists | Opening an epoch after an upgrade or an experimental change: `epoch` is in version 1, and opening one arrives with T7 and T8 |
+| Nothing the host gave or received changes a world: the text and bytes are fresh, and the ruleset is captured | Authenticity, or integrity against tampering: SHA-256 in the adapter covers integrity; authenticity is not provided in v0.1 |
+
+### What the tests check
+
+- the version 1 text of a small world, written by value; `snapshotBytes` as the UTF-8 of that text;
+- the round trip of 40 fuzzed tally worlds, byte for byte, with equal roots and full checksums;
+- every schema rejection above, missing and extra members at every level reported at once, and
+  schema versions 0 and 2 reported alone;
+- a tampered state root, a changed value under an unchanged root, and validator issues reported
+  with the root in one error;
+- the replay gate for each version field and for all four at once, and for a ruleset with other
+  versions, each leaving the world unchanged;
+- resumption at ticks 0, 1, 2, 37, 299, 300, and 999 of the golden run: every later checksum and
+  the final text equal the uninterrupted run's (in memory; a child-process resume arrives with the
+  next pull request);
+- each write behind the barrier, without audit, found by `encodeSnapshot`, which poisons the world
+  and returns no text;
+- a busy world: `encodeSnapshot`, `snapshotBytes`, and `versionDifferences` from a system and a
+  handler, and a Proxy in the state whose trap steps the world while it is encoded;
+- the frozen fixture (`packages/engine/test/fixtures/snapshot-v1.canonical.json`, the golden run at
+  tick 37): its pinned SHA-256, a byte-identical re-encoding, and the pinned checksums of ticks 38
+  to 40. `biome.json` excludes exactly its path from formatting, which
+  `tests/repo/format-exclusions.test.ts` proves against files next to it.
 
 ## Lint exceptions
 

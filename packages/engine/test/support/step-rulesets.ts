@@ -61,6 +61,15 @@ export function handler(body: (ctx: Ctx, command: Command) => void, streams?: st
     : { streams, check: () => undefined, apply };
 }
 
+/** A ruleset whose system writes chunk 0,0 every tick: the tick, and `value` at tick `at`. */
+export function writing(at: number, value: unknown): StepRuleset {
+  return stepRuleset([
+    system("growth", (ctx) => {
+      (ctx.writeChunk("0,0") as Data).grass = ctx.tick === at ? (value as Value) : ctx.tick;
+    }),
+  ]);
+}
+
 /** The data of a world for the step tests: two chunks and a global record. */
 export type WorldData = { readonly global?: Value; readonly chunks?: { [key: string]: Value } };
 

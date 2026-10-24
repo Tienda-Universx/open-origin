@@ -3,7 +3,8 @@
  *
  * 1. Guards: the world's brand; then a step already running on it (world_busy), which only
  *    ruleset code or a host Proxy among the commands can start, and which during a tick also
- *    faults that tick; then its health (world_faulted).
+ *    faults that tick; then its health (world_faulted); then the replay gate (version_mismatch),
+ *    which refuses a world whose header records other versions than the running ones.
  * 2. Every command is validated and copied (step/commands.ts), with the world marked busy, so
  *    that a Proxy among the commands cannot use it. An invalid list throws invalid_input with
  *    every problem and changes nothing.
@@ -24,6 +25,7 @@ import { nextTick } from "../time/tick.ts";
 import type { Command, CommandOrigin, Rejection, StepResult } from "../world/contracts.ts";
 import { isRecord } from "../world/members.ts";
 import type { StreamIds } from "../world/ruleset.ts";
+import { headerDifferences } from "../world/versions.ts";
 import {
   type ActiveStep,
   busyError,
@@ -47,6 +49,11 @@ const UNKNOWN_TYPE = "unknown_type";
 const READING: ActiveStep = { refuse: busyError };
 const NOT_REJECTION =
   "returned a value that is not undefined or a rejection { reason, details? }, reason a non-empty string";
+
+/** What expectUnchanged reports: only an engine defect can change a world while step reads. */
+export const CHANGED_WHILE_READING =
+  "the world changed while step read its commands: " +
+  "an engine function changed it without the busy guard, which is an engine defect";
 
 /** The streams of a command type without a handler: none. */
 const NO_STREAMS: StreamIds = Object.freeze(Object.create(null));
@@ -211,13 +218,14 @@ function advance(state: WorldState, commands: readonly Command[]): StepResult {
  * Throws when the world is not where it was before step read the commands, so that step never
  * applies them at a tick they do not name, or to a poisoned world. Every engine function refuses
  * a busy world, so neither the host nor ruleset code can cause this: only an engine function
- * that skipped the busy guard can, and the message says so.
+ * that skipped the busy guard can, and the message says so. Such a world cannot be trusted, so it
+ * is poisoned; a world that is already poisoned keeps its first fault.
  */
 function expectUnchanged(state: WorldState, tick: number): void {
   if (state.status.kind === "ok" && state.kernel.tick === tick) return;
-  const message =
-    "the world changed while step read its commands: an engine function changed it without the busy guard, which is an engine defect";
-  throw new EngineError("world_busy", [{ path: "", message }]);
+  const fault = new EngineError("world_busy", [{ path: "", message: CHANGED_WHILE_READING }]);
+  poison(state, fault);
+  throw fault;
 }
 
 /**
@@ -226,8 +234,11 @@ function expectUnchanged(state: WorldState, tick: number): void {
  *
  * Throws, and changes nothing: EngineError("invalid_input") when `world` is not a world or a
  * command is invalid (step/commands.ts); EngineError("world_busy") when a step already runs on the
- * world; EngineError("world_faulted") when an earlier tick failed.
- * Throws after poisoning the world: system_fault for ruleset code that throws, returns a value,
+ * world or it is being encoded; EngineError("world_faulted") when an earlier tick failed;
+ * EngineError("version_mismatch") with every difference versionDifferences reports, when the
+ * world's header records other versions than ENGINE_VERSION and its ruleset's.
+ * Throws after poisoning the world: world_busy when an engine defect changed the world while the
+ * commands were read (expectUnchanged); system_fault for ruleset code that throws, returns a value,
  * or misuses the tick context, and for data that is not canonical or that the ruleset's validators
  * reject; id_exhausted and tick_overflow when the ids or the ticks run out; integrity_violation
  * when audit finds a write that bypassed the barrier. Each fault's issues name the command
@@ -239,6 +250,8 @@ export function step<G extends CanonicalValue, C extends CanonicalValue>(
   commands: readonly Command[],
 ): StepResult {
   const state = healthyState(world, "step");
+  const differences = headerDifferences(state);
+  if (differences.length > 0) throw new EngineError("version_mismatch", differences);
   const { tick } = state.kernel;
   // Busy from the first read of a command, so that a host Proxy cannot use the world meanwhile.
   state.active = READING;

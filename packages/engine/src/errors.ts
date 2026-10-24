@@ -11,15 +11,22 @@ export type Issue = { readonly path: string; readonly message: string };
  * - `invalid_input` for a world definition, or anything else the host gives a world, that it
  *   cannot accept, and for an object that is not a world;
  * - `invalid_ruleset` for a ruleset that breaks the rules of captureRuleset;
+ * - `invalid_snapshot` for a snapshot that decodeSnapshot cannot accept: text that is not
+ *   canonical, a schema it breaks, data the ruleset's validators reject, or a state root that is
+ *   not the root of its state;
+ * - `unsupported_schema` for a snapshot whose schema version this engine does not read;
+ * - `version_mismatch` for a step of a world whose snapshot header records other versions than
+ *   the running engine's and its ruleset's, which replay requires to be equal;
  * - `tick_overflow` for simulation time that would pass Number.MAX_SAFE_INTEGER;
  * - `system_fault` for a tick that failed after it began: ruleset code that threw, returned a
  *   value, or misused the tick context, and data that is not canonical or that the ruleset's
  *   validators reject at the commit;
  * - `integrity_violation` for a state that disagrees with its incremental digests, which audit
- *   finds after a write that bypassed the barrier;
+ *   and encodeSnapshot find after a write that bypassed the barrier;
  * - `world_faulted` for any use but worldStatus of a world whose tick failed;
- * - `world_busy` for any use of a world, read or step, while a step runs on it: from ruleset code
- *   during the tick, which also faults the tick, or from a host Proxy while step reads commands;
+ * - `world_busy` for any use of a world, read or step, while a step runs on it or while
+ *   encodeSnapshot reads it: from ruleset code during the tick, which also faults the tick, or
+ *   from a host Proxy while step reads commands or a Proxy in the state while it is encoded;
  * - `context_expired` for a tick context, or the view `check` receives, used after its step;
  * - `id_exhausted` for an entity id that would leave nextEntityId beyond the safe integers.
  *
@@ -29,6 +36,9 @@ export type EngineErrorCode =
   | "invalid_value"
   | "invalid_input"
   | "invalid_ruleset"
+  | "invalid_snapshot"
+  | "unsupported_schema"
+  | "version_mismatch"
   | "tick_overflow"
   | "system_fault"
   | "integrity_violation"
