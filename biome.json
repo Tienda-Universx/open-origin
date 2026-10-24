@@ -39,6 +39,11 @@
           }
         }
       },
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "error",
+        "noUnusedFunctionParameters": "error"
+      },
       "style": {
         "noUselessElse": "error",
         "noNestedTernary": "error",

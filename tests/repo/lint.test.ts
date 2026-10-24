@@ -38,10 +38,6 @@ function run(tool: Tool, files: Record<string, string>): LintResult {
   };
 }
 
-function lint(tool: Tool, files: Record<string, string>): string {
-  return run(tool, files).output;
-}
-
 /** A function with `count` independent if statements: cyclomatic complexity count + 1. */
 function branches(count: number): string {
   const checks = Array.from({ length: count }, (_, i) => `  if (x === ${i}) return ${i};`);
@@ -79,7 +75,8 @@ describe("automated quality controls", () => {
     ["cyclomatic complexity above 10", { "cyclomatic.ts": branches(10) }, "eslint(complexity)"],
     ["blocks nested deeper than 4", { "depth.ts": nested(5) }, "eslint(max-depth)"],
   ] as const)("oxlint rejects %s", (_name, files, rule) => {
-    expect(lint("oxlint", files)).toContain(rule);
+    // A non-zero exit proves the rule is an error that fails CI, not only a warning.
+    expect(run("oxlint", files)).toEqual({ exitCode: 1, output: expect.stringContaining(rule) });
   });
 
   test("oxlint accepts a cyclomatic complexity of exactly 10", () => {
@@ -151,7 +148,29 @@ describe("automated quality controls", () => {
       },
       "lint/suspicious/noImportCycles",
     ],
+    [
+      "parameter reassignment",
+      { "reassign.ts": "export function r(x: number): number {\n  x = x + 1;\n  return x;\n}\n" },
+      "lint/style/noParameterAssign",
+    ],
+    [
+      "unused variables",
+      { "unused-var.ts": "export function u(): number {\n  const unused = 1;\n  return 2;\n}\n" },
+      "lint/correctness/noUnusedVariables",
+    ],
+    [
+      "unused imports",
+      {
+        "unused-import.ts": 'import { readFileSync } from "node:fs";\nexport const x = 1;\n',
+      },
+      "lint/correctness/noUnusedImports",
+    ],
+    [
+      "unused parameters",
+      { "unused-param.ts": "export function w(a: number, b: number): number {\n  return a;\n}\n" },
+      "lint/correctness/noUnusedFunctionParameters",
+    ],
   ] as const)("Biome rejects %s", (_name, files, rule) => {
-    expect(lint("biome", files)).toContain(rule);
+    expect(run("biome", files)).toEqual({ exitCode: 1, output: expect.stringContaining(rule) });
   });
 });
