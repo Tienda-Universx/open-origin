@@ -5,11 +5,21 @@
 export type Issue = { readonly path: string; readonly message: string };
 
 /**
- * Why the engine refused an operation: `invalid_value` for a value or argument it cannot accept,
- * `tick_overflow` for simulation time that would pass Number.MAX_SAFE_INTEGER. Later batches add
- * their codes here.
+ * Why the engine refused an operation:
+ *
+ * - `invalid_value` for a value or argument it cannot accept;
+ * - `invalid_input` for a world definition, or anything else the host gives a world, that it
+ *   cannot accept, and for an object that is not a world;
+ * - `invalid_ruleset` for a ruleset that breaks the rules of captureRuleset;
+ * - `tick_overflow` for simulation time that would pass Number.MAX_SAFE_INTEGER.
+ *
+ * Later batches add their codes here.
  */
-export type EngineErrorCode = "invalid_value" | "tick_overflow";
+export type EngineErrorCode =
+  | "invalid_value"
+  | "invalid_input"
+  | "invalid_ruleset"
+  | "tick_overflow";
 
 /** How many issues an EngineError keeps; it still counts the ones it drops. */
 export const MAX_ISSUES = 50;
@@ -87,12 +97,16 @@ export class IssueList {
     if (cause !== undefined && this.#cause === undefined) this.#cause = { error: cause };
   }
 
-  /** Throws an EngineError with `code` and the collected issues, if there are any. */
-  throwIfAny(code: EngineErrorCode): void {
-    if (this.count === 0) return;
+  /** An EngineError with `code`, the collected issues, and the first cause reported. */
+  error(code: EngineErrorCode): EngineError {
     const issueCount = this.count;
     const options =
       this.#cause === undefined ? { issueCount } : { issueCount, cause: this.#cause.error };
-    throw new EngineError(code, this.issues, options);
+    return new EngineError(code, this.issues, options);
+  }
+
+  /** Throws an EngineError with `code` and the collected issues, if there are any. */
+  throwIfAny(code: EngineErrorCode): void {
+    if (this.count > 0) throw this.error(code);
   }
 }

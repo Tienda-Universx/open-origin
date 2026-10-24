@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { canonicalize, copyCanonical, EngineError, validateCanonical } from "../src/index.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
+import { revokedProxy } from "./support/revoked.ts";
 
 /**
  * Objects that throw while they are read: a revoked Proxy, a trap that throws (an EngineError
@@ -13,12 +14,6 @@ const BOOM = new Error("boom");
 const boom = (): never => {
   throw BOOM;
 };
-
-function revokedProxy(): object {
-  const { proxy, revoke } = Proxy.revocable({}, {});
-  revoke();
-  return proxy;
-}
 
 /** Each hostile object, and what it throws: BOOM, or a TypeError from the Proxy machinery. */
 const HOSTILE: [string, () => object, "boom" | "TypeError"][] = [

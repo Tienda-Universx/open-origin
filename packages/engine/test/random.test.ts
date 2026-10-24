@@ -267,9 +267,26 @@ describe("DrawSequence.permutation", () => {
     expect(chiSquare([...counts.values()])).toBeLessThan(critical);
   });
 
-  test.each([-1, 1.5, U32_COUNT])("rejects the count %d", (count) => {
+  test("accepts 65,536 items, the maximum", () => {
+    const draws = sequence();
+    const items = draws.permutation(65_536);
+    expect([...items].sort((a, b) => a - b)).toEqual(Array.from({ length: 65_536 }, (_, i) => i));
+    expect(draws.next).toBeGreaterThanOrEqual(65_535);
+  });
+
+  test.each([-1, 1.5, 65_537, U32_COUNT])("rejects the count %d without drawing", (count) => {
+    const draws = sequence();
+    expect(engineErrorOf(() => draws.permutation(count)).issues).toEqual([
+      { path: "/count", message: `${count} is not an integer in [0, 65536]` },
+    ]);
+    expect(draws.next).toBe(0);
+  });
+
+  test("rejects a count that is not a number by its type", () => {
+    // Deliberately ill-typed, as a JavaScript caller can be.
+    const count = "3" as unknown as number;
     expect(engineErrorOf(() => sequence().permutation(count)).issues).toEqual([
-      { path: "/count", message: `${count} is not an integer in [0, 4294967295]` },
+      { path: "/count", message: "a value of type string is not an integer in [0, 65536]" },
     ]);
   });
 });

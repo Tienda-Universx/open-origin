@@ -4,18 +4,30 @@
  */
 import { EngineError } from "../errors.ts";
 
+/** Whether the UTF-16 code unit `unit` is a high (leading) surrogate, U+D800 to U+DBFF. */
 const isHighSurrogate = (unit: number): boolean => unit >= 0xd800 && unit <= 0xdbff;
 
-/** The UTF-16 offset of the first lone surrogate in `text`, which must have one. */
+/**
+ * Whether `unit` is a low (trailing) surrogate, U+DC00 to U+DFFF. NaN, which `charCodeAt` returns
+ * past the end of a string, is not.
+ */
+const isLowSurrogate = (unit: number): boolean => unit >= 0xdc00 && unit <= 0xdfff;
+
+/**
+ * The UTF-16 offset of the first lone surrogate in `text`, which must have one: a high surrogate
+ * that no low surrogate follows, or a low surrogate that does not complete a pair. A pair is
+ * skipped whole, so its low surrogate is never taken for a lone one.
+ */
 function loneSurrogateOffset(text: string): number {
-  let offset = 0;
-  while (offset < text.length) {
+  for (let offset = 0; offset < text.length; offset += 1) {
     const unit = text.charCodeAt(offset);
-    const pairs = isHighSurrogate(unit) && (text.charCodeAt(offset + 1) & 0xfc00) === 0xdc00;
-    if (!pairs && (unit & 0xf800) === 0xd800) return offset;
-    offset += pairs ? 2 : 1;
+    if (isLowSurrogate(unit)) return offset;
+    if (isHighSurrogate(unit)) {
+      if (!isLowSurrogate(text.charCodeAt(offset + 1))) return offset;
+      offset += 1;
+    }
   }
-  return offset;
+  return text.length;
 }
 
 /** How many bytes the UTF-8 form of the well-formed `text` takes. */

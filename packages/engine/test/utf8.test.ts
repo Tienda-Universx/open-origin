@@ -59,10 +59,29 @@ describe("utf8Encode", () => {
   });
 
   test.each([
+    ["at the start", "\ud83d\ude00ab"],
+    ["at the end", "ab\ud83d\ude00"],
+    ["alone", "\ud83d\ude00"],
+    ["twice in a row", "\ud83d\ude00\ud83d\ude00"],
+  ])("encodes a surrogate pair %s as one 4-byte code point", (_name, text) => {
+    expect(encoded(text)).toEqual({ bytes: [...encoder.encode(text)], exact: true });
+  });
+
+  test.each([
+    ["a high surrogate at the start", "\ud800ab", 0],
     ["a high surrogate at the end", "ab\ud800", 2],
     ["a high surrogate before another character", "\ud83dx", 0],
+    ["a low surrogate at the start", "\udc00ab", 0],
+    ["a low surrogate at the end", "ab\udc00", 2],
     ["a low surrogate alone", "a\udc00b", 1],
     ["a reversed pair", "\ude00\ud83d", 0],
+    ["a high surrogate before a pair", "\ud800\ud83d\ude00", 0],
+    ["a low surrogate before a pair", "\udc00\ud83d\ude00", 0],
+    ["a high surrogate after a pair", "\ud83d\ude00\ud800", 2],
+    ["a low surrogate after a pair", "\ud83d\ude00\udc00", 2],
+    ["the last high surrogate, U+DBFF, alone", "a\udbff", 1],
+    ["the last low surrogate, U+DFFF, at the start", "\udfffa", 0],
+    ["the last low surrogate, U+DFFF, at the end", "a\udfff", 1],
   ])("rejects %s with invalid_value and its offset", (_name, text, offset) => {
     const error = engineErrorOf(() => utf8Encode(text));
     expect(error.code).toBe("invalid_value");

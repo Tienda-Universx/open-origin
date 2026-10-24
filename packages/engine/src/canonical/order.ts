@@ -6,7 +6,7 @@
  */
 
 /** Orders strings by UTF-16 code units, the order RFC 8785 §3.2.3 gives object keys. */
-function compareCodeUnits(a: string, b: string): number {
+export function compareCodeUnits(a: string, b: string): number {
   if (a < b) return -1;
   return a > b ? 1 : 0;
 }

@@ -187,8 +187,9 @@ outcome.
 `bun run check` enforces what tools can verify; everything else stays a review item. A tool
 counts as a control only for the rules it actually checks, and a control is listed as enforced only
 when a test shows that it rejects bad input, including the boundary case of every documented
-threshold: `tests/repo/lint.test.ts` does it for strict types and each lint rule below. Those tests
-pin properties and invariants, not verbatim copies of configuration, which only add friction.
+threshold: `tests/repo/lint.test.ts` and `tests/repo/engine-lint.test.ts` do it for strict types and
+each lint rule below. Those tests pin properties and invariants, not verbatim copies of
+configuration, which only add friction.
 
 | Control | Tool | Status |
 |---|---|---|
@@ -196,8 +197,8 @@ pin properties and invariants, not verbatim copies of configuration, which only 
 | Cognitive complexity above 15, functions over 50 lines (outside tests), more than 4 parameters, `else` after `return`, nested ternaries, non-null assertions, parameter reassignment, import cycles, explicit `any`, `@ts-ignore`, unused variables, imports, and parameters | Biome | Enforced |
 | Cyclomatic complexity above 10, nesting deeper than 4 | oxlint (only these rules) | Enforced |
 | ADR format; invisible characters in file names and contents; UTF-8 text files; package scripts and exact dev-dependency pins in every manifest; every workspace tsconfig in `typecheck` and every workspace test file in the root tsconfig program; workflow permissions, triggers and pinned actions; Dependabot cooldown; Bun telemetry off; links; verbatim documents | `tests/repo/` | Enforced |
-| Hexagonal boundaries: `packages/engine/src` imports only relative paths that stay inside `src` (no `bun`, `bun:*`, `node:*`, or packages) | Biome `noRestrictedImports` and `noNodejsModules` for `packages/engine/src`; `tests/repo/engine-purity.ts` for paths that leave `src` and type-level `import()` | Enforced for `packages/engine` (`lint.test.ts`, `engine-purity.test.ts`); each new package adds its own rule |
-| Engine purity (ADR 0003 P5) in `packages/engine/src`: the globals `Date`, `Intl`, `globalThis`, `WeakRef`, `FinalizationRegistry`, `SharedArrayBuffer`, `Atomics`, `Promise`, `Set`, `WeakMap`, `WeakSet`, `Function`, `Bun`, `crypto`, `performance`, `structuredClone`, `Reflect`; every reference outside a type to `JSON` (except in `canonical/encode.ts`), `Map` (except in `canonical/value.ts`), and `Math` (except in `int.ts`); `console`, `process`, `eval`, `for…in`; `**` and `**=`; `async` and `await`; direct member access, with quoted or backtick keys too, to `localeCompare`, `toLocale*`, `constructor`, and `Object.keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`, `getOwnPropertyDescriptors` (except in `canonical/order.ts`); binding or destructuring `Object` into a variable; only ECMAScript 2024 declarations (`lib: ["ES2024"]`, `types: []`); no `/// <reference>`, `declare` declarations (statements, `export declare`, class fields), declaration files (`.d.ts`, `.d.mts`, `.d.cts`, `.d.<ext>.ts`), `@ts-nocheck`, `@ts-expect-error`, `@ts-ignore`, or Biome suppression comments (`biome-ignore`, `-all`, `-start`, `-end`) | Biome stable rules, with one `noRestrictedGlobals` list, and the GritQL plugins in `packages/engine/lint/`: `purity.grit`, plus one plugin per rule that has or will have an exception (`key-order.grit` for key enumeration, `global-json.grit`, `global-map.grit`, `global-math.grit`), each registered for `src` minus its exception file; four reviewed exceptions, each limited to its file: `canonical/order.ts` may enumerate keys, `canonical/encode.ts` may use `JSON`, `canonical/value.ts` may use `Map`, and `int.ts` may use `Math`; `tsc -p packages/engine/tsconfig.json` in `bun run typecheck`; `tests/repo/engine-purity.ts` | Enforced (`lint.test.ts`, `engine-purity.test.ts`, `package.test.ts`) |
+| Hexagonal boundaries: `packages/engine/src` imports only relative paths that stay inside `src` (no `bun`, `bun:*`, `node:*`, or packages) | Biome `noRestrictedImports` and `noNodejsModules` for `packages/engine/src`; `tests/repo/engine-purity.ts` for paths that leave `src` and type-level `import()` | Enforced for `packages/engine` (`engine-lint.test.ts`, `engine-purity.test.ts`); each new package adds its own rule |
+| Engine purity (ADR 0003 P5) in `packages/engine/src`: the globals `Date`, `Intl`, `globalThis`, `WeakRef`, `FinalizationRegistry`, `SharedArrayBuffer`, `Atomics`, `Promise`, `Set`, `WeakMap`, `WeakSet`, `Function`, `Bun`, `crypto`, `performance`, `structuredClone`, `Reflect`; every reference outside a type to `JSON` (except in `canonical/encode.ts`), `Map` (except in `canonical/value.ts`), and `Math` (except in `int.ts`); `console`, `process`, `eval`, `for…in`; `**` and `**=`; `async` and `await`; direct member access, with quoted or backtick keys too, to `localeCompare`, `toLocale*`, `constructor`, and `Object.keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`, `getOwnPropertyDescriptors` (except in `canonical/order.ts`); binding or destructuring `Object` into a variable; only ECMAScript 2024 declarations (`lib: ["ES2024"]`, `types: []`); no `/// <reference>`, `declare` declarations (statements, `export declare`, class fields), declaration files (`.d.ts`, `.d.mts`, `.d.cts`, `.d.<ext>.ts`), `@ts-nocheck`, `@ts-expect-error`, `@ts-ignore`, or Biome suppression comments (`biome-ignore`, `-all`, `-start`, `-end`) | Biome stable rules, with one `noRestrictedGlobals` list, and the GritQL plugins in `packages/engine/lint/`: `purity.grit`, plus one plugin per rule that has or will have an exception (`key-order.grit` for key enumeration, `global-json.grit`, `global-map.grit`, `global-math.grit`), each registered for `src` minus its exception file; four reviewed exceptions, each limited to its file: `canonical/order.ts` may enumerate keys, `canonical/encode.ts` may use `JSON`, `canonical/value.ts` may use `Map`, and `int.ts` may use `Math`; `tsc -p packages/engine/tsconfig.json` in `bun run typecheck`; `tests/repo/engine-purity.ts` | Enforced (`engine-lint.test.ts`, `engine-purity.test.ts`, `package.test.ts`) |
 | Duplicated code, dead exports | None yet | Review checklist |
 | Race conditions, performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T6, T7, and T10 |
 
@@ -246,9 +247,11 @@ See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choi
 
   Report each merge with its evidence. Deployments, paid services, and cloud resources still need
   explicit authorization ([ADR 0012](docs/decisions/0012-branching-commits-and-pull-requests.md)).
-- The maintainer's standing answer to every native review consent prompt is "granted" (tracker
-  L28). Run the provider-issued `granted` invocation unchanged, never `declined`, and report that
-  consent was granted under this instruction.
+- The maintainer's standing consent (tracker L28) covers only starting the native review of a
+  candidate: answer every native review consent prompt by running the provider-issued `granted`
+  invocation unchanged, never `declined`, and report that consent was granted under this
+  instruction. It never approves the change, never skips verification, and never authorizes
+  delivery: a merge still needs every condition of the bullet above.
 - Tests and docs ship with the behavior they cover.
 
 ## Documentation map

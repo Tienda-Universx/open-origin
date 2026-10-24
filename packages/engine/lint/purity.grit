@@ -1,7 +1,7 @@
 // Determinism rules for packages/engine/src that Biome has no stable rule for (ADR 0003 P5, plan
-// §I.1). biome.json registers this plugin for that directory only; tests/repo/lint.test.ts proves
-// that each pattern rejects its fixture. Key enumeration lives in key-order.grit, which has one
-// reviewed exception. Binding `Object` to a name is rejected, but the patterns here and in
+// §I.1). biome.json registers this plugin for that directory only; tests/repo/engine-lint.test.ts
+// proves that each pattern rejects its fixture. Key enumeration lives in key-order.grit, which has
+// one reviewed exception. Binding `Object` to a name is rejected, but the patterns here and in
 // key-order.grit still see direct references only, so indirection such as
 // `(Object as typeof Object).keys(x)`, `(Object).keys(x)`, or `({ constructor } = f)` is not
 // caught.

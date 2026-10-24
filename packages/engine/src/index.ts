@@ -7,3 +7,31 @@ export { mix32, type Seed, streamId, tickKey } from "./rng/mix32.ts";
 export { DrawSequence } from "./rng/random.ts";
 export { nextTick, simSeconds, type Tick } from "./time/tick.ts";
 export { ENGINE_VERSION } from "./version.ts";
+export { chunkHashes, fullChecksum, stateRoot } from "./world/checksum.ts";
+export {
+  type ChunkCoord,
+  type ChunkKey,
+  chunkKey,
+  parseChunkKey,
+} from "./world/chunk.ts";
+export type {
+  Command,
+  CommandHandler,
+  CommandOrigin,
+  DeepReadonly,
+  EngineEvent,
+  EntityId,
+  EventCause,
+  ReadView,
+  Rejected,
+  Rejection,
+  Ruleset,
+  RulesetSystem,
+  RulesetVersions,
+  TickContext,
+  TickRandom,
+  WorldInit,
+  WorldOptions,
+} from "./world/contracts.ts";
+export { createWorld } from "./world/create.ts";
+export { readView, World, type WorldStatus, worldStatus } from "./world/world.ts";

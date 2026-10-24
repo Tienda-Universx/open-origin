@@ -7,8 +7,8 @@
 // It reports every reference to the name outside a type (member access, calls, `new`, aliasing,
 // arguments, shorthand properties, and `typeof`), even where a local declaration shadows the
 // global. Property names, keys, and type positions are not references to the global, and
-// noGlobalAssign rejects assignments to it everywhere. tests/repo/lint.test.ts proves both sides
-// and the exact extent of the exception.
+// noGlobalAssign rejects assignments to it everywhere. tests/repo/engine-lint.test.ts proves both
+// sides and the exact extent of the exception.
 language js
 
 JsReferenceIdentifier() as $reference where {
