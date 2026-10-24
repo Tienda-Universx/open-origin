@@ -55,6 +55,101 @@ describe("mix32", () => {
   });
 });
 
+describe("mix32 key length", () => {
+  const NOT_SHORT = (length: number) => `the key must have at most 64 words, not ${length}`;
+  const words = (length: number) => Array.from({ length }, (_, index) => index);
+
+  test("accepts a key of 64 words, the maximum", () => {
+    const key = words(64);
+    expect(mix32([1, 2], 3, key, 6)).toBe(murmur3x86_32Words([2, 3, 64, ...key, 6], 1));
+    expect(new DrawSequence([1, 2], 3, key, 6).u32()).toBe(mix32([1, 2], 3, key, 6));
+  });
+
+  test("rejects a key of 65 words, in mix32 and in DrawSequence, without reading its words", () => {
+    let reads = 0;
+    const key = Object.defineProperty(words(65), 0, {
+      get: () => {
+        reads += 1;
+        return 0;
+      },
+      enumerable: true,
+    });
+    const expected = [{ path: "/key", message: NOT_SHORT(65) }];
+    expect(engineErrorOf(() => mix32([1, 2], 3, key, 6)).issues).toEqual(expected);
+    expect(engineErrorOf(() => new DrawSequence([1, 2], 3, key)).issues).toEqual(expected);
+    expect(reads).toBe(0);
+  });
+
+  test("rejects the longest array, of 2^32 - 1 holes, at once instead of scanning it", () => {
+    const key: number[] = [];
+    key.length = 0xffffffff;
+    expect(engineErrorOf(() => mix32([1, 2], 3, key, 6)).issues).toEqual([
+      { path: "/key", message: NOT_SHORT(0xffffffff) },
+    ]);
+  });
+
+  test("rejects a length that is not a u32, which only a Proxy can report", () => {
+    const key = new Proxy([4, 5], {
+      get: (target, property) => (property === "length" ? Number.POSITIVE_INFINITY : target[0]),
+    });
+    expect(engineErrorOf(() => mix32([1, 2], 3, key, 6)).issues).toEqual([
+      { path: "/key", message: "the key must have at most 64 words, not Infinity" },
+    ]);
+  });
+
+  test("reports the other inputs' issues along with the key's length", () => {
+    const error = engineErrorOf(() => mix32([1, -1], 3, words(65), -2));
+    expect(error.issues).toEqual([
+      { path: "/seed/1", message: NOT_U32(-1) },
+      { path: "/key", message: NOT_SHORT(65) },
+      { path: "/n", message: NOT_U32(-2) },
+    ]);
+  });
+});
+
+describe("mix32 rejects holes", () => {
+  const HOLE = "the element is a hole: the array must be dense";
+
+  /** [4, hole, 5], whose prototype may supply index 1. */
+  function holed(inherited?: number): number[] {
+    const key: number[] = [];
+    key[0] = 4;
+    key[2] = 5;
+    if (inherited !== undefined) {
+      Object.setPrototypeOf(key, Object.create(Array.prototype, { 1: { value: inherited } }));
+    }
+    return key;
+  }
+
+  test("a key with a hole is rejected at the hole's path", () => {
+    expect(engineErrorOf(() => mix32([1, 2], 3, holed(), 6)).issues).toEqual([
+      { path: "/key/1", message: HOLE },
+    ]);
+  });
+
+  test("a hole is rejected even when the key's prototype has a word at its index", () => {
+    const key = holed(7);
+    expect(Array.isArray(key) && key[1] === 7).toBe(true);
+    expect(engineErrorOf(() => mix32([1, 2], 3, key, 6)).issues).toEqual([
+      { path: "/key/1", message: HOLE },
+    ]);
+    expect(engineErrorOf(() => new DrawSequence([1, 2], 3, key)).issues).toEqual([
+      { path: "/key/1", message: HOLE },
+    ]);
+  });
+
+  test("a seed with a hole is rejected, whatever its prototype holds", () => {
+    const seed: number[] = [];
+    seed[1] = 2;
+    Object.setPrototypeOf(seed, Object.create(Array.prototype, { 0: { value: 1 } }));
+    // Deliberately ill-typed, as a JavaScript caller can be.
+    const pair = seed as unknown as Seed;
+    expect(engineErrorOf(() => mix32(pair, 3, [4, 5], 6)).issues).toEqual([
+      { path: "/seed/0", message: HOLE },
+    ]);
+  });
+});
+
 describe("mix32 reads each input once", () => {
   test("a key word behind a getter is read once, so validation and the hash see the same word", () => {
     let reads = 0;

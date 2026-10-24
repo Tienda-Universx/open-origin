@@ -135,7 +135,7 @@ domain tag; callers hash a tagged array such as `["chunk", key, chunk]` (ADR 002
 |---|---|
 | MurmurHash3 port (`murmur3.ts`) | SMHasher's verification procedure gives 0xB0F57EE3 for x86_32 and 0xB3ECE62A for x86_128, the values in SMHasher's `src/main.cpp`; published vectors for both variants pass; a view into a larger buffer hashes as a copy |
 | Word variant | x86_32 over u32 words equals x86_32 over their little-endian bytes, on random words and seeds |
-| UTF-8 (`utf8.ts`) | The bytes equal `TextEncoder`'s on every length boundary and on random well-formed text with astral characters, in an array of exactly their length; a lone surrogate throws `invalid_value` with its UTF-16 offset |
+| UTF-8 (`utf8.ts`) | The bytes equal `TextEncoder`'s on every length boundary and on random well-formed text with astral characters, in an array of exactly their length; a lone surrogate, high or low, at the start, the end, or next to a pair, throws `invalid_value` with its UTF-16 offset, and a pair at either end encodes as one code point |
 | Lanes (`lanes.ts`) | Addition and subtraction modulo 2^128 over four u32 lanes, most significant first, equal BigInt's, and a sum does not depend on the order of its terms |
 | `digest` | Pinned digests, cross-checked against SMHasher's C reference when they were written; key order does not change a digest |
 
@@ -158,18 +158,21 @@ n]` with seed s0, where `[s0, s1]` is the world seed. Code: `packages/engine/src
 
 | Function | Contract |
 |---|---|
-| `mix32(seed, stream, key, n)` | One draw. Every input must be u32 words; all problems are reported at once, with the paths `/seed/i`, `/stream`, `/key/i`, and `/n`, as `invalid_value`. Each word is read once, by index, into a copy that is validated and hashed, so a getter or a custom iterator cannot show the hash other words than validation saw |
+| `mix32(seed, stream, key, n)` | One draw. Every input must be u32 words; all problems are reported at once, with the paths `/seed/i`, `/stream`, `/key/i`, and `/n`, as `invalid_value`. Each word is read once, by index, into a copy that is validated and hashed, so a getter or a custom iterator cannot show the hash other words than validation saw. A hole is an issue at its path even when the array's prototype has a value at that index. A key has at most 64 words (`MAX_KEY_WORDS`: a per-tick key has 4); a longer one is one issue at `/key`, found before any of its words is read |
 | `streamId(name)` | MurmurHash3 x86_32 of the UTF-8 of `name` with seed 0 |
 | `tickKey(tick, entity)` | `[tickLo, tickHi, entityLo, entityHi]`: each integer as the two u32 words of its 64-bit two's complement, low first. `tick` must be a tick; `entity` may be any safe integer |
 | `new DrawSequence(seed, stream, key, next = 0)` | The draws of one stream for one key, from the counter `next`. It reads its inputs once, as `mix32` does, and keeps the copies |
 | `sequence.u32()` | The draw at the counter, which then advances. A sequence has 2^32 counters; one more draw throws `invalid_value` at `/n`: the draw counter is exhausted |
 | `sequence.int(bound)` | An integer in [0, bound) for an integer bound in [1, 2^32], without modulo bias: a draw at or above `2^32 - (2^32 mod bound)` is rejected, and each retry uses the next counter |
-| `sequence.permutation(count)` | 0 to count - 1 in random order: a Fisher-Yates shuffle that draws `int(i + 1)` for i from count - 1 down to 1 |
+| `sequence.permutation(count)` | 0 to count - 1 in random order: a Fisher-Yates shuffle that draws `int(i + 1)` for i from count - 1 down to 1. `count` is an integer in [0, 2^16] (`MAX_PERMUTATION`), far more than the inhabitants contending for one resource in one tick; any other count throws `invalid_value` at `/count` before any draw |
 
 What the tests check:
 
 - a draw depends only on its seed, stream, key, and counter, so more draws for one entity or from
   another stream never shift the draws of the others;
+- the bounds at both sides: a key of 64 words is hashed and one of 65 is rejected without reading
+  its words, as is an array of 2^32 - 1 holes; a permutation of 2^16 items is complete and a count
+  of 2^16 + 1 is rejected; a hole in a key or a seed is rejected, also when the prototype fills it;
 - pinned draws, cross-checked against SMHasher's C reference when they were written, and `mix32`
   equal to MurmurHash3 x86_32 over the documented words on random inputs;
 - with the bound 2^31 + 1, about half of the draws are rejected, and each result and the final

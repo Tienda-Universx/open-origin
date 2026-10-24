@@ -13,6 +13,15 @@ import { tickProblem } from "../time/tick.ts";
 /** The world seed: two u32 words, [s0, s1]. */
 export type Seed = readonly [number, number];
 
+/**
+ * The most words a key may have. A per-tick key has 4 and a key per chunk a few more, so 64 leaves
+ * room for every planned key while it bounds what one draw reads, copies, and hashes: 68 words,
+ * 272 bytes. A longer key is rejected before any of its words is read.
+ */
+const MAX_KEY_WORDS = 64;
+
+const HOLE = "the element is a hole: the array must be dense";
+
 /** What a draw hashes besides its counter: copies that belong to the engine alone. */
 export type DrawSource = {
   readonly seed: Seed;
@@ -21,7 +30,7 @@ export type DrawSource = {
 };
 
 /** The message for `value` where a u32 belongs. */
-export function notU32(value: unknown): string {
+function notU32(value: unknown): string {
   return `${describeValue(value)} is not an integer in [0, 4294967295]`;
 }
 
@@ -32,6 +41,26 @@ function readU32(value: unknown, path: string, issues: Issue[]): number {
   return 0;
 }
 
+/**
+ * Element `index` of `array`, read once, if it is an own u32; otherwise an issue at
+ * `${prefix}/${index}`, and 0 in its place. A hole is an issue even when the prototype chain has
+ * a value at its index, which reading the element alone would return.
+ */
+function readWord(
+  array: readonly unknown[],
+  index: number,
+  prefix: string,
+  issues: Issue[],
+): number {
+  // The path is built only for an issue: draws read keys on the hot path.
+  if (!Object.hasOwn(array, index)) {
+    issues.push({ path: `${prefix}/${index}`, message: HOLE });
+    return 0;
+  }
+  const word = array[index];
+  return isU32(word) ? word : readU32(word, `${prefix}/${index}`, issues);
+}
+
 /** The two words of `seed`, each read once by index; issues for anything else. */
 function readSeed(seed: unknown, issues: Issue[]): Seed {
   if (!Array.isArray(seed) || seed.length !== 2) {
@@ -39,13 +68,13 @@ function readSeed(seed: unknown, issues: Issue[]): Seed {
     return [0, 0];
   }
   const words: readonly unknown[] = seed;
-  return [readU32(words[0], "/seed/0", issues), readU32(words[1], "/seed/1", issues)];
+  return [readWord(words, 0, "/seed", issues), readWord(words, 1, "/seed", issues)];
 }
 
 /**
  * The words of `key` in a fresh array: its length and each element are read once, by index, so
- * neither a getter nor a custom iterator can show the hash other words than validation saw. A
- * hole reads as undefined, which is not a u32.
+ * neither a getter nor a custom iterator can show the hash other words than validation saw. A key
+ * longer than MAX_KEY_WORDS is one issue, and none of its words is read.
  */
 function readKey(key: unknown, issues: Issue[]): number[] {
   if (!Array.isArray(key)) {
@@ -53,13 +82,15 @@ function readKey(key: unknown, issues: Issue[]): number[] {
     return [];
   }
   const words: readonly unknown[] = key;
-  const length = words.length;
-  const copy: number[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const word = words[index];
-    // The path is built only for an issue: draws read keys on the hot path.
-    copy.push(isU32(word) ? word : readU32(word, `/key/${index}`, issues));
+  // A Proxy can report any length, so the bound also rejects one that is not a u32.
+  const length: unknown = words.length;
+  if (!(isU32(length) && length <= MAX_KEY_WORDS)) {
+    const message = `the key must have at most ${MAX_KEY_WORDS} words, not ${describeValue(length)}`;
+    issues.push({ path: "/key", message });
+    return [];
   }
+  const copy: number[] = [];
+  for (let index = 0; index < length; index += 1) copy.push(readWord(words, index, "/key", issues));
   return copy;
 }
 
@@ -85,7 +116,10 @@ export function readDraw(
   return draw;
 }
 
-/** Draw `n` of `source`, which readDraw made: it hashes the copies, by index. */
+/**
+ * Draw `n` of `source`, which readDraw made: it hashes the copies, by index. The running hash
+ * starts from s0, the seed, and mixes in s1 as the first word.
+ */
 export function mixDraw({ seed, stream, key }: DrawSource, n: number): number {
   let h = mixWord32(mixWord32(mixWord32(seed[0], seed[1]), stream), key.length);
   for (let index = 0; index < key.length; index += 1) {
@@ -96,8 +130,11 @@ export function mixDraw({ seed, stream, key }: DrawSource, n: number): number {
 }
 
 /**
- * Draw `n` of `stream` for `key` under `seed`, a u32. Each input is read once. Throws
- * EngineError("invalid_value") with every input that is not what its type says.
+ * Draw `n` of `stream` for `key` under `seed`: the u32 that MurmurHash3 x86_32 gives with
+ * `seed[0]` (s0) as its seed, over the words [`seed[1]` (s1), stream, key.length, ...key, n]. So
+ * s0 enters as the hash's seed and s1 as the first word hashed. Each input is read once. Throws
+ * EngineError("invalid_value") with every input that is not what its type says, including a key
+ * with a hole or more than MAX_KEY_WORDS words.
  */
 export function mix32(seed: Seed, stream: number, key: readonly number[], n: number): number {
   const draw = readDraw(seed, stream, key, n);

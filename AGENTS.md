@@ -246,9 +246,11 @@ See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choi
 
   Report each merge with its evidence. Deployments, paid services, and cloud resources still need
   explicit authorization ([ADR 0012](docs/decisions/0012-branching-commits-and-pull-requests.md)).
-- The maintainer's standing answer to every native review consent prompt is "granted" (tracker
-  L28). Run the provider-issued `granted` invocation unchanged, never `declined`, and report that
-  consent was granted under this instruction.
+- The maintainer's standing consent (tracker L28) covers only starting the native review of a
+  candidate: answer every native review consent prompt by running the provider-issued `granted`
+  invocation unchanged, never `declined`, and report that consent was granted under this
+  instruction. It never approves the change, never skips verification, and never authorizes
+  delivery: a merge still needs every condition of the bullet above.
 - Tests and docs ship with the behavior they cover.
 
 ## Documentation map
