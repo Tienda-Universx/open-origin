@@ -24,11 +24,24 @@ function quote(text: string): string {
   return needsNoEscape(text) ? `"${text}"` : JSON.stringify(text);
 }
 
+/** The canonical text of an array whose items have the canonical texts `items`. */
+export function arrayText(items: readonly string[]): string {
+  return `[${items.join(",")}]`;
+}
+
+/**
+ * The canonical text of a record from its entries: each key, and the canonical text of its value.
+ * The entries must be in canonical key order (canonical/order.ts), as canonicalize writes them.
+ */
+export function recordText(entries: readonly (readonly [string, string])[]): string {
+  return `{${entries.map(([key, value]) => `${quote(key)}:${value}`).join(",")}}`;
+}
+
 const ENCODER: Builder<string> = {
   invalid: "",
   leaf: (value) => (typeof value === "string" ? quote(value) : `${value}`),
-  array: (items) => `[${items.join(",")}]`,
-  record: (entries) => `{${entries.map(([key, value]) => `${quote(key)}:${value}`).join(",")}}`,
+  array: arrayText,
+  record: recordText,
 };
 
 /** Stops a walk at its first issue. */

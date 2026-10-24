@@ -12,6 +12,7 @@ import {
 } from "../src/index.ts";
 import { tallyWorld } from "./fixtures/tally-ruleset.ts";
 import { Sfc32 } from "./support/sfc32.ts";
+import { validCommands } from "./support/tally-fuzz.ts";
 
 /**
  * Command fuzz (plan §8 "Fuzz de comandos"): 64 seeds of 200 ticks each, with random commands
@@ -28,48 +29,22 @@ import { Sfc32 } from "./support/sfc32.ts";
  * Size. A tally tick costs about 110 µs, and about 300 µs with audit, which rehashes every chunk
  * (measured on the 2-core Codespace with Bun 1.4.4; indicative). The plan's estimate of 200 seeds
  * took about 22 s, and every check and Phase B mutant runs the whole suite, so the fuzz runs 64
- * seeds, about 7.5 s: a fuzz gains less from each extra seed than from the systems it drives, which
- * stay in. For a larger sweep, raise SEEDS locally for one run (and the timeout with it, at about
- * 0.1 s per seed), and restore it before committing; the test script stays `bun test`.
+ * seeds, about 8 s: a fuzz gains less from each extra seed than from the systems it drives, which
+ * stay in. For a larger sweep, raise SEEDS locally for one run, and restore it before committing;
+ * the timeout follows SEEDS, and the test script stays `bun test`.
+ *
+ * Timeout. The test is synchronous, so Bun cannot interrupt it: it fails the test after it ran
+ * longer than the timeout, and the CI job's timeout is what stops a hang. The timeout is thus a
+ * budget that a correct run must not exceed on a slower runner. Measured on the 2-core Codespace,
+ * 2026-10-24: 7.7 to 8.2 s alone (about 0.125 s per seed), 15 s with two runs at once, and 31 to
+ * 32 s with four. SEED_BUDGET_MS allows about eight times the measured cost per seed, so a runner
+ * that slow still passes, and a change that makes the fuzz ten times slower fails.
  */
 
 const SEEDS = 64;
 const TICKS = 200;
-
-/** Keys that exist, keys that do not, and text that is no chunk key. */
-const KEYS = ["0,0", "1,0", "-1,0", "0,1", "9,9", "0,-0", "x"];
-const TYPES = ["plant", "plant", "name", "birth", "lottery", "unknown.command"];
-const NAMES = ["", "Ana", `Zo${String.fromCharCode(0xeb)}`, String.fromCodePoint(0x1f98a)];
-
-function randomPayload(random: Sfc32, type: string): CanonicalValue {
-  switch (type) {
-    case "plant":
-      return { at: random.pick(KEYS), amount: random.between(-5, 150) };
-    case "name":
-      return {
-        entity: random.below(8) === 0 ? "one" : random.between(1, 20),
-        name: random.pick(NAMES),
-      };
-    default:
-      return random.below(2) === 0 ? {} : [random.next()];
-  }
-}
-
-/** A valid list of 0 to 3 commands for `tick`. */
-function validCommands(random: Sfc32, tick: number): Command[] {
-  const commands: Command[] = [];
-  let seq = random.below(3);
-  for (let count = random.below(4); count > 0; count -= 1) {
-    const type = random.pick(TYPES);
-    const origin =
-      random.below(2) === 0
-        ? ({ kind: "admin" } as const)
-        : ({ kind: "inhabitant", actor: random.between(1, 30) } as const);
-    commands.push({ applyTick: tick, seq, type, origin, payload: randomPayload(random, type) });
-    seq += 1 + random.below(3);
-  }
-  return commands;
-}
+/** What one seed may take; the timeout is SEEDS times it. */
+const SEED_BUDGET_MS = 1_000;
 
 /** One way to break a list: each returns a list that step must reject. */
 const BREAKERS: ((commands: Command[], tick: number) => unknown[])[] = [
@@ -131,14 +106,18 @@ function run(seed: number) {
 }
 
 describe("command fuzz over tally", () => {
-  test(`${SEEDS} seeds of ${TICKS} ticks: an audited world that also rejects broken lists matches a control`, () => {
-    let broken = 0;
-    for (let seed = 1; seed <= SEEDS; seed += 1) {
-      const result = run(seed);
-      expect(result.audited).toEqual(result.control);
-      broken += result.broken;
-    }
-    // About one tick in eight carries a broken list; the fuzz must exercise them.
-    expect(broken).toBeGreaterThan((SEEDS * TICKS) / 16);
-  }, 30_000);
+  test(
+    `${SEEDS} seeds of ${TICKS} ticks: an audited world that also rejects broken lists matches a control`,
+    () => {
+      let broken = 0;
+      for (let seed = 1; seed <= SEEDS; seed += 1) {
+        const result = run(seed);
+        expect(result.audited).toEqual(result.control);
+        broken += result.broken;
+      }
+      // About one tick in eight carries a broken list; the fuzz must exercise them.
+      expect(broken).toBeGreaterThan((SEEDS * TICKS) / 16);
+    },
+    SEEDS * SEED_BUDGET_MS,
+  );
 });

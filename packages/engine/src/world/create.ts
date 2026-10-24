@@ -101,7 +101,11 @@ function readChunks(
   return chunks;
 }
 
-function readAudit(options: unknown, issues: IssueList): boolean {
+/**
+ * The `audit` option of `options`, which must be undefined or a record whose `audit` is a boolean;
+ * false after an issue at `/options` or `/options/audit`.
+ */
+export function readAudit(options: unknown, issues: IssueList): boolean {
   if (options === undefined) return false;
   if (!expectRecord(options, "/options", "the options must be a record", issues)) return false;
   const audit = readMember(options, "audit", "/options/audit", issues);

@@ -2,14 +2,20 @@ import { describe, expect, test } from "bun:test";
 import {
   type Command,
   chunkHashes,
-  type EngineError,
+  EngineError,
+  encodeSnapshot,
   fullChecksum,
   readView,
+  snapshotBytes,
   stateRoot,
   step,
+  versionDifferences,
   type World,
+  type WorldStatus,
   worldStatus,
 } from "../src/index.ts";
+import { CHANGED_WHILE_READING } from "../src/step/step.ts";
+import { poison, worldState } from "../src/world/world.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import {
   type Ctx,
@@ -116,6 +122,43 @@ describe("a step of a world refuses a second use of that world while it reads th
     ]);
     expect(inner).toMatchObject({ code: "world_busy", issues: [{ message: busy("stateRoot") }] });
   });
+
+  /**
+   * Every engine function refuses a world while it steps, so nothing can change one while step
+   * reads its commands. These traps reach the state through the engine's internals, as an engine
+   * function that skipped the busy guard would: step must refuse to advance the changed world and
+   * poison it, but a world that is already poisoned keeps its first fault.
+   */
+  const ELSEWHERE = new EngineError("system_fault", [{ path: "", message: "elsewhere" }]);
+  const defect = (tick: number): WorldStatus => ({
+    kind: "faulted",
+    tick,
+    code: "world_busy",
+    issues: [{ path: "", message: CHANGED_WHILE_READING }],
+  });
+  const first: WorldStatus = {
+    kind: "faulted",
+    tick: 0,
+    code: "system_fault",
+    issues: ELSEWHERE.issues,
+  };
+
+  test.each([
+    ["moves its tick", 1, (world: World) => (worldState(world).kernel.tick += 1), defect(1)],
+    ["poisons it", 0, (world: World) => poison(worldState(world), ELSEWHERE), first],
+  ])("a defect that %s while the commands are read stops the step", (_, tick, change, status) => {
+    const world = stepWorld(putting());
+    const state = worldState(world);
+    const error = engineErrorOf(() => step(world, [trapCommand(() => change(world))]));
+    expect({ code: error.code, issues: error.issues }).toEqual({
+      code: "world_busy",
+      issues: [{ path: "", message: CHANGED_WHILE_READING }],
+    });
+    expect(state.kernel.tick).toBe(tick);
+    expect(state.chunks.get("0,0")?.value).toEqual({ grass: 1 });
+    expect(state.active).toBeUndefined();
+    expect(worldStatus(world)).toEqual(status);
+  });
 });
 
 /** Every function that reads or steps a world, by the name its error gives. */
@@ -126,6 +169,9 @@ const USES: [string, (world: World) => unknown][] = [
   ["stateRoot", (world) => stateRoot(world)],
   ["chunkHashes", (world) => chunkHashes(world)],
   ["worldStatus", (world) => worldStatus(world)],
+  ["encodeSnapshot", (world) => encodeSnapshot(world)],
+  ["snapshotBytes", (world) => snapshotBytes(world)],
+  ["versionDifferences", (world) => versionDifferences(world)],
 ];
 
 describe("ruleset code cannot use the world it runs in", () => {

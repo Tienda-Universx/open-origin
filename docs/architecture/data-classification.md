@@ -60,7 +60,9 @@ Each mechanism and the leak it guards against. The mechanisms are decided in
 - Terrain and resources come from seeded noise per chunk (plan §H).
 - So whoever knows the seed can predict the terrain and **all** randomness in the world (plan
   §E.4, §I.1.2). It must never reach a public client.
-- The seed is stored in the engine snapshot (`seed: [u32, u32]`). The `snapshot` message that
+- The seed is stored in the engine snapshot (`seed: [u32, u32]`), so the engine snapshot as a
+  whole is C3: its text, its bytes, and every copy of them stay on the operations and research
+  plane ([0020](../decisions/0020-deterministic-core-design.md)). The `snapshot` message that
   public clients receive on chunk subscription is a C0 projection of subscribed chunks, never the
   engine snapshot (plan §I.3, P10).
 

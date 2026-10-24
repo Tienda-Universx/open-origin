@@ -97,32 +97,41 @@ export function digestCache(
 }
 
 /**
- * The path, under `path`, of an issue at `issuePath` in `tagged`, a domain tag and its parts whose
- * last part is a value: the issue's path into that value, after `path`.
+ * Where an issue found in `tagged` lies in the world. `tagged` is a domain tag and its parts, the
+ * last of them the value that lives at `valuePath`; `at` is the issue's JSON Pointer into
+ * `tagged`. A pointer into the value keeps its rest after `valuePath`; any other pointer, into the
+ * tag or a key, becomes `valuePath` itself.
  */
-export function pathInValue(issuePath: string, tagged: readonly unknown[], path: string): string {
-  return `${path}${issuePath.slice(`/${tagged.length - 1}`.length)}`;
+export function relocatePath(at: string, tagged: readonly unknown[], valuePath: string): string {
+  const value = `/${tagged.length - 1}`;
+  if (at === value || at.startsWith(`${value}/`)) return `${valuePath}${at.slice(value.length)}`;
+  return valuePath;
 }
 
 /**
- * `error` with each issue moved from its path in `tagged` to the same place under `path`, and the
- * original as its cause; anything that is not an EngineError comes back unchanged.
+ * `error` with each issue moved from its path in `tagged` to its place in the world, as
+ * relocatePath moves it, and the original as its cause; anything that is not an EngineError comes
+ * back unchanged.
  */
-export function relocated(error: unknown, tagged: readonly unknown[], path: string): unknown {
+export function relocated(error: unknown, tagged: readonly unknown[], valuePath: string): unknown {
   if (!EngineError.isEngineError(error)) return error;
-  const issues = error.issues.map(({ path: at, message }) => ({
-    path: pathInValue(at, tagged, path),
+  const issues = error.issues.map(({ path, message }) => ({
+    path: relocatePath(path, tagged, valuePath),
     message,
   }));
-  return new EngineError(error.code, issues, { cause: error });
+  return new EngineError(error.code, issues, { issueCount: error.issueCount, cause: error });
 }
 
-/** `hash(tagged)`, where the value is the last part of `tagged` and lives at `path`. */
-function hashAt<T>(tagged: CanonicalValue[], path: string, hash: (value: CanonicalValue) => T): T {
+/** `hash(tagged)`, where the value is the last part of `tagged` and lives at `valuePath`. */
+function hashAt<T>(
+  tagged: CanonicalValue[],
+  valuePath: string,
+  hash: (value: CanonicalValue) => T,
+): T {
   try {
     return hash(tagged);
   } catch (error) {
-    throw relocated(error, tagged, path);
+    throw relocated(error, tagged, valuePath);
   }
 }
 
