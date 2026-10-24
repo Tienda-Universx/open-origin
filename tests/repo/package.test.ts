@@ -42,3 +42,12 @@ describe("package.json", () => {
     expect(loose).toEqual([]);
   });
 });
+
+describe("bunfig.toml", () => {
+  test("turns off Bun telemetry for every run of the repository (ADR 0018)", async () => {
+    const config = Bun.TOML.parse(
+      await Bun.file(new URL("../../bunfig.toml", import.meta.url)).text(),
+    ) as { telemetry?: unknown };
+    expect(config.telemetry).toBe(false);
+  });
+});

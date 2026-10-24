@@ -158,6 +158,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0015](../decisions/0015-automated-quality-gates.md) | Automated quality gates with Biome and oxlint |
 | [0016](../decisions/0016-github-repository-baseline.md) | GitHub repository baseline (ruleset, security features, Dependabot) |
 | [0017](../decisions/0017-no-webhooks-until-a-consumer-exists.md) | No webhooks until a consumer exists |
+| [0018](../decisions/0018-telemetry-off.md) | Telemetry off for the tools the repository runs |
 
 ## Related
 
