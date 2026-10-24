@@ -686,13 +686,14 @@ describe("engine purity controls (packages/engine/src)", () => {
  * one lives in a GritQL plugin of its own, registered for src minus its exception file, because
  * Biome adds up the plugins of every override that matches a file and cannot take one away:
  * canonical/order.ts may enumerate keys through `Object` (key-order.grit), canonical/encode.ts may
- * use the global `JSON` (global-json.grit), and canonical/value.ts the global `Map`
- * (global-map.grit). The global `Math` has a plugin of its own (global-math.grit) and no exception
- * yet. Each exception covers its exact file, and every other purity rule still applies to it.
+ * use the global `JSON` (global-json.grit), canonical/value.ts the global `Map` (global-map.grit),
+ * and int.ts the global `Math` (global-math.grit). Each exception covers its exact file, and every
+ * other purity rule still applies to it.
  */
 const ORDER_TS = `${ENGINE_SRC}/canonical/order.ts`;
 const ENCODE_TS = `${ENGINE_SRC}/canonical/encode.ts`;
 const VALUE_TS = `${ENGINE_SRC}/canonical/value.ts`;
+const INT_TS = `${ENGINE_SRC}/int.ts`;
 
 /** The overrides that configure noRestrictedGlobals: biome.json keeps one list, in one override. */
 const GLOBAL_OVERRIDES = (biomeConfig.overrides ?? []).filter(
@@ -738,6 +739,7 @@ const EXCEPTIONS: { file: string; probe: Probe }[] = [
   { file: ORDER_TS, probe: KEY_ENUMERATION_PROBE },
   { file: ENCODE_TS, probe: pluginProbe("JSON") },
   { file: VALUE_TS, probe: pluginProbe("Map") },
+  { file: INT_TS, probe: pluginProbe("Math") },
 ];
 
 /** Two rules reject this import, so two probes share it; a fixture holds it once. */
@@ -796,17 +798,17 @@ const EVERY_RULE: Probe[] = [
   },
 ];
 
-/**
- * The rules that have, or will have, an exception. Every path that looks like an excepted file,
- * or like the future home of the integer helpers, must be rejected by all of them.
- */
+/** The rules that have an exception: every path that looks like an excepted file breaks them all. */
 const EXEMPTABLE = [KEY_ENUMERATION_PROBE, ...Object.values(PLUGIN_PROBES)];
 
 const NEAR_MISSES = [
   `${ENGINE_SRC}/order.ts`,
   `${ENGINE_SRC}/encode.ts`,
   `${ENGINE_SRC}/value.ts`,
-  `${ENGINE_SRC}/int.ts`,
+  `${ENGINE_SRC}/canonical/int.ts`,
+  `${ENGINE_SRC}/digest/int.ts`,
+  `${ENGINE_SRC}/ints.ts`,
+  `${ENGINE_SRC}/int/int.ts`,
   `${ENGINE_SRC}/canonical/reorder.ts`,
   `${ENGINE_SRC}/canonical/encoder.ts`,
   `${ENGINE_SRC}/canonical/values.ts`,

@@ -5,7 +5,7 @@ The engine must turn the same inputs into the same results on every run and ever
 rules that make it so, as the code implements them;
 [ADR 0020](../decisions/0020-deterministic-core-design.md) records why they were chosen. Each
 section names its code and its tests, and the later T2 pull requests add one section per
-subsystem: digests, randomness, the world, `step`, and snapshots.
+subsystem still to come: the world, `step`, and snapshots.
 
 ## Canonical values
 
@@ -85,8 +85,8 @@ cannot disagree about what is canonical.
 
 ### Errors
 
-Every failure is an `EngineError` with a `code` (here only `invalid_value`; later batches add
-codes) and `issues`. An issue has a `path`, a JSON Pointer
+Every failure is an `EngineError` with a `code` (`invalid_value` here, and `tick_overflow` for
+[time](#time); later batches add codes) and `issues`. An issue has a `path`, a JSON Pointer
 ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) into the value (`""` is the whole value, and
 `~` and `/` in keys become `~0` and `~1`), and a `message`.
 
@@ -120,7 +120,95 @@ codes) and `issues`. An issue has a `path`, a JSON Pointer
   characters stable, so two hosts can disagree only on text with a character that one of them
   does not assign yet.
 
-### Lint exceptions
+## Digests
+
+A digest detects accidental divergence: a replay, a recovery, or a replica that computed something
+else. Code: `packages/engine/src/digest/`, `src/canonical/utf8.ts`, and `src/int.ts`. Tests:
+`packages/engine/test/` (`murmur3`, `digest`, `lanes`, `utf8`, and `int`).
+
+`digest(value)` is MurmurHash3 x86_128 with seed 0 over the UTF-8 bytes of `canonicalize(value)`,
+written as the words h1, h2, h3, and h4 in 8 lowercase hexadecimal digits each: 32 characters. A
+value that is not canonical throws `invalid_value`, as `canonicalize` does. The digest adds no
+domain tag; callers hash a tagged array such as `["chunk", key, chunk]` (ADR 0020).
+
+| Part | What the tests check |
+|---|---|
+| MurmurHash3 port (`murmur3.ts`) | SMHasher's verification procedure gives 0xB0F57EE3 for x86_32 and 0xB3ECE62A for x86_128, the values in SMHasher's `src/main.cpp`; published vectors for both variants pass; a view into a larger buffer hashes as a copy |
+| Word variant | x86_32 over u32 words equals x86_32 over their little-endian bytes, on random words and seeds |
+| UTF-8 (`utf8.ts`) | The bytes equal `TextEncoder`'s on every length boundary and on random well-formed text with astral characters, in an array of exactly their length; a lone surrogate throws `invalid_value` with its UTF-16 offset |
+| Lanes (`lanes.ts`) | Addition and subtraction modulo 2^128 over four u32 lanes, most significant first, equal BigInt's, and a sum does not depend on the order of its terms |
+| `digest` | Pinned digests, cross-checked against SMHasher's C reference when they were written; key order does not change a digest |
+
+What a digest does not do:
+
+- **Resist an attacker.** MurmurHash3 is not cryptographic: inputs with equal hashes can be built
+  on purpose. Integrity against corruption and tampering is SHA-256 over the snapshot bytes, in
+  the adapter (ADR 0020).
+- **Prove the absence of collisions.** The tests check the port against the reference, not the
+  collision rate; ADR 0020 records why 128 bits.
+- **Compose the state root yet.** The lanes are the arithmetic that `stateRoot` will use; the
+  world and its chunk sums arrive in a later pull request.
+
+## Randomness
+
+The engine draws random numbers with `ctr-mix32@1` (ADR 0020), a counter-based generator: draw n
+of a stream for a key is MurmurHash3 x86_32 over the u32 words `[s1, stream, key.length, ...key,
+n]` with seed s0, where `[s0, s1]` is the world seed. Code: `packages/engine/src/rng/`. Tests:
+`packages/engine/test/` (`mix32` and `random`).
+
+| Function | Contract |
+|---|---|
+| `mix32(seed, stream, key, n)` | One draw. Every input must be u32 words; all problems are reported at once, with the paths `/seed/i`, `/stream`, `/key/i`, and `/n`, as `invalid_value` |
+| `streamId(name)` | MurmurHash3 x86_32 of the UTF-8 of `name` with seed 0 |
+| `tickKey(tick, entity)` | `[tickLo, tickHi, entityLo, entityHi]`: each integer as the two u32 words of its 64-bit two's complement, low first. `tick` must be a tick; `entity` may be any safe integer |
+| `new DrawSequence(seed, stream, key, next = 0)` | The draws of one stream for one key, from the counter `next`. It validates its inputs once and copies the key |
+| `sequence.u32()` | The draw at the counter, which then advances. A sequence has 2^32 counters; one more draw throws `invalid_value` |
+| `sequence.int(bound)` | An integer in [0, bound) for an integer bound in [1, 2^32], without modulo bias: a draw at or above `2^32 - (2^32 mod bound)` is rejected, and each retry uses the next counter |
+| `sequence.permutation(count)` | 0 to count - 1 in random order: a Fisher-Yates shuffle that draws `int(i + 1)` for i from count - 1 down to 1 |
+
+What the tests check:
+
+- a draw depends only on its seed, stream, key, and counter, so more draws for one entity or from
+  another stream never shift the draws of the others;
+- pinned draws, cross-checked against SMHasher's C reference when they were written, and `mix32`
+  equal to MurmurHash3 x86_32 over the documented words on random inputs;
+- with the bound 2^31 + 1, about half of the draws are rejected, and each result and the final
+  counter equal a replay through `mix32`; the bounds 1 and 2^32 use one counter per draw;
+- on fixed inputs, 100,000 draws fill 16 buckets with a chi-square below 37.697 (p = 0.001 for 15
+  degrees of freedom), by their low bits (`int(16)`) and by their high bits; flipping any one of
+  192 input bits flips between 15 and 17 output bits on average over 256 samples; permutations of 3 and 4
+  items are uniform by chi-square over 6,000 and 24,000 keys. The critical values come from the
+  [NIST/SEMATECH e-Handbook, table 1.3.6.7.4](https://www.itl.nist.gov/div898/handbook/eda/section3/eda3674.htm).
+
+What the generator does not do:
+
+- **Hide its draws.** Anyone with the seed computes every draw, which is why the snapshot that
+  holds the seed is C3 (ADR 0020). It is not a cryptographic generator.
+- **Pass a statistical battery.** The checks above are smoke tests on fixed samples; no PractRand
+  or TestU01 battery has been run.
+- **Keep counters across calls yet.** The per-tick counter for each stream and entity arrives with
+  the step context, and so does the ruleset check that rejects colliding stream ids, streams
+  shared by two owners, and the reserved `engine.` prefix.
+
+## Time
+
+The engine knows only ticks (ADR 0020). Code: `packages/engine/src/time/tick.ts`. Tests:
+`packages/engine/test/tick.test.ts`.
+
+- A tick is a safe integer from 0.
+- `nextTick(tick)` is `tick + 1`; at `Number.MAX_SAFE_INTEGER`, whose successor is not a safe
+  integer, it throws `tick_overflow`.
+- `simSeconds(tick, simSecondsPerTick)` is `tick * simSecondsPerTick`, for a positive safe integer
+  of seconds per tick. A product that is not a safe integer throws `tick_overflow`: an exact
+  product below 2^53 is computed exactly, and a larger one rounds to 2^53 or more, so the check
+  needs no division.
+- Anything that is not a tick, or a seconds per tick that is not a positive safe integer, throws
+  `invalid_value` with every invalid argument.
+
+Pacing ticks in real time (`TICK_RATE_HZ`) belongs to the scheduler (T6), and the calendar waits
+for the batch that defines the length of a day.
+
+## Lint exceptions
 
 Each reviewed exception lets one file break one purity rule. That rule lives in a GritQL plugin of
 its own, which `biome.json` registers for `src/**` except that file: Biome adds up the plugins of
@@ -133,9 +221,9 @@ it. The list therefore stays one list, in one override.
 | `canonical/order.ts` | Key enumeration through `Object`: it lists own keys with `getOwnPropertyNames` and `getOwnPropertySymbols`, and sorts them | `key-order.grit` |
 | `canonical/encode.ts` | The global `JSON` | `global-json.grit` |
 | `canonical/value.ts` | The global `Map`, to look up the objects a walk has entered; it never iterates one | `global-map.grit` |
+| `int.ts` | The global `Math`, for `Math.imul` and `Math.floor`, which ECMA-262 defines exactly | `global-math.grit` |
 
-`Math` has a plugin of the same kind, `global-math.grit`, and no exception yet. A global's plugin
-reports every reference to the name outside a type: member access, calls, `new`, aliasing,
+A global's plugin reports every reference to the name outside a type: member access, calls, `new`, aliasing,
 arguments, shorthand properties, and `typeof`, even where a local declaration shadows the global.
 Property names, keys, and types are not references to it. Assigning to any of these globals is
 rejected everywhere by Biome's recommended `noGlobalAssign`.

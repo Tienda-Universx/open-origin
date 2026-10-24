@@ -4,8 +4,12 @@
  */
 export type Issue = { readonly path: string; readonly message: string };
 
-/** Why the engine refused an operation. Later batches add their codes here. */
-export type EngineErrorCode = "invalid_value";
+/**
+ * Why the engine refused an operation: `invalid_value` for a value or argument it cannot accept,
+ * `tick_overflow` for simulation time that would pass Number.MAX_SAFE_INTEGER. Later batches add
+ * their codes here.
+ */
+export type EngineErrorCode = "invalid_value" | "tick_overflow";
 
 /** How many issues an EngineError keeps; it still counts the ones it drops. */
 export const MAX_ISSUES = 50;
@@ -15,6 +19,11 @@ export type EngineErrorOptions = {
   readonly issueCount?: number;
   readonly cause?: unknown;
 };
+
+/** `value` for a message: a number as JavaScript writes it, anything else by its type alone. */
+export function describeValue(value: unknown): string {
+  return typeof value === "number" ? `${value}` : `a value of type ${typeof value}`;
+}
 
 /** `path` for a message: the empty JSON Pointer names the whole value. */
 export function describePath(path: string): string {

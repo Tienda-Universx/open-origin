@@ -155,7 +155,7 @@
       "plugins": ["./packages/engine/lint/global-json.grit"]
     },
     {
-      "includes": ["packages/engine/src/**"],
+      "includes": ["packages/engine/src/**", "!packages/engine/src/int.ts"],
       "plugins": ["./packages/engine/lint/global-math.grit"]
     },
     {
