@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { findInvisibleChars } from "./hygiene.ts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { repoFiles } from "./files.ts";
+import { findInvisibleChars, readTextKeepingBom } from "./hygiene.ts";
 
 const ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
-const TEXT_FILES = "**/*.{ts,tsx,js,json,jsonc,yml,yaml,md,css,html}";
-const IGNORED = /(?:^|[/])(?:[.]git|node_modules|[.]codegraph|[.]atl)[/]/;
+const TEXT_FILE = /[.](?:ts|tsx|js|json|jsonc|yml|yaml|md|css|html)$/;
 
 describe("findInvisibleChars", () => {
   test("accepts ordinary text, including accents and emoji", () => {
@@ -26,14 +29,32 @@ describe("findInvisibleChars", () => {
   });
 });
 
+describe("readTextKeepingBom", () => {
+  test("keeps a leading byte order mark so the scan can report it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-origin-bom-"));
+    try {
+      const path = join(dir, "bom.md");
+      writeFileSync(path, new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]));
+      expect(findInvisibleChars(await readTextKeepingBom(path))).toEqual([
+        { line: 1, codePoint: "U+FEFF" },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("repository hygiene", () => {
   test("text files contain no invisible or bidirectional control characters", async () => {
+    const files = repoFiles(ROOT);
+    // Guard against a vacuous pass: the scan must see this very file.
+    expect(files).toContain("tests/repo/hygiene.test.ts");
     const offenders: string[] = [];
-    for await (const path of new Bun.Glob(TEXT_FILES).scan({ cwd: ROOT, dot: true })) {
-      if (IGNORED.test(path)) continue;
-      for (const { line, codePoint } of findInvisibleChars(
-        await Bun.file(`${ROOT}${path}`).text(),
-      )) {
+    for (const path of files.filter((file) => TEXT_FILE.test(file))) {
+      const absolute = `${ROOT}${path}`;
+      // git still lists a tracked file deleted from the working tree; there is nothing to read.
+      if (!(await Bun.file(absolute).exists())) continue;
+      for (const { line, codePoint } of findInvisibleChars(await readTextKeepingBom(absolute))) {
         offenders.push(`${path}:${line} ${codePoint}`);
       }
     }

@@ -19,3 +19,10 @@ export function findInvisibleChars(text: string): InvisibleChar[] {
   });
   return found;
 }
+
+const UTF8_KEEPING_BOM = new TextDecoder("utf-8", { ignoreBOM: true });
+
+/** Reads a file as UTF-8 and keeps a leading BOM, which Bun.file().text() silently drops. */
+export async function readTextKeepingBom(path: string): Promise<string> {
+  return UTF8_KEEPING_BOM.decode(await Bun.file(path).bytes());
+}
