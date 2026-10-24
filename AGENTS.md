@@ -238,6 +238,14 @@ See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choi
   GitHub retargets the child of a stacked PR; close and reopen it if its CI does not run.
 - Push and open pull requests with a user-authenticated token. In T1, pushes and pull requests made
   with a Codespace's built-in credentials did not start GitHub Actions workflows.
+- The maintainer delegated delivery decisions (tracker L26), so the agent pushes, opens pull
+  requests, and merges without asking. A pull request is merged only when:
+  - CI is green on its head;
+  - independent verification and native review left no open blocker;
+  - its diff holds only its own commits.
+
+  Report each merge with its evidence. Deployments, paid services, and cloud resources still need
+  explicit authorization ([ADR 0012](docs/decisions/0012-branching-commits-and-pull-requests.md)).
 - Tests and docs ship with the behavior they cover.
 
 ## Documentation map

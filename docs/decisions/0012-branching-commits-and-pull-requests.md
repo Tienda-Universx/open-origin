@@ -25,7 +25,7 @@ We will deliver every batch through branches and pull requests into `main`.
 | Merge commits | PRs are merged with a merge commit (no squash, no rebase-merge) that keeps the work-unit commits. The merge commit uses GitHub's default merge message, which carries the PR title, never the PR body | Maintainer delegation, 2026-10-24 (tracker L11, L12) |
 | Merging chained (stacked) PRs | Merge the parent PR first; then retarget the child PR to `main` and merge it after its CI passes | Maintainer delegation, 2026-10-24 (tracker L11, L12) |
 | User-authenticated pushes | Pushes and PRs use a user-authenticated token. Observed in T1: pushes and PRs made with the Codespace's built-in credentials did not start workflows | Tracker L10 |
-| Explicit authorization | Push, opening PRs, and any deployment happen only with the maintainer's explicit authorization at that moment | Plan §P criterion 8; vision §32 |
+| Delivery decisions | The agent pushes, opens PRs, and merges without asking. It merges a PR only when CI is green on the PR's head, independent verification and native review left no open blocker, and the diff holds only the PR's own commits. Each merge is reported with its evidence. Deployments, paid services, and cloud resources still need the maintainer's explicit authorization at that moment | Maintainer delegation, 2026-10-24 (tracker L26), replacing plan §P criterion 8 for repository delivery; vision §32 |
 
 - An architectural change adds or supersedes an ADR in the same pull request
   ([0001](0001-record-architecture-decisions.md)).
