@@ -2,18 +2,18 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { REPO_ROOT } from "./files.ts";
 
 /**
- * Proves that each automated quality control really fires: every fixture breaks one rule and is
+ * Proves that each automated quality control fires: every fixture breaks one rule and is
  * linted with the repository's own configuration. A control that stops firing fails here.
  */
 
-const ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "open-origin-lint-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 // Biome reads the repository configuration from the scratch directory, outside git.
-const biomeConfig = await Bun.file(`${ROOT}biome.json`).json();
+const biomeConfig = await Bun.file(`${REPO_ROOT}biome.json`).json();
 writeFileSync(
   join(scratch, "biome.json"),
   JSON.stringify({ ...biomeConfig, vcs: { enabled: false } }),
@@ -29,9 +29,9 @@ function run(tool: Tool, files: Record<string, string>): LintResult {
   const args =
     tool === "biome"
       ? ["biome", "lint", `--config-path=${scratch}`, ...paths]
-      : ["oxlint", "-c", `${ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
+      : ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
   // Run from the repository root so bunx finds the locally installed tools.
-  const result = Bun.spawnSync(["bunx", "--no-install", "--bun", ...args], { cwd: ROOT });
+  const result = Bun.spawnSync(["bunx", "--no-install", "--bun", ...args], { cwd: REPO_ROOT });
   return {
     exitCode: result.exitCode,
     output: `${result.stdout.toString()}${result.stderr.toString()}`,

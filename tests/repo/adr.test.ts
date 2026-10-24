@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type AdrFile, validateAdr, validateAdrSet } from "./adr.ts";
-import { repoFiles } from "./files.ts";
+import { REPO_ROOT, repoFiles } from "./files.ts";
 
-const ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
 const DECISIONS = "docs/decisions/";
 
 function adr(
@@ -379,9 +378,9 @@ describe("repository ADRs", () => {
     const files: AdrFile[] = [];
     // Every file git tracks or would track there, whatever its name (dotfiles, .MD, .markdown),
     // so a misnamed ADR cannot be skipped and local-only files cannot fail the check.
-    for (const path of repoFiles(ROOT)) {
+    for (const path of repoFiles(REPO_ROOT)) {
       if (!path.startsWith(DECISIONS)) continue;
-      const file = Bun.file(`${ROOT}${path}`);
+      const file = Bun.file(`${REPO_ROOT}${path}`);
       if (await file.exists())
         files.push({ name: path.slice(DECISIONS.length), content: await file.text() });
     }
