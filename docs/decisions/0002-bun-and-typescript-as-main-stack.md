@@ -29,7 +29,8 @@ table does not override it.
 
 - Node 24.21 is present in the Codespace but is not used as a runtime (plan §B).
 - Scripts never depend on Node. CLIs with a Node shebang (for example `tsc`) run with
-  `bunx --bun`, which runs the locally installed CLI with Bun (`package.json` scripts, `AGENTS.md`,
+  `bunx --no-install --bun`, which runs the locally installed CLI with Bun and never downloads a
+  registry package when it is missing (`package.json` scripts, `AGENTS.md`,
   tracker L5; plan §P writes it as `bun --bun`).
 - CI reads the Bun version from `package.json` through `oven-sh/setup-bun` (`bun-version-file`).
 - Go is not adopted. It may be proposed only through a new ADR backed by reproducible benchmarks
