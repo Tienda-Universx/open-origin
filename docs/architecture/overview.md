@@ -131,7 +131,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `packages/agents/` | T4 | Policies, memory, prompts, provenance |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
-| `tests/` | T1, T6 | T1: repository checks in `tests/repo/` (see `AGENTS.md`, Automated controls); T6: end-to-end synchronization, recovery and observer-invariance tests |
+| `tests/` | T1, T6, T7 | T1: repository checks in `tests/repo/` (see `AGENTS.md`, Automated controls); T6: end-to-end synchronization and observer-invariance tests; T7: crash-recovery tests ([0019](../decisions/0019-end-to-end-testing-strategy.md)) |
 | `docs/` | T1 | Vision, plan, tracker, ADRs, architecture; determinism spec in T2, persistence spec in T7 |
 | `.github/workflows/ci.yml` | T1 | CI |
 | `docker-compose.yml` | T7 | Local Postgres |
@@ -159,6 +159,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0016](../decisions/0016-github-repository-baseline.md) | GitHub repository baseline (ruleset, security features, Dependabot) |
 | [0017](../decisions/0017-no-webhooks-until-a-consumer-exists.md) | No webhooks until a consumer exists |
 | [0018](../decisions/0018-telemetry-off.md) | Telemetry off for the tools the repository runs |
+| [0019](../decisions/0019-end-to-end-testing-strategy.md) | End-to-end testing strategy: `bun test` for processes, Playwright from T8 |
 
 ## Related
 
