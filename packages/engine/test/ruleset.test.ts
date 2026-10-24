@@ -3,6 +3,7 @@ import { murmur3x86_32 } from "../src/digest/murmur3.ts";
 import { streamId } from "../src/index.ts";
 import { type CapturedRuleset, captureRuleset } from "../src/world/ruleset.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
+import { revokedProxy } from "./support/revoked.ts";
 import { rulesetWith, type TestRuleset, testRuleset } from "./support/rulesets.ts";
 
 /**
@@ -170,11 +171,28 @@ describe("captureRuleset gives each stream one owner", () => {
     expect(rulesetIssues(ruleset)).toEqual([
       {
         path: "/systems/1/streams/0",
-        message: 'the stream "rain" already belongs to system "a": a stream has one owner',
+        message:
+          'the stream "rain" already belongs to system "a" at /systems/0: a stream has one owner',
       },
       {
         path: "/commands/dig/streams/0",
-        message: 'the stream "wind" already belongs to system "b": a stream has one owner',
+        message:
+          'the stream "wind" already belongs to system "b" at /systems/1: a stream has one owner',
+      },
+    ]);
+  });
+
+  test("tells apart two systems with the same name that share a stream", () => {
+    const ruleset = rulesetWith({ systems: [system("a", ["rain"]), system("a", ["rain"])] });
+    expect(rulesetIssues(ruleset)).toEqual([
+      {
+        path: "/systems/1/name",
+        message: 'the system "a" is declared twice: system names must be unique',
+      },
+      {
+        path: "/systems/1/streams/0",
+        message:
+          'the stream "rain" already belongs to system "a" at /systems/0: a stream has one owner',
       },
     ]);
   });
@@ -257,5 +275,81 @@ describe("captureRuleset reads each member once, through its descriptor", () => 
           "the array is sparse: its length is 4294967295, but it has only 0 other own properties",
       },
     ]);
+  });
+});
+
+describe("captureRuleset reports every missing version", () => {
+  test("each at its own path", () => {
+    const ruleset = rulesetWith({ versions: { ruleset: "test@1" } });
+    expect(rulesetIssues(ruleset)).toEqual([
+      { path: "/versions/brain", message: "the version is missing" },
+      { path: "/versions/generator", message: "the version is missing" },
+    ]);
+    expect(rulesetIssues(rulesetWith({ versions: {} })).map(({ path }) => path)).toEqual([
+      "/versions/brain",
+      "/versions/generator",
+      "/versions/ruleset",
+    ]);
+  });
+});
+
+describe("captureRuleset reads its records as canonical records are read", () => {
+  const handler = { check: noop, apply: noop };
+  const NOT_ENUMERABLE = "the property is not enumerable: only enumerable data properties are read";
+
+  test("rejects commands and versions that are class instances", () => {
+    class Commands {
+      dig = handler;
+    }
+    class Versions {
+      ruleset = "r";
+      generator = "g";
+      brain = "b";
+    }
+    expect(
+      rulesetIssues(rulesetWith({ commands: new Commands(), versions: new Versions() })),
+    ).toEqual([
+      { path: "/versions", message: "the versions must be a record of strings" },
+      { path: "/commands", message: "the commands must be a record of handlers" },
+    ]);
+  });
+
+  test("reports symbol keys and keys that are not enumerable", () => {
+    const commands = Object.defineProperty({ [Symbol("dig")]: handler }, "hide", {
+      value: handler,
+      enumerable: false,
+    });
+    expect(rulesetIssues(rulesetWith({ commands }))).toEqual([
+      { path: "/commands", message: "the object has symbol keys (1): keys must be strings" },
+      { path: "/commands/hide", message: NOT_ENUMERABLE },
+    ]);
+  });
+
+  test("escapes command types in issue paths, as JSON Pointers require", () => {
+    expect(rulesetIssues(rulesetWith({ commands: { "a/b~c": 1 } }))).toEqual([
+      { path: "/commands/a~1b~0c", message: "a command handler must be a record" },
+    ]);
+  });
+});
+
+describe("captureRuleset reports an object that throws while read, with its cause", () => {
+  test.each<[string, unknown, string]>([
+    ["the ruleset", revokedProxy(), ""],
+    ["the versions", rulesetWith({ versions: revokedProxy() }), "/versions"],
+    ["the systems", rulesetWith({ systems: revokedProxy() }), "/systems"],
+    ["a system", rulesetWith({ systems: [revokedProxy()] }), "/systems/0"],
+    ["the commands", rulesetWith({ commands: revokedProxy() }), "/commands"],
+    ["a handler", rulesetWith({ commands: { dig: revokedProxy() } }), "/commands/dig"],
+    [
+      "a list of streams",
+      rulesetWith({ commands: { dig: { streams: revokedProxy(), check: noop, apply: noop } } }),
+      "/commands/dig/streams",
+    ],
+  ])("%s", (_name, ruleset, path) => {
+    const error = engineErrorOf(() => captureRuleset(ruleset));
+    expect(error.code).toBe("invalid_ruleset");
+    expect(error.issues.map((issue) => issue.path)).toEqual([path]);
+    expect(error.issues[0]?.message).toStartWith("the object threw while being read: TypeError");
+    expect(error.cause).toBeInstanceOf(TypeError);
   });
 });

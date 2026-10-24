@@ -39,6 +39,17 @@ describe("ChunkIndex", () => {
     expect(index.size).toBe(6);
   });
 
+  test("counts pending keys in its size, before any sort", () => {
+    const index = new ChunkIndex<number>();
+    expect(index.size).toBe(0);
+    index.add("1,0", 0);
+    index.add("0,0", 1);
+    expect([index.size, index.pendingCount]).toEqual([2, 2]);
+    index.sortedKeys();
+    index.add("2,0", 2);
+    expect([index.size, index.pendingCount]).toEqual([3, 1]);
+  });
+
   test("returns a fresh array each time, so a caller cannot change the order", () => {
     const index = indexOf(["1,0", "0,0"]);
     const keys = index.sortedKeys();

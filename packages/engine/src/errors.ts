@@ -97,12 +97,16 @@ export class IssueList {
     if (cause !== undefined && this.#cause === undefined) this.#cause = { error: cause };
   }
 
-  /** Throws an EngineError with `code` and the collected issues, if there are any. */
-  throwIfAny(code: EngineErrorCode): void {
-    if (this.count === 0) return;
+  /** An EngineError with `code`, the collected issues, and the first cause reported. */
+  error(code: EngineErrorCode): EngineError {
     const issueCount = this.count;
     const options =
       this.#cause === undefined ? { issueCount } : { issueCount, cause: this.#cause.error };
-    throw new EngineError(code, this.issues, options);
+    return new EngineError(code, this.issues, options);
+  }
+
+  /** Throws an EngineError with `code` and the collected issues, if there are any. */
+  throwIfAny(code: EngineErrorCode): void {
+    if (this.count > 0) throw this.error(code);
   }
 }

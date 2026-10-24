@@ -4,7 +4,7 @@
  */
 import { copyCanonicalReported } from "../canonical/copy.ts";
 import { type CanonicalValue, describeThrown, pointer } from "../canonical/value.ts";
-import { EngineError, type Issue, IssueList } from "../errors.ts";
+import { type Issue, IssueList } from "../errors.ts";
 import { readSeed, type Seed } from "../rng/mix32.ts";
 import { secondsPerTickProblem } from "../time/tick.ts";
 import { ENGINE_VERSION } from "../version.ts";
@@ -12,7 +12,7 @@ import { chunkTerm, digestCache } from "./checksum.ts";
 import { type ChunkKey, readChunkKey } from "./chunk.ts";
 import { ChunkIndex } from "./chunk-index.ts";
 import type { WorldInit, WorldOptions } from "./contracts.ts";
-import { isRecord, readMember, readRecordKeys, UNREAD, under } from "./members.ts";
+import { expectRecord, isRecord, readMember, readRecordKeys, UNREAD, under } from "./members.ts";
 import { type CapturedRuleset, captureRuleset } from "./ruleset.ts";
 import { type ChunkEntry, type Kernel, newWorld, type World, type WorldState } from "./world.ts";
 
@@ -49,7 +49,7 @@ function readSecondsPerTick(init: object, issues: IssueList): number {
   return typeof value === "number" ? value : 0;
 }
 
-/** Whether `issue` is a record { path, message } whose path is a JSON Pointer. */
+/** Whether `issue`, part of a canonical copy, is a record { path, message } with a JSON Pointer. */
 function isIssue(issue: unknown): issue is Issue {
   if (!isRecord(issue) || !("path" in issue) || !("message" in issue)) return false;
   const { path, message } = issue;
@@ -123,10 +123,7 @@ function readChunks(
 
 function readAudit(options: unknown, issues: IssueList): boolean {
   if (options === undefined) return false;
-  if (!isRecord(options)) {
-    issues.report("/options", "the options must be a record");
-    return false;
-  }
+  if (!expectRecord(options, "/options", "the options must be a record", issues)) return false;
   const audit = readMember(options, "audit", "/options/audit", issues);
   if (audit === undefined || typeof audit === "boolean") return audit === true;
   if (audit !== UNREAD)
@@ -143,15 +140,20 @@ function rulesetOf(init: object): CapturedRuleset {
 }
 
 /**
- * A new world at tick 0, epoch 0, with the next entity id 1, from the definition `init`.
+ * A new world at tick 0, epoch 0, with the next entity id 1, from the definition `init`. Issue
+ * paths point into `{ init, options }`, except those of invalid_ruleset, which point into the
+ * ruleset. The checks run in this order, and each of the first three stops the others:
  *
- * - The ruleset is captured first (captureRuleset), because its validators check the data: a
- *   broken ruleset throws EngineError("invalid_ruleset"), with paths into the ruleset.
- * - The seed must be two u32 words and simSecondsPerTick a positive safe integer. The global value
- *   and the chunks, a record keyed by chunk key (parseChunkKey), are validated and copied as
- *   copyCanonical does, then checked by the ruleset's validators. `options.audit` is a boolean.
- * - Every problem is reported in one EngineError("invalid_input"), with its path into
- *   `{ init, options }`; a definition that is not a record is the only issue reported alone.
+ * 1. `init` must be a record that can be read: otherwise one invalid_input issue at `/init`.
+ * 2. Its `ruleset` member must be an own, enumerable data property that can be read: otherwise
+ *    one invalid_input issue at `/init/ruleset`.
+ * 3. The ruleset is captured (captureRuleset), because its validators check the data: a broken
+ *    ruleset throws invalid_ruleset with all its problems, and a missing ruleset, or one that is
+ *    not a record, is one issue at the path "".
+ * 4. Every other problem is reported in one invalid_input: the seed must be two u32 words and
+ *    simSecondsPerTick a positive safe integer; the global value and each chunk, in a plain record
+ *    keyed by chunk key (parseChunkKey), are validated and copied as copyCanonical does, then
+ *    checked by the ruleset's validators; `options` is a record whose `audit` is a boolean.
  *
  * Each member of `init` and `options` is read once, through its own descriptor.
  */
@@ -159,13 +161,11 @@ export function createWorld<G extends CanonicalValue, C extends CanonicalValue>(
   init: WorldInit<G, C>,
   options?: WorldOptions,
 ): World<G, C> {
-  if (!isRecord(init)) {
-    throw new EngineError("invalid_input", [
-      { path: "/init", message: "the world definition must be a record" },
-    ]);
+  const issues = new IssueList();
+  if (!expectRecord(init, "/init", "the world definition must be a record", issues)) {
+    throw issues.error("invalid_input");
   }
   const ruleset = rulesetOf(init);
-  const issues = new IssueList();
   const seed = readWorldSeed(init, issues);
   const simSecondsPerTick = readSecondsPerTick(init, issues);
   const global = readGlobal(init, ruleset, issues);

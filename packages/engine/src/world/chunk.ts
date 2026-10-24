@@ -4,7 +4,8 @@
  * so a key can serve as a canonical record key and a digest input.
  */
 import { numberProblem } from "../canonical/value.ts";
-import { describeValue, EngineError, type Issue } from "../errors.ts";
+import { describeValue, EngineError, IssueList } from "../errors.ts";
+import { expectRecord, readMember, UNREAD } from "./members.ts";
 
 /** The position of a chunk on the world grid. */
 export type ChunkCoord = { readonly x: number; readonly y: number };
@@ -28,22 +29,30 @@ function coordinateProblem(value: unknown): string | undefined {
 }
 
 /**
+ * The coordinate `axis` of `coord`, read once through its own descriptor; otherwise 0, after an
+ * issue at `/axis`.
+ */
+function readCoordinate(coord: object, axis: "x" | "y", issues: IssueList): number {
+  const value = readMember(coord, axis, `/${axis}`, issues);
+  if (value === UNREAD) return 0;
+  const problem = coordinateProblem(value);
+  if (problem !== undefined) issues.report(`/${axis}`, problem);
+  return typeof value === "number" && problem === undefined ? value : 0;
+}
+
+/**
  * The key of `coord`. Throws EngineError("invalid_value") with every coordinate that is not a
- * safe integer, or that is -0, which is not canonical.
+ * safe integer, or that is -0, which is not canonical. The coordinates are read as every host
+ * object is (world/members.ts): own data properties only, and a throw is an issue.
  */
 export function chunkKey(coord: ChunkCoord): ChunkKey {
-  if (typeof coord !== "object" || coord === null) {
-    throw new EngineError("invalid_value", [
-      { path: "", message: "the chunk coordinates must be a record { x, y }" },
-    ]);
+  const issues = new IssueList();
+  if (!expectRecord(coord, "", "the chunk coordinates must be a record { x, y }", issues)) {
+    throw issues.error("invalid_value");
   }
-  const { x, y } = coord;
-  const issues: Issue[] = [];
-  const xProblem = coordinateProblem(x);
-  if (xProblem !== undefined) issues.push({ path: "/x", message: xProblem });
-  const yProblem = coordinateProblem(y);
-  if (yProblem !== undefined) issues.push({ path: "/y", message: yProblem });
-  if (issues.length > 0) throw new EngineError("invalid_value", issues);
+  const x = readCoordinate(coord, "x", issues);
+  const y = readCoordinate(coord, "y", issues);
+  issues.throwIfAny("invalid_value");
   return `${x},${y}`;
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type ChunkCoord, chunkKey, parseChunkKey } from "../src/index.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
+import { revokedProxy } from "./support/revoked.ts";
 
 /**
  * Chunk keys (plan §4): "x,y", both coordinates safe integers written in canonical decimal, so
@@ -48,6 +49,29 @@ describe("chunkKey rejects coordinates", () => {
     // Deliberately ill-typed, as a JavaScript caller can be.
     const coord = { x, y: 0 } as unknown as ChunkCoord;
     expect(engineErrorOf(() => chunkKey(coord)).issues).toEqual([{ path: "/x", message }]);
+  });
+
+  test("that throw while read, as invalid_value with the thrown value as the cause", () => {
+    const coord = revokedProxy() as ChunkCoord;
+    const error = engineErrorOf(() => chunkKey(coord));
+    expect(error.issues.map(({ path }) => path)).toEqual([""]);
+    expect(error.issues[0]?.message).toStartWith("the object threw while being read: TypeError");
+    expect(error.cause).toBeInstanceOf(TypeError);
+  });
+
+  test("behind accessors, without running them", () => {
+    let calls = 0;
+    const coord = Object.defineProperty({ y: 0 }, "x", {
+      get: () => {
+        calls += 1;
+        return 1;
+      },
+      enumerable: true,
+    }) as ChunkCoord;
+    expect(engineErrorOf(() => chunkKey(coord)).issues).toEqual([
+      { path: "/x", message: "the property is an accessor: only data properties are read" },
+    ]);
+    expect(calls).toBe(0);
   });
 
   test("that are not a record", () => {

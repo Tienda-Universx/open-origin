@@ -1,9 +1,12 @@
 /**
  * Reads the host objects that cannot be canonical values because they hold functions: the
- * ruleset, the world definition, and the options. As at every boundary (ADR 0020, ownership),
- * each member is read once, through its own descriptor, so a getter never runs and a Proxy's
- * `get` trap never fires; accessors are reported, and so is an object that throws while read.
- * The canonical parts of these objects go through copyCanonicalReported instead.
+ * ruleset, the world definition, the options, and chunk coordinates. As at every boundary (ADR
+ * 0020, ownership), each member is read once, through its own descriptor, so a getter never runs
+ * and a Proxy's `get` trap never fires. Only own, enumerable data properties are read, as in
+ * canonical records. Every inspection of a host object, `Array.isArray` and the prototype
+ * included, runs guarded: an object that throws while read, such as a revoked Proxy, is an issue
+ * at its path with the thrown value as its cause, never a raw exception. The canonical parts of
+ * these objects go through copyCanonicalReported instead.
  */
 import { ownKeyCount, sortedOwnKeys, symbolKeyCount } from "../canonical/order.ts";
 import {
@@ -15,6 +18,7 @@ import {
 } from "../canonical/value.ts";
 
 const ACCESSOR = "the property is an accessor: only data properties are read";
+const NOT_ENUMERABLE = "the property is not enumerable: only enumerable data properties are read";
 
 /**
  * What readMember returns for a member it already reported, an accessor or one that threw, so
@@ -22,21 +26,13 @@ const ACCESSOR = "the property is an accessor: only data properties are read";
  */
 export const UNREAD: unique symbol = Symbol("unread");
 
-/** Whether `value` is a record: an object that is not an array. */
+/**
+ * Whether `value` is a record: an object that is not an array. Only for values the engine owns,
+ * such as copies: `Array.isArray` throws on a revoked Proxy, so host values go through
+ * expectRecord.
+ */
 export function isRecord(value: unknown): value is object {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Whether `value` is a record; if not, an issue at `path`, unless readMember reported it. */
-export function expectRecord(
-  value: unknown,
-  path: string,
-  message: string,
-  sink: IssueSink,
-): value is object {
-  if (isRecord(value)) return true;
-  if (value !== UNREAD) sink.report(path, message);
-  return false;
 }
 
 /** A sink that reports every issue to `sink`, with `prefix` before its path. */
@@ -60,17 +56,26 @@ function guarded<T>(path: string, sink: IssueSink, read: () => T): T | undefined
 }
 
 /**
- * The own string keys of `object` in canonical order (canonical/order.ts), never in insertion
- * order; none, after an issue at `path`, when listing them throws.
+ * Whether the host value `value` is a record. If not, an issue at `path`: `message`, or what it
+ * threw while inspected; none when readMember already reported it.
  */
-export function readKeys(object: object, path: string, sink: IssueSink): string[] {
-  return guarded(path, sink, () => sortedOwnKeys(object)) ?? [];
+export function expectRecord(
+  value: unknown,
+  path: string,
+  message: string,
+  sink: IssueSink,
+): value is object {
+  if (value === UNREAD) return false;
+  const record = guarded(path, sink, () => isRecord(value));
+  if (record === false) sink.report(path, message);
+  return record === true;
 }
 
 /**
- * `value` and its own string keys, sorted, if it is a plain record as canonical records are: an
- * object whose prototype is Object.prototype or null, without symbol keys. Undefined after an
- * issue at `path`; `notRecord` is the message for a value that is not such a record.
+ * `value` and its own string keys, sorted by UTF-16 code units (canonical/order.ts), never in
+ * insertion order, if it is a plain record as canonical records are: an object whose prototype is
+ * Object.prototype or null, without symbol keys. Undefined after an issue at `path`; `notRecord`
+ * is the message for a value that is not such a record.
  */
 export function readRecordKeys(
   value: unknown,
@@ -93,7 +98,8 @@ export function readRecordKeys(
 
 /**
  * The own data property `key` of `object`, read once; undefined when it is missing. An accessor,
- * or a read that throws, is an issue at `path`, and the result is UNREAD.
+ * a property that is not enumerable, or a read that throws is an issue at `path`, and the result
+ * is UNREAD.
  */
 export function readMember(object: object, key: string, path: string, sink: IssueSink): unknown {
   let descriptor: PropertyDescriptor | undefined;
@@ -104,9 +110,15 @@ export function readMember(object: object, key: string, path: string, sink: Issu
     return UNREAD;
   }
   if (descriptor === undefined) return undefined;
-  if ("value" in descriptor) return descriptor.value;
-  sink.report(path, ACCESSOR);
-  return UNREAD;
+  if (!("value" in descriptor)) {
+    sink.report(path, ACCESSOR);
+    return UNREAD;
+  }
+  if (descriptor.enumerable !== true) {
+    sink.report(path, NOT_ENUMERABLE);
+    return UNREAD;
+  }
+  return descriptor.value;
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   type CanonicalValue,
   chunkHashes,
   createWorld,
+  type EngineErrorCode,
   fullChecksum,
   readView,
   stateRoot,
@@ -12,6 +13,7 @@ import {
 } from "../src/index.ts";
 import { worldState } from "../src/world/world.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
+import { revokedProxy } from "./support/revoked.ts";
 import { rulesetWith, testRuleset } from "./support/rulesets.ts";
 
 /**
@@ -186,6 +188,82 @@ describe("createWorld reports every problem in one invalid_input", () => {
       },
     ]);
     expect(calls).toBe(0);
+  });
+});
+
+describe("createWorld reports an object that throws while read, with its cause", () => {
+  const THREW = "the object threw while being read: TypeError";
+
+  test.each<[string, () => unknown, EngineErrorCode, string]>([
+    ["the definition", () => createWorld(revokedProxy() as Init), "invalid_input", "/init"],
+    [
+      "the options",
+      () => createWorld(definition(), revokedProxy() as { audit: boolean }),
+      "invalid_input",
+      "/options",
+    ],
+    [
+      "the ruleset",
+      () => createWorld(definitionWith({ ruleset: revokedProxy() })),
+      "invalid_ruleset",
+      "",
+    ],
+    [
+      "the chunks",
+      () => createWorld(definitionWith({ chunks: revokedProxy() })),
+      "invalid_input",
+      "/init/chunks",
+    ],
+    [
+      "a chunk",
+      () => createWorld(definitionWith({ chunks: { "0,0": revokedProxy() } })),
+      "invalid_input",
+      "/init/chunks/0,0",
+    ],
+    [
+      "the global value",
+      () => createWorld(definitionWith({ global: revokedProxy() })),
+      "invalid_input",
+      "/init/global",
+    ],
+    [
+      "the seed",
+      () => createWorld(definitionWith({ seed: revokedProxy() })),
+      "invalid_input",
+      "/init/seed",
+    ],
+  ])("%s", (_name, action, code, path) => {
+    const error = engineErrorOf(action);
+    expect(error.code).toBe(code);
+    expect(error.issues.map((issue) => issue.path)).toEqual([path]);
+    expect(error.issues[0]?.message).toStartWith(THREW);
+    expect(error.cause).toBeInstanceOf(TypeError);
+  });
+});
+
+describe("createWorld rejects members that canonical records reject", () => {
+  test("a chunk that is not enumerable", () => {
+    const chunks = Object.defineProperty({ "0,0": 1 }, "1,0", { value: 2, enumerable: false });
+    expect(inputIssues(() => createWorld(definitionWith({ chunks })))).toEqual([
+      {
+        path: "/init/chunks/1,0",
+        message: "the property is not enumerable: only enumerable data properties are read",
+      },
+    ]);
+  });
+
+  test("escapes chunk keys in issue paths, as JSON Pointers require", () => {
+    const chunks = { "a/b": 1, "x~1,0": 2 };
+    expect(inputIssues(() => createWorld(definitionWith({ chunks })))).toEqual([
+      {
+        path: "/init/chunks/a~1b",
+        message: 'the chunk key must be two integers joined by one comma, as in "-1,0"',
+      },
+      {
+        path: "/init/chunks/x~01,0",
+        message: "the x of the chunk key is not a safe integer in canonical decimal",
+      },
+    ]);
   });
 });
 
@@ -392,6 +470,7 @@ describe("a value that is not a world the engine made", () => {
     ["a number", 7],
     ["a Proxy of a world, whose traps throw", throwing],
     ["an object whose prototype is a world", Object.create(world)],
+    ["a revoked Proxy", revokedProxy()],
   ];
   const calls: [string, (value: never) => unknown][] = [
     ["worldStatus", worldStatus],

@@ -6,11 +6,11 @@
  */
 import type { CanonicalValue, IssueSink } from "../canonical/value.ts";
 import { pointer, validateCanonical } from "../canonical/value.ts";
-import { EngineError, IssueList } from "../errors.ts";
+import { IssueList } from "../errors.ts";
 import { streamId } from "../rng/mix32.ts";
 import type { ChunkKey } from "./chunk.ts";
 import type { Command, DeepReadonly, ReadView, RulesetVersions, TickContext } from "./contracts.ts";
-import { expectRecord, isRecord, readElements, readKeys, readMember, UNREAD } from "./members.ts";
+import { expectRecord, readElements, readMember, readRecordKeys, UNREAD } from "./members.ts";
 
 type Value = CanonicalValue;
 
@@ -101,18 +101,18 @@ function readFunction<F>(object: object, key: string, path: string, sink: IssueS
 
 function readVersions(ruleset: object, issues: IssueList): RulesetVersions {
   const value = readMember(ruleset, "versions", "/versions", issues);
+  const notRecord = "the versions must be a record of strings";
+  const read = readRecordKeys(value, "/versions", notRecord, issues);
+  if (read === undefined) return { ruleset: "", generator: "", brain: "" };
+  const { record, keys } = read;
   const found: { [name: string]: string } = Object.create(null);
-  if (!expectRecord(value, "/versions", "the versions must be a record of strings", issues)) {
-    return { ruleset: "", generator: "", brain: "" };
-  }
-  const keys = readKeys(value, "/versions", issues);
   for (const key of keys) {
     const path = `/versions${pointer([key])}`;
     if (!VERSION_NAMES.some((name) => name === key)) {
       issues.report(path, "not a version: the versions are ruleset, generator, and brain");
       continue;
     }
-    const text = readText(readMember(value, key, path, issues), path, "the version", issues);
+    const text = readText(readMember(record, key, path, issues), path, "the version", issues);
     if (text !== undefined) found[key] = text;
   }
   for (const name of VERSION_NAMES) {
@@ -174,7 +174,8 @@ function readSystem(
   if (name !== undefined && Object.hasOwn(names, name)) {
     issues.report(at, `the system "${name}" is declared twice: system names must be unique`);
   } else if (name !== undefined) names[name] = true;
-  const label = name === undefined ? `the system at ${path}` : `system "${name}"`;
+  // The path tells apart two systems that share a name, which is reported above.
+  const label = name === undefined ? `the system at ${path}` : `system "${name}" at ${path}`;
   const owner: Owner = { label, ids: Object.create(null) };
   readStreams(
     readMember(value, "streams", `${path}/streams`, issues),
@@ -223,12 +224,12 @@ function readCommands(
   const commands: { [type: string]: CapturedCommand } = Object.create(null);
   const commandTypes: string[] = [];
   const value = readMember(ruleset, "commands", "/commands", issues);
-  if (!expectRecord(value, "/commands", "the commands must be a record of handlers", issues)) {
-    return { commands, commandTypes };
-  }
-  for (const key of readKeys(value, "/commands", issues)) {
+  const notRecord = "the commands must be a record of handlers";
+  const read = readRecordKeys(value, "/commands", notRecord, issues);
+  if (read === undefined) return { commands, commandTypes };
+  for (const key of read.keys) {
     const path = `/commands${pointer([key])}`;
-    const handlerValue = readMember(value, key, path, issues);
+    const handlerValue = readMember(read.record, key, path, issues);
     const text = readText(key, path, "the command type", issues);
     const type =
       text === undefined ? undefined : unreserved(text, path, "the command type", issues);
@@ -253,16 +254,16 @@ function readCommands(
  *   exactly one system or command, and no two have the same streamId;
  * - validateGlobal and validateChunk are functions.
  *
- * Each member is read once, through its own descriptor, and accessors are rejected.
+ * The versions and the commands are plain records, as canonical records are. Each member is read
+ * once, through its own descriptor: accessors and properties that are not enumerable are
+ * rejected, and an object that throws while read is an issue with the thrown value as its cause.
  */
 export function captureRuleset(ruleset: unknown): CapturedRuleset {
-  if (!isRecord(ruleset)) {
-    throw new EngineError("invalid_ruleset", [
-      { path: "", message: "the ruleset must be a record" },
-    ]);
+  const issues = new IssueList();
+  if (!expectRecord(ruleset, "", "the ruleset must be a record", issues)) {
+    throw issues.error("invalid_ruleset");
   }
   const source: object = ruleset;
-  const issues = new IssueList();
   const claims: Claims = { issues, owners: Object.create(null), names: Object.create(null) };
   const captured: CapturedRuleset = {
     versions: readVersions(source, issues),

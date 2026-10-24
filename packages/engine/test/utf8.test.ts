@@ -79,6 +79,9 @@ describe("utf8Encode", () => {
     ["a low surrogate before a pair", "\udc00\ud83d\ude00", 0],
     ["a high surrogate after a pair", "\ud83d\ude00\ud800", 2],
     ["a low surrogate after a pair", "\ud83d\ude00\udc00", 2],
+    ["the last high surrogate, U+DBFF, alone", "a\udbff", 1],
+    ["the last low surrogate, U+DFFF, at the start", "\udfffa", 0],
+    ["the last low surrogate, U+DFFF, at the end", "a\udfff", 1],
   ])("rejects %s with invalid_value and its offset", (_name, text, offset) => {
     const error = engineErrorOf(() => utf8Encode(text));
     expect(error.code).toBe("invalid_value");
