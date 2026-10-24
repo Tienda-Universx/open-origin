@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { type CanonicalValue, canonicalize, EngineError, parseCanonical } from "../src/index.ts";
+import { type CanonicalValue, canonicalize, parseCanonical } from "../src/index.ts";
+import { engineErrorOf } from "./support/engine-error.ts";
 
 /**
  * Canonical text (ADR 0020) is the subset of RFC 8785 that canonical values need: keys sorted by
@@ -10,17 +11,6 @@ import { type CanonicalValue, canonicalize, EngineError, parseCanonical } from "
 /** One backslash; escapes are spelled with it so this file holds no escape the reader must decode. */
 const BACKSLASH = "\\";
 const COMBINING_ACUTE = String.fromCodePoint(0x301);
-
-/** Runs `action`, which must throw an EngineError, and returns that error. */
-function engineErrorOf(action: () => unknown): EngineError {
-  try {
-    action();
-  } catch (error) {
-    if (error instanceof EngineError) return error;
-    throw error;
-  }
-  throw new Error("expected an EngineError, but nothing was thrown");
-}
 
 describe("canonicalize", () => {
   test.each([
@@ -79,9 +69,38 @@ describe("canonicalize", () => {
     // DEL, C1 controls, line separators, and non-ASCII text are written as they are.
     const raw = String.fromCodePoint(0x7f, 0x80, 0x2028, 0xe9, 0x1f600);
     expect(canonicalize(raw)).toBe(`"${raw}"`);
-    for (let code = 0; code < 0x100; code += 1) {
-      const text = String.fromCharCode(code);
-      expect(canonicalize(text)).toBe(JSON.stringify(text));
+  });
+
+  test("writes every canonical one-unit string as JSON.stringify does, as a value and as a key", () => {
+    // Strings without a quote, a backslash, or a C0 control skip JSON.stringify; this covers both
+    // paths, DEL, C1 controls, and U+2028 and U+2029 included.
+    const mismatches: number[] = [];
+    let written = 0;
+    for (let unit = 0; unit <= 0xffff; unit += 1) {
+      const text = String.fromCharCode(unit);
+      // Lone surrogates and text that is not NFC are rejected before anything is written.
+      if (!text.isWellFormed() || text.normalize("NFC") !== text) continue;
+      written += 1;
+      const quoted = JSON.stringify(text);
+      if (canonicalize(text) !== quoted || canonicalize({ [text]: 0 }) !== `{${quoted}:0}`) {
+        mismatches.push(unit);
+      }
+    }
+    expect(mismatches).toEqual([]);
+    expect(written).toBeGreaterThan(60_000);
+    const astral = String.fromCodePoint(0x1f600, 0x10000, 0x10ffff);
+    expect(canonicalize(astral)).toBe(JSON.stringify(astral));
+  });
+
+  test("never writes a lone surrogate, which JSON.stringify would escape", () => {
+    for (const unit of [0xd800, 0xdbff, 0xdc00, 0xdfff]) {
+      const error = engineErrorOf(() => canonicalize(`a${String.fromCharCode(unit)}`));
+      expect(error.issues).toEqual([
+        {
+          path: "",
+          message: "the string has a lone surrogate: strings must be well-formed UTF-16",
+        },
+      ]);
     }
   });
 

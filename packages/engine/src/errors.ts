@@ -31,10 +31,19 @@ function summarize(code: EngineErrorCode, kept: readonly Issue[], count: number)
   return `${headline}; ${count} issues in all${drops}`;
 }
 
-/** The engine's only error type: a code, and every issue found (up to MAX_ISSUES). */
+/** The engine's only error type: a code, and the issues found (up to MAX_ISSUES). */
 export class EngineError extends Error {
   readonly code: EngineErrorCode;
   readonly issues: readonly Issue[];
+  readonly #brand = true;
+
+  /**
+   * Whether `value` is an EngineError. Unlike `instanceof`, the private brand check runs no Proxy
+   * trap, so it cannot throw whatever value it is given.
+   */
+  static isEngineError(value: unknown): value is EngineError {
+    return typeof value === "object" && value !== null && #brand in value;
+  }
 
   constructor(code: EngineErrorCode, issues: readonly Issue[], options: EngineErrorOptions = {}) {
     const kept = Object.freeze(
@@ -50,18 +59,27 @@ export class EngineError extends Error {
   }
 }
 
-/** Collects issues for an EngineError: it keeps the first MAX_ISSUES and counts them all. */
+/**
+ * Collects issues for an EngineError: it keeps the first MAX_ISSUES, counts them all, and keeps
+ * the first cause reported with one.
+ */
 export class IssueList {
   readonly issues: Issue[] = [];
   count = 0;
+  #cause: { readonly error: unknown } | undefined;
 
-  report(path: string, message: string): void {
+  report(path: string, message: string, cause?: unknown): void {
     this.count += 1;
     if (this.issues.length < MAX_ISSUES) this.issues.push({ path, message });
+    if (cause !== undefined && this.#cause === undefined) this.#cause = { error: cause };
   }
 
   /** Throws an EngineError with `code` and the collected issues, if there are any. */
   throwIfAny(code: EngineErrorCode): void {
-    if (this.count > 0) throw new EngineError(code, this.issues, { issueCount: this.count });
+    if (this.count === 0) return;
+    const issueCount = this.count;
+    const options =
+      this.#cause === undefined ? { issueCount } : { issueCount, cause: this.#cause.error };
+    throw new EngineError(code, this.issues, options);
   }
 }

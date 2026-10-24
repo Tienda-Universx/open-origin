@@ -6,18 +6,36 @@
 import { EngineError, IssueList } from "../errors.ts";
 import { type Builder, type CanonicalValue, type IssueSink, walkCanonical } from "./value.ts";
 
+/**
+ * Whether JSON.stringify would only wrap `text` in quotes: it has no quote, backslash, or C0
+ * control. Canonical strings are well formed, so no lone surrogate, which it would escape, gets
+ * here. A loop over code units measured faster than a regular expression.
+ */
+function needsNoEscape(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (unit < 0x20 || unit === 0x22 || unit === 0x5c) return false;
+  }
+  return true;
+}
+
+/** `text` as JSON.stringify writes it, skipping the call when there is nothing to escape. */
+function quote(text: string): string {
+  return needsNoEscape(text) ? `"${text}"` : JSON.stringify(text);
+}
+
 const ENCODER: Builder<string> = {
   invalid: "",
-  leaf: (value) => (typeof value === "string" ? JSON.stringify(value) : `${value}`),
+  leaf: (value) => (typeof value === "string" ? quote(value) : `${value}`),
   array: (items) => `[${items.join(",")}]`,
-  record: (entries) =>
-    `{${entries.map(([key, value]) => `${JSON.stringify(key)}:${value}`).join(",")}}`,
+  record: (entries) => `{${entries.map(([key, value]) => `${quote(key)}:${value}`).join(",")}}`,
 };
 
 /** Stops a walk at its first issue. */
 const FAIL_FAST: IssueSink = {
-  report(path, message) {
-    throw new EngineError("invalid_value", [{ path, message }]);
+  report(path, message, cause) {
+    const options = cause === undefined ? {} : { cause };
+    throw new EngineError("invalid_value", [{ path, message }], options);
   },
 };
 
@@ -44,7 +62,7 @@ export function canonicalize(value: unknown): string {
 /**
  * The value of a canonical text. Accepts exactly the texts canonicalize writes: it parses,
  * validates, re-serializes, and requires the same text. Anything else, including text that
- * JSON.parse rejects, throws EngineError("invalid_value"): with every issue of the parsed value,
+ * JSON.parse rejects, throws EngineError("invalid_value"): with the issues of the parsed value,
  * or with the first offset where the text differs from its canonical form.
  */
 export function parseCanonical(text: string): CanonicalValue {

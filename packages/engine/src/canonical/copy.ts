@@ -14,7 +14,7 @@ const COPIER: Builder<unknown> = {
  * Validates `value` and deep-copies it in one pass (ADR 0020, ownership): every property is read
  * once, through its own descriptor, so a getter or a Proxy cannot show validation one value and
  * the copy another. The copy shares no object with `value`, and its records have the prototype
- * Object.prototype. Throws EngineError("invalid_value") with every issue.
+ * Object.prototype. Throws EngineError("invalid_value") with the issues walkCanonical reaches.
  */
 export function copyCanonical(value: unknown): CanonicalValue {
   const issues = new IssueList();

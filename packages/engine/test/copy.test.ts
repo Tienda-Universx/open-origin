@@ -1,22 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { copyCanonical, EngineError } from "../src/index.ts";
+import { copyCanonical } from "../src/index.ts";
+import { engineErrorOf } from "./support/engine-error.ts";
 
 /**
  * copyCanonical validates and deep-copies a value in one pass (ADR 0020, ownership): it reads
  * each property once, through its own property descriptor, so a getter or a Proxy cannot show
  * one value to validation and another to the copy. The copy shares no object with the input.
  */
-
-/** Runs `action`, which must throw an EngineError, and returns that error. */
-function engineErrorOf(action: () => unknown): EngineError {
-  try {
-    action();
-  } catch (error) {
-    if (error instanceof EngineError) return error;
-    throw error;
-  }
-  throw new Error("expected an EngineError, but nothing was thrown");
-}
 
 /** Every array and record inside `value`, `value` included. */
 function objectsIn(value: unknown): object[] {

@@ -1,4 +1,4 @@
-import { describePath, type Issue, IssueList } from "../errors.ts";
+import { describePath, EngineError, type Issue, IssueList } from "../errors.ts";
 import { ownKeyCount, sortedOwnKeys, symbolKeyCount } from "./order.ts";
 
 /**
@@ -29,9 +29,9 @@ export interface Builder<T> {
   record(entries: readonly (readonly [string, T])[]): T;
 }
 
-/** Receives each issue a walk finds. */
+/** Receives each issue a walk finds, with what was thrown when an object threw while read. */
 export interface IssueSink {
-  report(path: string, message: string): void;
+  report(path: string, message: string, cause?: unknown): void;
 }
 
 type Walk<T> = {
@@ -59,13 +59,23 @@ function pointer(path: readonly (string | number)[]): string {
   return text;
 }
 
-function report<T>(walk: Walk<T>, message: string): void {
-  walk.sink.report(pointer(walk.path), message);
+function report<T>(walk: Walk<T>, message: string, cause?: unknown): void {
+  walk.sink.report(pointer(walk.path), message, cause);
 }
 
-function reject<T>(walk: Walk<T>, message: string): T {
-  report(walk, message);
+function reject<T>(walk: Walk<T>, message: string, cause?: unknown): T {
+  report(walk, message, cause);
   return walk.builder.invalid;
+}
+
+/** Describes a thrown value while reading as little of it as possible; it never throws. */
+function describeThrown(error: unknown): string {
+  try {
+    return error instanceof Error ? `${error.name}: ${error.message}` : `a thrown ${typeof error}`;
+  } catch {
+    // A thrown Proxy, or a name or message getter, threw in turn.
+    return "an exception that cannot be described";
+  }
 }
 
 /** Whether `text` has a UTF-16 code unit at or above U+0300. */
@@ -128,13 +138,23 @@ function walkObject<T>(value: object, walk: Walk<T>): T {
       `the value contains itself: it is the same object as the value at ${where}`,
     );
   }
-  if (walk.ancestors.length >= MAX_DEPTH) {
+  const depth = walk.ancestors.length;
+  if (depth >= MAX_DEPTH) {
     return reject(walk, `the value nests deeper than ${MAX_DEPTH} arrays and records`);
   }
+  const pathLength = walk.path.length;
   walk.ancestors.push(value);
-  const result = Array.isArray(value) ? walkArray(value, walk) : walkRecord(value, walk);
-  walk.ancestors.pop();
-  return result;
+  try {
+    return Array.isArray(value) ? walkArray(value, walk) : walkRecord(value, walk);
+  } catch (error) {
+    // A fail-fast sink stops the whole walk. Anything else came from reading this object (a
+    // revoked Proxy, or a trap that threw or broke an invariant): its children catch their own.
+    if (EngineError.isEngineError(error)) throw error;
+    walk.path.length = pathLength;
+    return reject(walk, `the object threw while being read: ${describeThrown(error)}`, error);
+  } finally {
+    walk.ancestors.length = depth;
+  }
 }
 
 /**
@@ -151,10 +171,14 @@ function walkDescriptor<T>(descriptor: PropertyDescriptor, walk: Walk<T>): T {
   return walkValue(descriptor.value, walk);
 }
 
-/** An array's length, read through its descriptor so that a Proxy's get trap never runs. */
+/**
+ * An array's length, read once through its descriptor so that a Proxy's get trap never runs. A
+ * Proxy may still report any length, since an array's length is writable; the walk then requires
+ * the own keys to be exactly the indexes below it, so keys beyond a shorter length are reported
+ * as not elements and a longer length as sparse.
+ */
 function lengthOf(array: object): number {
   const length: unknown = Object.getOwnPropertyDescriptor(array, "length")?.value;
-  // A Proxy must report the non-configurable length of its target array as it is.
   return typeof length === "number" ? length : 0;
 }
 
@@ -238,9 +262,11 @@ function walkRecord<T>(record: object, walk: Walk<T>): T {
 }
 
 /**
- * Walks `value` once, depth first in canonical key order, and reports every issue to `sink`.
- * Each property is read once, through its own descriptor. The result is meaningful only when
- * nothing was reported.
+ * Walks `value` once, depth first in canonical key order, and reports every issue it reaches to
+ * `sink`. A value rejected as a whole (an object that is not a plain array or record, a sparse
+ * array, an accessor, a cycle, nesting beyond MAX_DEPTH, or an object that throws while read) is
+ * one issue, and its contents are not walked. Each property is read once, through its own
+ * descriptor. The result is meaningful only when nothing was reported.
  */
 export function walkCanonical<T>(value: unknown, builder: Builder<T>, sink: IssueSink): T {
   return walkValue(value, { builder, sink, path: [], ancestors: [] });
@@ -254,8 +280,9 @@ const VALIDATOR: Builder<undefined> = {
 };
 
 /**
- * Every issue that keeps `value` from being canonical, with its JSON Pointer, in canonical
- * order; at most MAX_ISSUES of them. An empty list means `value` is canonical.
+ * The issues that keep `value` from being canonical, as walkCanonical reaches them, with their
+ * JSON Pointers in canonical order; at most MAX_ISSUES of them. An empty list means `value` is
+ * canonical.
  */
 export function validateCanonical(value: unknown): Issue[] {
   const issues = new IssueList();

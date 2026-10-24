@@ -231,10 +231,84 @@ describe("validateCanonical rejects, with the path of each issue", () => {
     ]);
   });
 
+  test("an array Proxy that reports another length, which its own keys then contradict", () => {
+    const withLength = (length: number) =>
+      new Proxy([1, 2], {
+        getOwnPropertyDescriptor: (target, key) =>
+          key === "length"
+            ? { value: length, writable: true, enumerable: false, configurable: false }
+            : Reflect.getOwnPropertyDescriptor(target, key),
+      });
+    expect(validateCanonical(withLength(1))).toEqual([{ path: "/1", message: EXTRA }]);
+    expect(validateCanonical(withLength(3))).toEqual([
+      {
+        path: "",
+        message: "the array is sparse: its length is 3, but it has only 2 other own properties",
+      },
+    ]);
+  });
+
+  test("a value as a whole, once, without the issues of its contents", () => {
+    const sparse: unknown[] = new Array(3);
+    sparse[0] = Number.NaN;
+    sparse[2] = null;
+    expect(validateCanonical(sparse)).toEqual([
+      {
+        path: "",
+        message: "the array is sparse: its length is 3, but it has only 2 other own properties",
+      },
+    ]);
+    const holder = Object.assign(new Point(), { bad: [Number.NaN, null] });
+    expect(validateCanonical({ holder })).toEqual([{ path: "/holder", message: NOT_PLAIN }]);
+  });
+
   test("at most the first 50 issues", () => {
     const value = Array.from({ length: 120 }, () => Number.NaN);
     expect(validateCanonical(value)).toEqual(
       Array.from({ length: 50 }, (_, index) => ({ path: `/${index}`, message: notSafe("NaN") })),
     );
+  });
+});
+
+describe("the NFC fast path at U+0300", () => {
+  const LAST_FAST = String.fromCodePoint(0x2ff);
+  const FIRST_CHECKED = String.fromCodePoint(0x300);
+
+  /** How many times `action` calls String.prototype.normalize. */
+  function normalizeCalls(action: () => unknown): number {
+    const normalize = String.prototype.normalize;
+    let calls = 0;
+    String.prototype.normalize = function (this: string, form?: string): string {
+      calls += 1;
+      return normalize.call(this, form);
+    };
+    try {
+      action();
+    } finally {
+      String.prototype.normalize = normalize;
+    }
+    return calls;
+  }
+
+  test("text up to U+02FF never calls normalize, as a value or as a key", () => {
+    const text = `a${String.fromCodePoint(0xe9)}${LAST_FAST}`;
+    expect(normalizeCalls(() => expect(validateCanonical(text)).toEqual([]))).toBe(0);
+    expect(normalizeCalls(() => expect(validateCanonical({ [text]: 0 })).toEqual([]))).toBe(0);
+  });
+
+  test("text from U+0300 calls normalize once, as a value or as a key", () => {
+    expect(normalizeCalls(() => expect(validateCanonical(FIRST_CHECKED)).toEqual([]))).toBe(1);
+    expect(
+      normalizeCalls(() => expect(validateCanonical({ [FIRST_CHECKED]: 0 })).toEqual([])),
+    ).toBe(1);
+  });
+
+  test("a letter followed by U+0300 is not NFC, as a value or as a key", () => {
+    const decomposed = `a${FIRST_CHECKED}`;
+    expect(decomposed.normalize("NFC")).toBe(String.fromCodePoint(0xe0));
+    expect(validateCanonical(decomposed)).toEqual([{ path: "", message: STRING_NFC }]);
+    expect(validateCanonical({ [decomposed]: 0 })).toEqual([
+      { path: `/${decomposed}`, message: KEY_NFC },
+    ]);
   });
 });

@@ -73,7 +73,8 @@ must be (ADR 0020, ownership):
 - it reads each property once, through `Object.getOwnPropertyDescriptor`, and an array's length
   the same way, so getters never run and the value validated is the value copied;
 - a Proxy is copied as the data its descriptors report during that pass, one consistent snapshot:
-  its `get` trap never runs, so a `get` that lies changes nothing;
+  its `get` trap never runs, so a `get` that lies changes nothing, and a reported `length` must
+  agree with the reported keys (keys beyond it are not elements; a longer one is sparse);
 - the copy shares no object with the input, and its records have the prototype
   `Object.prototype`.
 
@@ -87,12 +88,18 @@ codes) and `issues`. An issue has a `path`, a JSON Pointer
 ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) into the value (`""` is the whole value, and
 `~` and `/` in keys become `~0` and `~1`), and a `message`.
 
-- Validation and copying report every issue, in canonical order. An `EngineError` keeps the first
-  50 and its message counts them all:
+- Validation and copying report every issue they reach, in canonical order. A value rejected as a
+  whole is one issue, and its contents are not checked: an object that is not a plain array or
+  record, a sparse array, an accessor, a cycle, nesting beyond 64, and an object that throws while
+  being read.
+- An object that throws while being read (a revoked Proxy, or a trap that throws or breaks a
+  Proxy invariant) is an issue at its path, so these operations throw nothing but `EngineError`;
+  `copyCanonical` and `canonicalize` keep the first thrown value as the `cause`.
+- An `EngineError` keeps the first 50 issues and its message counts them all:
   `invalid_value at /0: NaN is not a safe integer; 120 issues in all, 70 dropped beyond the first 50`.
 - `validateCanonical` returns at most those 50 issues; an empty list means the value is canonical.
 - `canonicalize` reports only the first issue.
-- `parseCanonical` reports every issue of the parsed value, the parser's error as the `cause` when
+- `parseCanonical` reports the issues of the parsed value, the parser's error as the `cause` when
   the text is not JSON, or else the first UTF-16 offset where the text differs from its canonical
   form.
 
@@ -100,6 +107,8 @@ codes) and `issues`. An issue has a `path`, a JSON Pointer
 
 - A walk costs O(n) for n values, plus a key sort per record and, for the cycle check, a scan of
   the enclosing arrays and records (at most 64) per object.
+- Strings and keys with no quote, backslash, or C0 control are written between quotes without
+  calling `JSON.stringify`; a test checks every canonical one-unit string against it.
 - A value may hold the same object twice when that is not a cycle. The walk visits it once per
   occurrence, so the cost follows the expanded tree, and a few dozen arrays that each hold the
   next one twice expand beyond any budget. `JSON.parse` never shares objects.
