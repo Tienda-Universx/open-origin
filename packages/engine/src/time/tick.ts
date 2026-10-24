@@ -31,6 +31,12 @@ export function nextTick(tick: Tick): Tick {
   return tick + 1;
 }
 
+/** Why `value` is not a number of seconds per tick, as a message; undefined when it is one. */
+export function secondsPerTickProblem(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return undefined;
+  return `${describeValue(value)} seconds per tick is not a positive safe integer`;
+}
+
 /**
  * The simulated seconds at the start of `tick`: `tick * simSecondsPerTick`. Throws
  * EngineError("invalid_value") with every invalid argument, and EngineError("tick_overflow") when
@@ -40,10 +46,8 @@ export function simSeconds(tick: Tick, simSecondsPerTick: number): number {
   const issues: Issue[] = [];
   const problem = tickProblem(tick);
   if (problem !== undefined) issues.push({ path: "/tick", message: problem });
-  if (!(Number.isSafeInteger(simSecondsPerTick) && simSecondsPerTick > 0)) {
-    const message = `${describeValue(simSecondsPerTick)} seconds per tick is not a positive safe integer`;
-    issues.push({ path: "/simSecondsPerTick", message });
-  }
+  const perTick = secondsPerTickProblem(simSecondsPerTick);
+  if (perTick !== undefined) issues.push({ path: "/simSecondsPerTick", message: perTick });
   if (issues.length > 0) throw new EngineError("invalid_value", issues);
   const seconds = tick * simSecondsPerTick;
   // A product below 2^53 is exact. A larger one rounds to 2^53 or more, so it is never safe.

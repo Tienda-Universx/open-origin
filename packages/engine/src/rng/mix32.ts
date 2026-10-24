@@ -61,8 +61,11 @@ function readWord(
   return isU32(word) ? word : readU32(word, `${prefix}/${index}`, issues);
 }
 
-/** The two words of `seed`, each read once by index; issues for anything else. */
-function readSeed(seed: unknown, issues: Issue[]): Seed {
+/**
+ * The two words of `seed`, each read once by index, in a fresh pair; issues at `/seed` and
+ * `/seed/i` for anything else, and [0, 0] or 0 in their place.
+ */
+export function readSeed(seed: unknown, issues: Issue[]): Seed {
   if (!Array.isArray(seed) || seed.length !== 2) {
     issues.push({ path: "/seed", message: "the seed must be an array of two words" });
     return [0, 0];

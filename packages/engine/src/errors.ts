@@ -5,11 +5,21 @@
 export type Issue = { readonly path: string; readonly message: string };
 
 /**
- * Why the engine refused an operation: `invalid_value` for a value or argument it cannot accept,
- * `tick_overflow` for simulation time that would pass Number.MAX_SAFE_INTEGER. Later batches add
- * their codes here.
+ * Why the engine refused an operation:
+ *
+ * - `invalid_value` for a value or argument it cannot accept;
+ * - `invalid_input` for a world definition, or anything else the host gives a world, that it
+ *   cannot accept, and for an object that is not a world;
+ * - `invalid_ruleset` for a ruleset that breaks the rules of captureRuleset;
+ * - `tick_overflow` for simulation time that would pass Number.MAX_SAFE_INTEGER.
+ *
+ * Later batches add their codes here.
  */
-export type EngineErrorCode = "invalid_value" | "tick_overflow";
+export type EngineErrorCode =
+  | "invalid_value"
+  | "invalid_input"
+  | "invalid_ruleset"
+  | "tick_overflow";
 
 /** How many issues an EngineError keeps; it still counts the ones it drops. */
 export const MAX_ISSUES = 50;

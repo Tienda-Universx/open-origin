@@ -5,7 +5,7 @@ The engine must turn the same inputs into the same results on every run and ever
 rules that make it so, as the code implements them;
 [ADR 0020](../decisions/0020-deterministic-core-design.md) records why they were chosen. Each
 section names its code and its tests, and the later T2 pull requests add one section per
-subsystem still to come: the world, `step`, and snapshots.
+subsystem still to come: `step` and snapshots.
 
 ## Canonical values
 
@@ -86,7 +86,8 @@ cannot disagree about what is canonical.
 ### Errors
 
 Every failure is an `EngineError` with a `code` (`invalid_value` here, and `tick_overflow` for
-[time](#time); later batches add codes) and `issues`. An issue has a `path`, a JSON Pointer
+[time](#time), `invalid_input` and `invalid_ruleset` for [the world](#world); later batches add
+codes) and `issues`. An issue has a `path`, a JSON Pointer
 ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) into the value (`""` is the whole value, and
 `~` and `/` in keys become `~0` and `~1`), and a `message`.
 
@@ -146,8 +147,8 @@ What a digest does not do:
   the adapter (ADR 0020).
 - **Prove the absence of collisions.** The tests check the port against the reference, not the
   collision rate; ADR 0020 records why 128 bits.
-- **Compose the state root yet.** The lanes are the arithmetic that `stateRoot` will use; the
-  world and its chunk sums arrive in a later pull request.
+- **Update the state root per tick yet.** [The world](#world) composes its root with these lanes
+  once, when it is created; updating the sum for the chunks a tick changed arrives with `step`.
 
 ## Randomness
 
@@ -192,8 +193,9 @@ What the generator does not do:
 - **Pass a statistical battery.** The checks above are smoke tests on fixed samples; no PractRand
   or TestU01 battery has been run.
 - **Keep counters across calls yet.** The per-tick counter for each stream and entity arrives with
-  the step context, and so does the ruleset check that rejects colliding stream ids, streams
-  shared by two owners, and the reserved `engine.` prefix.
+  the step context, and so does the fault for a draw from a stream its caller did not declare.
+  The ruleset check that rejects colliding stream ids, streams shared by two owners, and the
+  reserved `engine.` prefix is part of [the world](#world).
 
 ## Time
 
@@ -212,6 +214,138 @@ The engine knows only ticks (ADR 0020). Code: `packages/engine/src/time/tick.ts`
 
 Pacing ticks in real time (`TICK_RATE_HZ`) belongs to the scheduler (T6), and the calendar waits
 for the batch that defines the length of a day.
+
+## World
+
+A world is the state the engine owns: the kernel's counters, a global value, and chunks keyed by
+their grid position (ADR 0020, ownership and digests). This section covers creating a world,
+reading it, and its state root; `step` arrives in the next pull request. Code:
+`packages/engine/src/world/`. Tests: `packages/engine/test/` (`chunk`, `chunk-index`,
+`ruleset`, `world`, and `checksum`).
+
+### What is guaranteed now
+
+| Guarantee | How |
+|---|---|
+| The host cannot change a world through anything it gave | `createWorld` copies the global value and each chunk as `copyCanonical` does, and captures the ruleset into structures of its own. Changing the definition or the ruleset afterwards changes no digest |
+| The host cannot change a world through anything it read | `readView`, `worldStatus`, and `chunkHashes` return fresh copies or primitives |
+| No forged world is accepted | A `World` keeps its state in one ES2022 private field. Every function checks the brand (`#state in value`), which runs no Proxy trap, and throws `invalid_input` for anything else. The constructor throws `invalid_input` unless `createWorld` calls it |
+| Every problem is reported at once | One `invalid_input` for the definition, with paths into `{ init, options }`; one `invalid_ruleset` for the ruleset, with paths into the ruleset |
+| Ruleset code cannot reach the captured ruleset | The validators are called without a receiver, so `this` is `undefined` |
+| The root does not depend on insertion order | The chunk sum is commutative, and every key list is sorted by UTF-16 code units |
+
+### Chunk keys
+
+A chunk key is `"x,y"`, both coordinates safe integers in canonical decimal, as a template literal
+writes them: `chunkKey({ x: -1, y: 0 })` is `"-1,0"`. `parseChunkKey` accepts a part only when
+writing its number back gives the same text, so it rejects `-0`, `+1`, `01`, spaces, `1e3`,
+`0x10`, `1.0`, empty parts, and values beyond the safe range. A key that is not two parts joined
+by one comma is rejected as a whole. Both throw `invalid_value` with every problem.
+
+### Creating a world
+
+`createWorld(init, options?)` makes a world at epoch 0, tick 0, with the next entity id 1. Its
+checks run in this order:
+
+1. `init` must be a record. If it is not, that is the only issue reported.
+2. The ruleset is captured first, because its validators check the data: a broken ruleset throws
+   `invalid_ruleset` (see below).
+3. Everything else is gathered into one `invalid_input`:
+   - the seed is two u32 words, `[s0, s1]`;
+   - `simSecondsPerTick` is a positive safe integer;
+   - the global value is canonical, then `validateGlobal` checks it;
+   - `chunks` is a plain record (prototype `Object.prototype` or `null`, no symbol keys). Each key
+     must parse as a chunk key. Each chunk is copied on its own and then checked by
+     `validateChunk(key, chunk)`, so the problems of every chunk are reported;
+   - `options.audit`, when present, is a boolean.
+
+Every member of `init`, `options`, and the ruleset is read once, through its own descriptor: a
+getter never runs, and an accessor is an issue. An object that throws while read is an issue
+at its path, with the thrown value as the error's `cause`.
+
+A validator must return a list of `{ path, message }` records whose paths are JSON Pointers. Each
+issue it returns is reported under the path of its value. A validator that throws or returns
+anything else is one issue at that path.
+
+### Capturing the ruleset
+
+`captureRuleset` checks the ruleset and copies its lists and records; functions are kept as
+references.
+
+| Part | Rule |
+|---|---|
+| `versions` | Exactly `ruleset`, `generator`, and `brain`, each a non-empty, well-formed NFC string |
+| `systems` | A dense array, kept in its order, which is the order they run in. Names are non-empty, canonical, and unique; `run` is a function |
+| `commands` | A record, enumerated in canonical order through `canonical/order.ts`, never `Object.keys`. Types are non-empty, canonical, and not prefixed `engine.`; `check` and `apply` are functions; `streams` is optional |
+| Streams | Non-empty canonical names, not prefixed `engine.`. Each belongs to exactly one system or command, declared once. No two names have the same `streamId`: the test pins two names found to collide by hashing `"rain.0"`, `"rain.1"`, ... in order |
+| Validators | `validateGlobal` and `validateChunk` are functions |
+
+### State root
+
+Every digest hashes a canonical array that starts with a domain tag:
+
+| Digest | Definition |
+|---|---|
+| Kernel | `digest(["kernel", { epoch, tick, nextEntityId, rng: { algorithm: "ctr-mix32@1", seed }, config: { simSecondsPerTick } }])` |
+| Global | `digest(["global", global])` |
+| Chunk term | `digest(["chunk", key, chunk])`, read as a 128-bit integer |
+| Chunk sum | The sum of the terms modulo 2^128, in four u32 lanes with carry (`digest/lanes.ts`) |
+| State root | `digest(["state", kernelDigest, globalDigest, chunkSum, chunkCount])`, the sum written as 32 hexadecimal digits |
+
+| Function | Cost | Result |
+|---|---|---|
+| `stateRoot(world)` | O(1) | The root the world caches |
+| `fullChecksum(world)` | O(N) | The root recomputed from the state alone, never from the cache. It equals `stateRoot` unless something changed the state without the engine knowing |
+| `chunkHashes(world)` | O(N) | Each chunk's cached term as a digest, in a fresh record keyed in canonical order, to find which chunks differ between two worlds |
+
+The world caches each chunk's term, the chunk sum, the global digest, and the root. The kernel
+digest has a fixed size and is recomputed whenever the root is.
+
+### Chunk index
+
+The world keeps its chunks in a lazy, sorted index, so creating a chunk never costs O(N):
+
+- adding a chunk is amortized O(1): its key joins a pending list;
+- looking a chunk up is O(1), in a null-prototype record that is never enumerated, so its insertion
+  order is never observable and no key reaches an inherited property. The index therefore needs no
+  `Map` and no lint exception;
+- `sortedKeys()` sorts only the pending keys and merges them into the sorted list, O(P log P + N),
+  and returns a fresh array. Only a caller that asks for every key pays it.
+
+### What the tests check
+
+- chunk keys round-trip and reject every malformed form above;
+- the index orders `"-1,0"` < `"0,0"` < `"10,0"` < `"2,0"`, keeps adds pending (an observable
+  `pendingCount`) until asked, and agrees with a full sort under random adds;
+- every ruleset rule, all reported at once, including a real `streamId` collision;
+- every `createWorld` check, all reported at once, and validators that throw, return malformed
+  results, or try to use `this`;
+- host isolation: changing the definition, the ruleset, and everything `readView`, `worldStatus`,
+  and `chunkHashes` returned leaves `stateRoot`, `fullChecksum`, and `chunkHashes` unchanged;
+- forged worlds (a record, a Proxy of a world whose traps throw, an object whose prototype is a
+  world, a call to the constructor) are rejected by every function, and no trap runs;
+- `stateRoot` equals `fullChecksum` and a root computed independently from the formulas above,
+  with `BigInt` for the sum, on 200 random worlds from a seeded generator, and on 64 chunks whose
+  lanes carry;
+- the root does not depend on the order of the chunks, and changes with any chunk, the global
+  value, either seed word, the seconds per tick, and the epoch, tick, and next entity id;
+- the chunk sum of a world equals the lane sum of the sums of two disjoint regions;
+- `fullChecksum` sees a change made behind the engine's back, and `stateRoot` does not;
+- `chunkHashes` is sorted, fresh, and a changed chunk changes only its own term.
+
+### What arrives with `step`
+
+These parts of ADR 0020 are not implemented yet; the types for the first two ship now in
+`world/contracts.ts`:
+
+- **The tick context and commands.** `TickContext`, `Command`, `EngineEvent`, `Rejection`, and the
+  handlers' signatures are types only: no command is applied and no system runs.
+- **Faults.** `worldStatus` always reports `{ kind: "ok", tick }`. Its `faulted` form, and
+  poisoning a world whose tick failed after a change, arrive with `step`.
+- **Incremental digests.** The cache is computed once, at creation. Updating the sum and the root
+  for the dirty chunks of a tick, and validating dirty data at commit, arrive with `step`.
+- **Audit.** `options.audit` is validated and stored; recomputing every digest after each tick
+  arrives with `step`, and the check before encoding a snapshot with snapshots.
 
 ## Lint exceptions
 

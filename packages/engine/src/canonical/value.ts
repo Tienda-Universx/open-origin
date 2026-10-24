@@ -66,7 +66,7 @@ const NOT_PLAIN =
   "the object is not a plain array or record: a record's prototype must be Object.prototype or null";
 
 /** The JSON Pointer (RFC 6901) of `path`: "~" and "/" in keys become "~0" and "~1". */
-function pointer(path: readonly (string | number)[]): string {
+export function pointer(path: readonly (string | number)[]): string {
   let text = "";
   for (const segment of path) {
     const token =
@@ -94,7 +94,7 @@ function reject<T>(walk: Walk<T>, message: string, cause?: unknown): T {
 }
 
 /** Describes a thrown value while reading as little of it as possible; it never throws. */
-function describeThrown(error: unknown): string {
+export function describeThrown(error: unknown): string {
   try {
     return error instanceof Error ? `${error.name}: ${error.message}` : `a thrown ${typeof error}`;
   } catch {
@@ -126,7 +126,8 @@ function keyProblem(key: string): string | undefined {
   return problem === undefined ? undefined : `the key ${problem}`;
 }
 
-function numberProblem(value: number): string | undefined {
+/** What makes `value` a non-canonical number, as a sentence; undefined when it is canonical. */
+export function numberProblem(value: number): string | undefined {
   if (Object.is(value, -0)) return "-0 is not canonical: use 0";
   return Number.isSafeInteger(value) ? undefined : `${value} is not a safe integer`;
 }
@@ -224,9 +225,14 @@ function walkDescriptor<T>(descriptor: PropertyDescriptor, walk: Walk<T>): T {
  * the own keys to be exactly the indexes below it, so keys beyond a shorter length are reported
  * as not elements and a longer length as sparse.
  */
-function lengthOf(array: object): number {
+export function lengthOf(array: object): number {
   const length: unknown = Object.getOwnPropertyDescriptor(array, "length")?.value;
   return typeof length === "number" ? length : 0;
+}
+
+/** The issue of an array of `length` with only `others` own properties besides its length. */
+export function sparseMessage(length: number, others: number): string {
+  return `the array is sparse: its length is ${length}, but it has only ${others} other own properties`;
 }
 
 function walkArray<T>(array: readonly unknown[], walk: Walk<T>): T {
@@ -235,12 +241,7 @@ function walkArray<T>(array: readonly unknown[], walk: Walk<T>): T {
   const others = ownKeyCount(array) - 1;
   // Fewer own properties than elements means holes: report them without walking a length that
   // can reach 2^32 - 1.
-  if (others < length) {
-    return reject(
-      walk,
-      `the array is sparse: its length is ${length}, but it has only ${others} other own properties`,
-    );
-  }
+  if (others < length) return reject(walk, sparseMessage(length, others));
   reportSymbolKeys(array, walk);
   const items: T[] = [];
   let elements = 0;
@@ -278,9 +279,14 @@ function isIndexBelow(key: string, length: number): boolean {
   return String(index) === key && Number.isSafeInteger(index) && index >= 0 && index < length;
 }
 
+/** The issue of an object with `count` symbol keys. */
+export function symbolKeysMessage(count: number): string {
+  return `the object has symbol keys (${count}): keys must be strings`;
+}
+
 function reportSymbolKeys<T>(object: object, walk: Walk<T>): void {
   const symbols = symbolKeyCount(object);
-  if (symbols > 0) report(walk, `the object has symbol keys (${symbols}): keys must be strings`);
+  if (symbols > 0) report(walk, symbolKeysMessage(symbols));
 }
 
 /** The entry for `key`, or undefined when the key is not canonical or the property is missing. */

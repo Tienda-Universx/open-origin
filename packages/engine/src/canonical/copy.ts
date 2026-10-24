@@ -1,5 +1,5 @@
 import { IssueList } from "../errors.ts";
-import { type Builder, type CanonicalValue, walkCanonical } from "./value.ts";
+import { type Builder, type CanonicalValue, type IssueSink, walkCanonical } from "./value.ts";
 
 /** Builds fresh arrays and records, so the copy shares no object with its source. */
 const COPIER: Builder<unknown> = {
@@ -18,8 +18,17 @@ const COPIER: Builder<unknown> = {
  */
 export function copyCanonical(value: unknown): CanonicalValue {
   const issues = new IssueList();
-  const copy = walkCanonical(value, COPIER, issues);
+  const copy = copyCanonicalReported(value, issues);
   issues.throwIfAny("invalid_value");
-  // No issue was reported, so the walk validated every value it copied.
-  return copy as CanonicalValue;
+  return copy;
+}
+
+/**
+ * Validates and copies `value` as copyCanonical does, but reports each issue to `sink` instead of
+ * throwing, so a caller can gather the issues of several values in one error. The copy is a
+ * canonical value only when nothing was reported; callers discard it otherwise.
+ */
+export function copyCanonicalReported(value: unknown, sink: IssueSink): CanonicalValue {
+  // When nothing was reported, the walk validated every value it copied.
+  return walkCanonical(value, COPIER, sink) as CanonicalValue;
 }
