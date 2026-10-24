@@ -136,11 +136,11 @@ function declarationFindings(source: string, code: string): Finding[] {
 }
 
 /**
- * Comments that switch a gate off: Biome suppressions (an exception belongs in a reviewed
+ * Tokens that switch a gate off: Biome suppressions (an exception belongs in a reviewed
  * biome.json override) and TypeScript's directives that skip type errors. TypeScript matches its
  * directives as prefixes, so they need no word boundary.
  */
-const GATE_COMMENTS = [
+const GATE_TOKENS = [
   {
     pattern: /\bbiome-ignore(?:-all|-start|-end)?\b/g,
     reason: "can silently disable a purity rule: add a reviewed override in biome.json instead",
@@ -156,8 +156,8 @@ const GATE_COMMENTS = [
  * template substitution reads as template text to this lexical scan, so restricting the search to
  * comments would miss it; engine code has no reason to spell these tokens in a string.
  */
-function gateCommentFindings(source: string): Finding[] {
-  return GATE_COMMENTS.flatMap(({ pattern, reason }) =>
+function gateTokenFindings(source: string): Finding[] {
+  return GATE_TOKENS.flatMap(({ pattern, reason }) =>
     [...source.matchAll(pattern)].map((match) => ({
       index: match.index,
       message: `\`${match[0]}\` ${reason}`,
@@ -180,7 +180,7 @@ export function checkEngineSource({ path, content }: SourceFile): PurityIssue[] 
   const code = blankComments(content);
   return [
     ...declarationFindings(content, code),
-    ...gateCommentFindings(content),
+    ...gateTokenFindings(content),
     ...specifierFindings(path, code),
     ...dynamicImportFindings(path, code),
   ]
