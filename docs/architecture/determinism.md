@@ -13,7 +13,7 @@ Everything the engine stores, hashes, or compares is a canonical value, and its 
 canonical text. Code: `packages/engine/src/canonical/` and `packages/engine/src/errors.ts`. Tests:
 `packages/engine/test/` (`value`, `copy`, `encode`, `order`, `errors`, `hostile`, and
 `canonical-fuzz`); the lint exceptions for `order.ts`, `encode.ts`, and `value.ts` are proven in
-`tests/repo/lint.test.ts`.
+`tests/repo/engine-lint.test.ts`.
 
 ### What is canonical
 
@@ -367,6 +367,6 @@ arguments, shorthand properties, and `typeof`, even where a local declaration sh
 Property names, keys, and types are not references to it. Assigning to any of these globals is
 rejected everywhere by Biome's recommended `noGlobalAssign`.
 
-`tests/repo/lint.test.ts` proves that each plugin reports those references and not names, keys, or
-types; that each exception covers its exact path; that look-alike paths are still rejected; and that
-every other purity rule applies to the excepted files.
+`tests/repo/engine-lint.test.ts` proves that each plugin reports those references and not names,
+keys, or types; that each exception covers its exact path; that look-alike paths are still rejected;
+and that every other purity rule applies to the excepted files.
