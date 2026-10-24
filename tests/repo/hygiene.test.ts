@@ -13,7 +13,17 @@ describe("findInvisibleChars", () => {
     ["byte order mark", 0xfeff],
     ["zero width space", 0x200b],
     ["right-to-left mark", 0x200f],
+    ["left-to-right embedding", 0x202a],
+    ["right-to-left embedding", 0x202b],
+    ["pop directional formatting", 0x202c],
+    ["left-to-right override", 0x202d],
     ["right-to-left override", 0x202e],
+    ["left-to-right mark", 0x200e],
+    ["left-to-right isolate", 0x2066],
+    ["first strong isolate", 0x2068],
+    ["pop directional isolate", 0x2069],
+    ["inhibit symmetric swapping", 0x206a],
+    ["nominal digit shapes", 0x206f],
     ["word joiner", 0x2060],
     ["right-to-left isolate", 0x2067],
     ["arabic letter mark", 0x061c],
@@ -29,6 +39,16 @@ describe("findInvisibleChars", () => {
     const hex = codePoint.toString(16).toUpperCase().padStart(4, "0");
     expect(findInvisibleChars(`clean\nbad${hidden}line`)).toEqual([
       { line: 2, codePoint: `U+${hex}` },
+    ]);
+  });
+});
+
+describe("findInvisibleChars, several per line", () => {
+  test("reports every hidden character on a line, not only the first", () => {
+    const line = `a${String.fromCodePoint(0x202e)}b${String.fromCodePoint(0x2066)}c`;
+    expect(findInvisibleChars(line)).toEqual([
+      { line: 1, codePoint: "U+202E" },
+      { line: 1, codePoint: "U+2066" },
     ]);
   });
 });
