@@ -156,6 +156,8 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0013](../decisions/0013-defer-hosting-v0-1-runs-locally.md) | Hosting deferred; v0.1 runs locally only |
 | [0014](../decisions/0014-keep-a-single-repository.md) | Single repository for the backend and the interfaces |
 | [0015](../decisions/0015-automated-quality-gates.md) | Automated quality gates with Biome and oxlint |
+| [0016](../decisions/0016-github-repository-baseline.md) | GitHub repository baseline (ruleset, security features, Dependabot) |
+| [0017](../decisions/0017-no-webhooks-until-a-consumer-exists.md) | No webhooks until a consumer exists |
 
 ## Related
 

@@ -24,6 +24,9 @@ writeFileSync(
 
 type Tool = "biome" | "oxlint";
 
+/** How long a linter may run before it is killed and reported as timed out. */
+const TOOL_TIMEOUT_MS = 30_000;
+
 type LintResult = { exitCode: number; output: string };
 
 function run(tool: Tool, files: Record<string, string>): LintResult {
@@ -34,15 +37,18 @@ function run(tool: Tool, files: Record<string, string>): LintResult {
       ? ["biome", "lint", `--config-path=${scratch}`, ...paths]
       : ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
   // Run from the repository root so bunx finds the locally installed tools.
-  // A hung tool fails the test with a diagnosis instead of blocking the run (Bun's per-test
-  // timeout cannot fire while spawnSync blocks the event loop).
+  // A hung tool is killed and reported as timed out, instead of blocking the run
+  // (Bun's per-test timeout cannot fire while spawnSync blocks the event loop).
   const result = Bun.spawnSync(["bunx", "--no-install", "--bun", ...args], {
     cwd: REPO_ROOT,
-    timeout: 30_000,
+    timeout: TOOL_TIMEOUT_MS,
   });
+  const timedOut = result.exitedDueToTimeout
+    ? `${tool} timed out after ${TOOL_TIMEOUT_MS / 1000} seconds\n`
+    : "";
   return {
     exitCode: result.exitCode,
-    output: `${result.stdout.toString()}${result.stderr.toString()}`,
+    output: `${timedOut}${result.stdout.toString()}${result.stderr.toString()}`,
   };
 }
 
@@ -99,6 +105,28 @@ describe("automated quality controls", () => {
     expect(exitCode).toBe(1);
     expect(output.match(/eslint\(complexity\)/g)).toHaveLength(1);
     expect(output).toContain("eslint(max-depth)");
+  });
+
+  test("4 parameters sit exactly at the parameter limit", () => {
+    // Only Biome limits parameters (useMaxParams); .oxlintrc.json has no parameter rule.
+    const four =
+      "export function q(a: number, b: number, c: number, d: number): number {\n  return a + b + c + d;\n}\n";
+    expect(run("biome", { "four-params.ts": four }).exitCode).toBe(0);
+  });
+
+  test("a 50-line function body sits exactly at the length limit", () => {
+    const source = longFunction(48);
+    // Lines between the signature and the closing brace: 48 statements, `let` and `return`.
+    expect(source.trimEnd().split("\n").slice(1, -1)).toHaveLength(50);
+    expect(run("biome", { "at-limit.ts": source }).exitCode).toBe(0);
+  });
+
+  test("a 51-line function body fails on the length rule alone", () => {
+    const { exitCode, output } = run("biome", { "over-limit.ts": longFunction(49) });
+    expect(exitCode).toBe(1);
+    expect([...new Set(output.match(/lint\/[a-z]+\/[A-Za-z]+/g))]).toEqual([
+      "lint/complexity/noExcessiveLinesPerFunction",
+    ]);
   });
 
   test("the 50-line limit is lifted for test files only", () => {
