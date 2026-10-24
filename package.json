@@ -1,0 +1,28 @@
+{
+  "name": "open-origin",
+  "private": true,
+  "type": "module",
+  "description": "Open-source persistent universe where autonomous beings and humans coexist.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tienda-Universx/open-origin.git"
+  },
+  "packageManager": "bun@1.4.4",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "check": "bun run typecheck && bun run lint && bun run test",
+    "typecheck": "bunx --bun tsc --noEmit -p tsconfig.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/bun": "1.4.4",
+    "typescript": "7.0.2"
+  }
+}
