@@ -115,7 +115,7 @@ T4 adds an activity index based on world data only ([0005](0005-observer-indepen
 
 **Canonical values.** Safe integers without `-0`, strings, booleans, dense arrays, and plain
 records; no `null`. Strings and record keys must be well formed and in NFC: the core validates and
-never normalizes. The key `__proto__` is rejected, nesting depth is at most 64, and a command
+never normalizes. The key `__proto__` is rejected, cycles are rejected, nesting depth is at most 64, and a command
 payload is at most 8 KiB. The text form is the subset of RFC 8785 these values need: keys sorted by
 UTF-16 code units, integers in decimal, strings escaped as `JSON.stringify` does, no whitespace.
 The parser accepts exactly the canonical texts: it parses, validates, re-serializes, and requires
@@ -147,7 +147,7 @@ the batch that defines the length of a day, an internal law (plan O-13).
 - Biome denies host and non-deterministic globals (among them `Reflect` and `JSON`, which
   enumerate or serialize keys in insertion order), Node modules, `console`, `process`, `eval`,
   `for…in`, and non-relative imports;
-- a GritQL plugin denies `**`, `async`/`await`, locale-dependent methods, own-key enumeration
+- GritQL plugins deny `**`, `async`/`await`, locale-dependent methods, own-key enumeration
   (`Object.keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`,
   `getOwnPropertyDescriptors`) outside the ordering helper, binding or destructuring `Object`,
   and `.constructor`, which reaches the `Function` constructor;

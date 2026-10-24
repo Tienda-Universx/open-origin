@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
   checkEngineSource,
   ENGINE_SRC,
@@ -213,16 +216,41 @@ describe("checkEngineSource", () => {
     ]);
   });
 
-  test("allows the reviewed oxlint complexity comment and strings that mention suppressions", () => {
+  test("allows the reviewed oxlint complexity comment and @ts-check", () => {
     const content = [
       "// oxlint-disable-next-line eslint/complexity -- lookup table, reviewed",
       "export const pick = (x: number): number => x;",
-      'export const note = "a // biome-ignore inside a string is not a comment";',
       "// @ts-check only turns checking on.",
-      'export const pragma = "// @ts-nocheck inside a string is not a comment";',
       "",
     ].join("\n");
     expect(issues(content)).toEqual([]);
+  });
+
+  // A comment inside a template substitution looks like template text to a lexical scan, so the
+  // gate tokens are rejected anywhere in the file, strings included.
+  test("reports gate tokens hidden in a template substitution or written in a string", () => {
+    const content = [
+      "export const late = `${",
+      "  // @ts-expect-error",
+      "  missing",
+      "}`;",
+      'export const note = "biome-ignore";',
+      "",
+    ].join("\n");
+    expect(issues(content)).toEqual([
+      {
+        file: FILE,
+        line: 2,
+        message:
+          "`@ts-expect-error` can silently disable the engine's type gate: fix the type error instead",
+      },
+      {
+        file: FILE,
+        line: 5,
+        message:
+          "`biome-ignore` can silently disable a purity rule: add a reviewed override in biome.json instead",
+      },
+    ]);
   });
 
   test.each(["host.d.ts", "host.d.mts", "host.d.cts", "host.d.json.ts"])(
@@ -310,9 +338,37 @@ describe("packages/engine", () => {
     expect(lib.filter((entry) => !/^es(?:5|6|20\d\d|next)(?:\.[a-z0-9]+)*$/i.test(entry))).toEqual(
       [],
     );
-    expect(config.include).toEqual(["src/**/*.ts"]);
+    expect(config.include?.length).toBeGreaterThan(0);
+    expect(config.include?.filter((entry) => !/^src(?:\/|$)/.test(entry))).toEqual([]);
     expect(config.files).toBeUndefined();
     expect(config.references).toBeUndefined();
+  });
+
+  // A module nothing imports is still engine source; if the program skipped it, the type gate
+  // would never see it. The engine's include settings are applied to a scratch src directory.
+  test("tsconfig.json typechecks every TypeScript module under src, imported or not", async () => {
+    const config = await Bun.file(`${REPO_ROOT}packages/engine/tsconfig.json`).json();
+    const scratch = mkdtempSync(join(tmpdir(), "open-origin-engine-tsconfig-"));
+    try {
+      const modules = ["src/plain.ts", "src/nested/esm.mts", "src/nested/cjs.cts"];
+      for (const module of modules) {
+        mkdirSync(dirname(join(scratch, module)), { recursive: true });
+        writeFileSync(join(scratch, module), "export const value = 1;\n");
+      }
+      writeFileSync(
+        join(scratch, "tsconfig.json"),
+        JSON.stringify({ ...config, extends: `${REPO_ROOT}tsconfig.base.json` }),
+      );
+      const result = Bun.spawnSync(
+        ["bunx", "--no-install", "--bun", "tsc", "-p", scratch, "--listFilesOnly"],
+        { cwd: REPO_ROOT, timeout: 30_000 },
+      );
+      expect(result.exitCode).toBe(0);
+      const listed = result.stdout.toString().split("\n");
+      expect(modules.filter((module) => !listed.includes(join(scratch, module)))).toEqual([]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   test("package.json is private, exports only its entry point, and has no dependencies", async () => {

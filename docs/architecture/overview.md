@@ -164,6 +164,8 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 
 ## Related
 
+- [Determinism](determinism.md): the rules that make the engine reproducible, section by
+  section as T2 implements them.
 - [Interfaces](interfaces.md): planes, message flow, acceptance criteria, and roadmap of both
   interfaces.
 - [Data classification](data-classification.md): access by interface, enforcement map, and tests

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { ENGINE_SRC } from "./engine-purity.ts";
 import { REPO_ROOT } from "./files.ts";
 
 /**
@@ -30,7 +31,15 @@ function writeScratch(name: string, content: string): string {
 }
 
 type PluginEntry = string | { path: string };
-type BiomeConfig = { plugins?: PluginEntry[]; overrides?: { plugins?: PluginEntry[] }[] };
+type DeniedGlobals = Record<string, string>;
+type Override = {
+  includes?: string[];
+  plugins?: PluginEntry[];
+  linter?: {
+    rules?: { style?: { noRestrictedGlobals?: { options?: { deniedGlobals?: DeniedGlobals } } } };
+  };
+};
+type BiomeConfig = { plugins?: PluginEntry[]; overrides?: Override[] };
 
 /** Every GritQL plugin the configuration registers, at the top level or in an override. */
 function pluginPaths(config: BiomeConfig): string[] {
@@ -312,7 +321,6 @@ describe("TypeScript strict mode", () => {
   });
 });
 
-const ENGINE_SRC = "packages/engine/src";
 const ENGINE_TEST = "packages/engine/test";
 
 /** One Biome diagnostic: the scratch-relative fixture, its rule (or `plugin`), and its text. */
@@ -514,6 +522,15 @@ function sourcesIn(directory: string, cases: Record<string, PurityCase>): Record
   );
 }
 
+type LintSummary = { exitCode: number | null; checked: number; diagnostics: Diagnostic[] };
+
+/** Lints `files`; `checked` proves Biome linted them all instead of skipping them. */
+function lintSummary(files: Record<string, string>): LintSummary {
+  const { exitCode, output } = run("biome", files);
+  const checked = Number(/Checked (\d+) files?/.exec(output)?.[1]);
+  return { exitCode, checked, diagnostics: biomeDiagnostics(output) };
+}
+
 describe("engine purity controls (packages/engine/src)", () => {
   // One Biome run lints every fixture, to bound CI time.
   let lintedSources: { exitCode: number | null; diagnostics: Diagnostic[] } | undefined;
@@ -570,13 +587,6 @@ describe("engine purity controls (packages/engine/src)", () => {
     expect(plugin).toHaveLength(7);
   });
 
-  /** Lints `files`; `checked` proves Biome linted them all instead of skipping them. */
-  function lintSummary(files: Record<string, string>) {
-    const { exitCode, output } = run("biome", files);
-    const checked = Number(/Checked (\d+) files?/.exec(output)?.[1]);
-    return { exitCode, checked, diagnostics: biomeDiagnostics(output) };
-  }
-
   test("the same sources pass outside src: the controls are scoped to the engine core", () => {
     const files = sourcesIn(ENGINE_TEST, PURITY_CASES);
     expect(lintSummary(files)).toEqual({
@@ -615,6 +625,175 @@ describe("engine purity controls (packages/engine/src)", () => {
       [`${ENGINE_SRC}/integers/double.ts`]: "export const double = (x: number): number => x * 2;\n",
     });
     expect(summary).toEqual({ exitCode: 0, checked: 2, diagnostics: [] });
+  });
+});
+
+/**
+ * The reviewed exceptions of ADR 0020 ("Determinism rules enforced by tools"): canonical/order.ts
+ * may enumerate keys through `Object` (key-order.grit skips it), and canonical/encode.ts may use
+ * the global `JSON` (its override repeats the engine's denied globals without `JSON`, because an
+ * override replaces a rule's options). Each covers its exact file, and every other purity rule
+ * still applies to both.
+ */
+const ORDER_TS = `${ENGINE_SRC}/canonical/order.ts`;
+const ENCODE_TS = `${ENGINE_SRC}/canonical/encode.ts`;
+
+/** The denied globals of the override whose `includes` are exactly `includes`. */
+function deniedGlobalsOf(...includes: string[]): DeniedGlobals {
+  const override = (biomeConfig.overrides ?? []).find(
+    (entry) => JSON.stringify(entry.includes) === JSON.stringify(includes),
+  );
+  return override?.linter?.rules?.style?.noRestrictedGlobals?.options?.deniedGlobals ?? {};
+}
+
+/** Denied in all of packages/engine/src, as biome.json says. */
+const ENGINE_DENIED = deniedGlobalsOf(`${ENGINE_SRC}/**`);
+
+/** One broken purity rule: a source line and a text that only its diagnostic contains. */
+type Probe = { name: string; source: string; message: string };
+
+const KEY_ENUMERATION_PROBE: Probe = {
+  name: "key enumeration",
+  source: "export const ownKeys = Object.keys({});",
+  message: KEY_ORDER_MESSAGE,
+};
+
+const globalProbe = (name: string): Probe => ({
+  name: `the global ${name}`,
+  source: `export const global${name} = ${name};`,
+  message: `Do not use the global variable ${name}.`,
+});
+
+const JSON_PROBE = globalProbe("JSON");
+
+/** Two rules reject this import, so two probes share it; a fixture holds it once. */
+const NODE_IMPORT = 'import { readFileSync } from "node:fs";\nexport const read = readFileSync;';
+
+/** Every purity rule, through one probe each; the cases above cover their variants. */
+const EVERY_RULE: Probe[] = [
+  KEY_ENUMERATION_PROBE,
+  ...Object.keys(ENGINE_DENIED).map(globalProbe),
+  { name: "**", source: "export const cube = 2 ** 3;", message: "`**` and `**=`" },
+  {
+    name: "async",
+    source: "export async function load() {\n  return 1;\n}",
+    message: "The engine is synchronous: `async`",
+  },
+  {
+    name: "await",
+    source: "export const awaited = await 0;",
+    message: "The engine is synchronous: `await`",
+  },
+  {
+    name: "locale methods",
+    source: 'export const order = "a".localeCompare("b");',
+    message: LOCALE_MESSAGE,
+  },
+  {
+    name: "binding Object",
+    source: "export const O = Object;",
+    message: "Binding `Object` to a name hides",
+  },
+  {
+    name: ".constructor",
+    source: "export const make = (() => undefined).constructor;",
+    message: CONSTRUCTOR_MESSAGE,
+  },
+  {
+    name: "for...in",
+    source:
+      "export function count(record: Record<string, number>): number {\n  let total = 0;\n  for (const key in record) total += key.length;\n  return total;\n}",
+    message: "Unexpected for-in loop.",
+  },
+  { name: "console", source: 'console.log("tick");', message: "Don't use console." },
+  {
+    name: "process",
+    source: "export const env = process.env;",
+    message: "Usage of the `process` global is discouraged.",
+  },
+  { name: "eval", source: 'export const one = eval("1");', message: "Do not use eval()." },
+  { name: "Node.js modules", source: NODE_IMPORT, message: "references a Node.js builtin module" },
+  { name: "node:* imports", source: NODE_IMPORT, message: "`node:*` modules are host APIs" },
+  {
+    name: "package imports",
+    source: 'import { parse } from "some-package";\nexport const parsePackage = parse;',
+    message: "The engine depends on nothing",
+  },
+];
+
+/** Paths that look like an excepted file but are not it: both exceptions must miss them. */
+const NEAR_MISSES = [
+  `${ENGINE_SRC}/canonical/value.ts`,
+  `${ENGINE_SRC}/order.ts`,
+  `${ENGINE_SRC}/encode.ts`,
+  `${ENGINE_SRC}/canonical/reorder.ts`,
+  `${ENGINE_SRC}/canonical/encoder.ts`,
+  `${ENGINE_SRC}/canonical/order/order.ts`,
+  `${ENGINE_SRC}/canonical/encode/encode.ts`,
+];
+
+describe("reviewed exceptions in packages/engine/src/canonical", () => {
+  // One Biome run lints every fixture, to bound CI time.
+  let linted: LintSummary | undefined;
+  function exceptionRun(): LintSummary {
+    if (linted === undefined) {
+      const everyRule = `${[...new Set(EVERY_RULE.map((probe) => probe.source))].join("\n")}\n`;
+      const nearMiss = `${KEY_ENUMERATION_PROBE.source}\n${JSON_PROBE.source}\n`;
+      linted = lintSummary({
+        [ORDER_TS]: everyRule,
+        [ENCODE_TS]: everyRule,
+        ...Object.fromEntries(NEAR_MISSES.map((path) => [path, nearMiss])),
+      });
+    }
+    return linted;
+  }
+
+  /** How many diagnostics of `file` contain each probe's message, by probe name. */
+  function probeCounts(file: string, probes: readonly Probe[]): Record<string, number> {
+    const found = exceptionRun().diagnostics.filter((diagnostic) => diagnostic.file === file);
+    return Object.fromEntries(
+      probes.map(({ name, message }) => [
+        name,
+        found.filter((diagnostic) => diagnostic.text.includes(message)).length,
+      ]),
+    );
+  }
+
+  /** One diagnostic per probe, and none for the probe named `exempt`. */
+  function expectedCounts(probes: readonly Probe[], exempt: string): Record<string, number> {
+    return Object.fromEntries(probes.map(({ name }) => [name, name === exempt ? 0 : 1]));
+  }
+
+  test("Biome lints every fixture, with key-order.grit copied next to purity.grit", () => {
+    expect(pluginPaths(biomeConfig)).toContain("./packages/engine/lint/key-order.grit");
+    expect(Object.keys(ENGINE_DENIED)).toContain("JSON");
+    const { exitCode, checked } = exceptionRun();
+    expect(exitCode).toBe(1);
+    expect(checked).toBe(2 + NEAR_MISSES.length);
+  });
+
+  test("the encode.ts override denies every engine global except JSON, with the same messages", () => {
+    const withoutJson = Object.fromEntries(
+      Object.entries(ENGINE_DENIED).filter(([name]) => name !== "JSON"),
+    );
+    expect(deniedGlobalsOf(ENCODE_TS)).toEqual(withoutJson);
+  });
+
+  test("canonical/order.ts may enumerate keys, and every other purity rule applies to it", () => {
+    expect(probeCounts(ORDER_TS, EVERY_RULE)).toEqual(
+      expectedCounts(EVERY_RULE, KEY_ENUMERATION_PROBE.name),
+    );
+  });
+
+  test("canonical/encode.ts may use JSON, and every other purity rule applies to it", () => {
+    expect(probeCounts(ENCODE_TS, EVERY_RULE)).toEqual(expectedCounts(EVERY_RULE, JSON_PROBE.name));
+  });
+
+  test("each exception covers its exact path and no other file", () => {
+    const probes = [KEY_ENUMERATION_PROBE, JSON_PROBE];
+    const counts = Object.fromEntries(NEAR_MISSES.map((path) => [path, probeCounts(path, probes)]));
+    const bothRejected = expectedCounts(probes, "");
+    expect(counts).toEqual(Object.fromEntries(NEAR_MISSES.map((path) => [path, bothRejected])));
   });
 });
 
