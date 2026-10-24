@@ -48,10 +48,57 @@ describe("validateAdr", () => {
     );
   });
 
+  const STATUS_RULE =
+    "status must be one of: Proposed, Accepted, Rejected, Deprecated, or 'Superseded by NNNN'";
+
   test("rejects an unknown status", () => {
-    expect(messages(adr({ status: "Maybe" }))).toContain(
-      "status must start with one of: Proposed, Accepted, Rejected, Deprecated, Superseded",
-    );
+    expect(messages(adr({ status: "Maybe" }))).toContain(STATUS_RULE);
+  });
+
+  test("rejects a status that only starts with an allowed value", () => {
+    expect(messages(adr({ status: "Acceptedish nonsense" }))).toContain(STATUS_RULE);
+  });
+
+  test("accepts a superseded status that names the replacing ADR", () => {
+    expect(validateAdr(adr({ status: "Superseded by 0012" }))).toEqual([]);
+  });
+
+  test("ignores metadata that only appears inside an HTML comment", () => {
+    const file = adr();
+    const commented = file.content.replace("- Status: Accepted", "<!--\n- Status: Accepted\n-->");
+    expect(messages({ ...file, content: commented })).toContain(STATUS_RULE);
+  });
+
+  test("ignores headings inside fenced code blocks", () => {
+    const body = [
+      "## Context",
+      "Why.",
+      "",
+      "## Decisionz",
+      "```md",
+      "## Decision",
+      "```",
+      "",
+      "## Consequences",
+      "Effects.",
+    ].join("\n");
+    expect(messages(adr({ body }))).toContain("missing section '## Decision'");
+  });
+
+  test("rejects a required section that appears more than once", () => {
+    const body = [
+      "## Context",
+      "Why.",
+      "",
+      "## Decision",
+      "",
+      "## Decision",
+      "What.",
+      "",
+      "## Consequences",
+      "Effects.",
+    ].join("\n");
+    expect(messages(adr({ body }))).toContain("section '## Decision' appears more than once");
   });
 
   test("rejects a date that is not a real ISO calendar date", () => {
@@ -121,7 +168,7 @@ describe("validateAdrSet", () => {
 describe("repository ADRs", () => {
   test("every ADR in docs/decisions is valid and numbered contiguously", async () => {
     const files: AdrFile[] = [];
-    for await (const name of new Bun.Glob("*.md").scan({ cwd: DECISIONS_DIR.pathname })) {
+    for await (const name of new Bun.Glob("*.md").scan({ cwd: Bun.fileURLToPath(DECISIONS_DIR) })) {
       files.push({ name, content: await Bun.file(new URL(name, DECISIONS_DIR)).text() });
     }
     expect(files.length).toBeGreaterThanOrEqual(2);

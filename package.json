@@ -16,8 +16,8 @@
   "scripts": {
     "check": "bun run typecheck && bun run lint && bun run test",
     "typecheck": "bunx --bun tsc --noEmit -p tsconfig.json",
-    "lint": "biome check .",
-    "format": "biome check --write .",
+    "lint": "bunx --bun biome check .",
+    "format": "bunx --bun biome check --write .",
     "test": "bun test"
   },
   "devDependencies": {

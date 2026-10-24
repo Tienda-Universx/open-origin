@@ -7,7 +7,7 @@ export type AdrFile = { name: string; content: string };
 export type AdrIssue = { file: string; message: string };
 
 const FILE_NAME = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
-const STATUSES = ["Proposed", "Accepted", "Rejected", "Deprecated", "Superseded"] as const;
+const STATUS = /^(?:Proposed|Accepted|Rejected|Deprecated|Superseded by \d{4})$/;
 const SECTIONS = ["Context", "Decision", "Consequences"] as const;
 
 function isCalendarDate(value: string): boolean {
@@ -16,24 +16,56 @@ function isCalendarDate(value: string): boolean {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-function sectionBodies(lines: readonly string[]): Map<string, { index: number; body: string }> {
-  const sections = new Map<string, { index: number; body: string }>();
-  let current: string | undefined;
+/** Blanks out HTML comments and fenced code blocks so they never count as structure. */
+function visibleLines(lines: readonly string[]): string[] {
+  let inComment = false;
+  let inFence = false;
+  return lines.map((line) => {
+    if (inFence) {
+      if (/^\s*(```|~~~)/.test(line)) inFence = false;
+      return "";
+    }
+    if (inComment) {
+      if (line.includes("-->")) inComment = false;
+      return "";
+    }
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = true;
+      return "";
+    }
+    if (line.includes("<!--") && !line.includes("-->")) {
+      inComment = true;
+      return "";
+    }
+    return line.replace(/<!--.*?-->/g, "");
+  });
+}
+
+type Section = { index: number; body: string; count: number };
+
+function sectionBodies(lines: readonly string[]): Map<string, Section> {
+  const sections = new Map<string, Section>();
+  let current: Section | undefined;
   let buffer: string[] = [];
   const flush = () => {
-    const entry = current === undefined ? undefined : sections.get(current);
-    if (entry) entry.body = buffer.join("\n").trim();
+    if (current && current.body === "") current.body = buffer.join("\n").trim();
   };
   lines.forEach((line, index) => {
-    const heading = /^## (.+?)\s*$/.exec(line);
-    if (!heading?.[1]) {
+    const heading = /^## (.+?)\s*$/.exec(line)?.[1];
+    if (heading === undefined) {
       buffer.push(line);
       return;
     }
     flush();
-    current = heading[1];
     buffer = [];
-    if (!sections.has(current)) sections.set(current, { index, body: "" });
+    const existing = sections.get(heading);
+    if (existing) {
+      existing.count += 1;
+      current = existing;
+    } else {
+      current = { index, body: "", count: 1 };
+      sections.set(heading, current);
+    }
   });
   flush();
   return sections;
@@ -42,7 +74,8 @@ function sectionBodies(lines: readonly string[]): Map<string, { index: number; b
 export function validateAdr(file: AdrFile): AdrIssue[] {
   const issues: AdrIssue[] = [];
   const report = (message: string) => issues.push({ file: file.name, message });
-  const lines = file.content.split(/\r?\n/);
+  const raw = file.content.replace(/^﻿/, "").split(/\r?\n/);
+  const lines = visibleLines(raw);
 
   const number = FILE_NAME.exec(file.name)?.[1];
   if (number === undefined) {
@@ -52,8 +85,10 @@ export function validateAdr(file: AdrFile): AdrIssue[] {
   }
 
   const status = lines.find((line) => line.startsWith("- Status: "))?.slice("- Status: ".length);
-  if (!STATUSES.some((allowed) => status?.startsWith(allowed))) {
-    report(`status must start with one of: ${STATUSES.join(", ")}`);
+  if (status === undefined || !STATUS.test(status.trim())) {
+    report(
+      "status must be one of: Proposed, Accepted, Rejected, Deprecated, or 'Superseded by NNNN'",
+    );
   }
 
   const date = lines.find((line) => line.startsWith("- Date: "))?.slice("- Date: ".length);
@@ -70,6 +105,7 @@ export function validateAdr(file: AdrFile): AdrIssue[] {
       continue;
     }
     positions.push(section.index);
+    if (section.count > 1) report(`section '## ${name}' appears more than once`);
     if (section.body === "") report(`section '## ${name}' must not be empty`);
   }
   if (positions.some((position, i) => i > 0 && position < (positions[i - 1] ?? 0))) {
