@@ -5,7 +5,7 @@
 
 ## Context
 
-The system holds very different information: what anyone in the world could see, inhabitants'
+The system holds information of different sensitivity: what anyone in the world could see, inhabitants'
 inner life, future player data, operational and research data, and secrets. The maintainer asked
 to distinguish public information, private player data, inhabitants' internal memory, and admin or
 research tools, and stated that clients must never receive secrets or unnecessary internal
