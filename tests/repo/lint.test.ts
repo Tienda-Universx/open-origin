@@ -22,7 +22,7 @@ writeFileSync(
   JSON.stringify({ ...biomeConfig, vcs: { enabled: false } }),
 );
 
-type Tool = "biome" | "oxlint";
+type Tool = "biome" | "oxlint" | "tsc";
 
 /** How long a linter may run before it is killed and reported as timed out. */
 const TOOL_TIMEOUT_MS = 30_000;
@@ -30,13 +30,27 @@ const TOOL_TIMEOUT_MS = 30_000;
 /** `exitCode` is null when the tool was killed (a timeout), whatever the Bun types say. */
 type LintResult = { exitCode: number | null; output: string };
 
+/** The command line that checks the fixture `paths` with the repository's own settings. */
+function commandLine(tool: Tool, paths: string[]): string[] {
+  if (tool === "biome") return ["biome", "lint", `--config-path=${scratch}`, ...paths];
+  if (tool === "oxlint") {
+    return ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
+  }
+  // tsc checks exactly these files with the compiler options every package shares.
+  const config = join(scratch, "tsconfig.json");
+  writeFileSync(
+    config,
+    JSON.stringify({ extends: `${REPO_ROOT}tsconfig.base.json`, files: paths }),
+  );
+  return ["tsc", "--noEmit", "-p", config];
+}
+
 function run(tool: Tool, files: Record<string, string>): LintResult {
   for (const [name, source] of Object.entries(files)) writeFileSync(join(scratch, name), source);
-  const paths = Object.keys(files).map((name) => join(scratch, name));
-  const args =
-    tool === "biome"
-      ? ["biome", "lint", `--config-path=${scratch}`, ...paths]
-      : ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
+  const args = commandLine(
+    tool,
+    Object.keys(files).map((name) => join(scratch, name)),
+  );
   // Run from the repository root so bunx finds the locally installed tools.
   // A hung tool is killed and reported as timed out, instead of blocking the run
   // (Bun's per-test timeout cannot fire while spawnSync blocks the event loop).
@@ -233,5 +247,34 @@ describe("automated quality controls", () => {
     // The fixture breaks exactly this rule, so the failing exit code comes from it alone.
     expect(exitCode).toBe(1);
     expect([...new Set(output.match(/lint\/[a-z]+\/[A-Za-z]+/g))]).toEqual([rule]);
+  });
+});
+
+describe("TypeScript strict mode", () => {
+  test("accepts code that handles a possibly missing element", () => {
+    const typed = "export const first = (xs: readonly number[]): number | undefined => xs[0];\n";
+    expect(run("tsc", { "typed.ts": typed })).toEqual({
+      exitCode: 0,
+      output: expect.not.stringContaining("error TS"),
+    });
+  });
+
+  test.each([
+    ["an implicit any (strict)", "export function f(a) {\n  return a;\n}\n", "TS7006"],
+    [
+      "an unchecked index access (noUncheckedIndexedAccess)",
+      "export const first = (xs: number[]): number => xs[0];\n",
+      "TS2322",
+    ],
+    [
+      "an explicit undefined in an optional property (exactOptionalPropertyTypes)",
+      "type A = { x?: number };\nexport const a: A = { x: undefined };\n",
+      "TS2375",
+    ],
+  ] as const)("rejects %s", (_name, source, code) => {
+    const { exitCode, output } = run("tsc", { "strict.ts": source });
+    // The fixture breaks exactly this rule, so the failing exit code comes from it alone.
+    expect(exitCode).not.toBe(0);
+    expect([...new Set(output.match(/TS\d{4,5}/g))]).toEqual([code]);
   });
 });

@@ -11,65 +11,70 @@ const manifest = (await Bun.file(
   new URL("../../package.json", import.meta.url),
 ).json()) as Manifest;
 
-/** The commands of a script: the parts separated by `&&`, `||`, `;`, a pipe, or `&`. */
+/** The commands of a script: the parts separated by `&&`, `||`, `;`, a pipe, `&`, or a newline. */
 function commands(script = ""): string[] {
   return script
-    .split(/&&|\|\||[;|&]/)
+    .split(/&&|\|\||[;|&\n]/)
     .map((command) => command.trim())
     .filter((command) => command !== "");
 }
 
-// Without --no-install, bunx downloads a registry package when the tool is missing; without --bun,
-// a tool whose launcher targets Node runs on Node. npx, node, npm and the like never pass.
-const ALLOWED_COMMAND = /^(?:bun run |bun test(?: |$)|bunx --no-install --bun )/;
 /** Command substitution runs a command the allowlist never sees. */
 const SUBSTITUTION = /\$\(|`/;
 
-/** The parts of a script that are not Bun or a locally installed tool run on Bun. */
-function disallowedCommands(script: string): string[] {
+/**
+ * Whether a command runs on Bun: the test runner, a script of this package, or a tool forced onto
+ * Bun. `bun run <tool>` and `bunx <tool>` follow the tool's `#!/usr/bin/env node` line and run it on
+ * Node; `bunx` without `--no-install` also downloads a registry package when the tool is missing.
+ */
+function runsOnBun(command: string, scripts: ReadonlySet<string>): boolean {
+  if (/^(?:bun test|bunx --no-install --bun|bun run --bun)(?: |$)/.test(command)) return true;
+  const script = /^bun run ([\w:-]+)$/.exec(command)?.[1];
+  return script !== undefined && scripts.has(script);
+}
+
+/** The parts of a script that do not run on Bun, given the names of the package's scripts. */
+function disallowedCommands(script: string, scripts: ReadonlySet<string>): string[] {
   if (SUBSTITUTION.test(script)) return [script];
-  return commands(script).filter((command) => !ALLOWED_COMMAND.test(command));
+  return commands(script).filter((command) => !runsOnBun(command, scripts));
 }
 
 /** Project scripts joined by `&&`, so the chain stops at the first step that fails. */
 const FAIL_FAST_CHAIN = /^bun run [\w:-]+(?: && bun run [\w:-]+)*$/;
 
-/** The arguments of a `bun test` command that are not options: each one filters the test files. */
-function testFilters(command: string): string[] {
-  return command
-    .split(/\s+/)
-    .slice(2)
-    .filter((arg) => !arg.startsWith("-"));
-}
-
 describe("script checks", () => {
-  test("reject npx, node, bunx without its flags, and command substitution", () => {
-    expect(disallowedCommands("bun run lint && bun test && bunx --no-install --bun tsc")).toEqual(
-      [],
-    );
-    expect(disallowedCommands("echo hi; npx biome format .")).toEqual([
+  const scripts = new Set(["lint", "typecheck"]);
+
+  test("accept the test runner, project scripts, and tools forced onto Bun", () => {
+    const script = "bun run lint && bun test --watch && bunx --no-install --bun tsc";
+    expect(disallowedCommands(`${script} && bun run --bun vite build`, scripts)).toEqual([]);
+  });
+
+  test("reject npx, node, tools run without --bun, and command substitution", () => {
+    expect(disallowedCommands("echo hi; npx biome format .", scripts)).toEqual([
       "echo hi",
       "npx biome format .",
     ]);
-    expect(disallowedCommands("bun run x & node evil.js | bun x tool")).toEqual([
+    expect(disallowedCommands("bun run lint & node evil.js | bun x tool", scripts)).toEqual([
       "node evil.js",
       "bun x tool",
     ]);
-    expect(disallowedCommands("bunx biome check .")).toEqual(["bunx biome check ."]);
-    expect(disallowedCommands("bun run $(echo lint)")).toEqual(["bun run $(echo lint)"]);
+    // Both follow tsc's `#!/usr/bin/env node` line and run it on Node.
+    expect(disallowedCommands("bun run tsc --noEmit\nbunx biome check .", scripts)).toEqual([
+      "bun run tsc --noEmit",
+      "bunx biome check .",
+    ]);
+    expect(disallowedCommands("bun run unknown-script && bun testx", scripts)).toEqual([
+      "bun run unknown-script",
+      "bun testx",
+    ]);
+    expect(disallowedCommands("bun run $(echo lint)", scripts)).toEqual(["bun run $(echo lint)"]);
   });
 
   test("accept a chain only when every step must pass", () => {
     expect(FAIL_FAST_CHAIN.test("bun run typecheck && bun run lint && bun run test")).toBe(true);
     expect(FAIL_FAST_CHAIN.test("bun run typecheck; bun run lint; bun run test")).toBe(false);
     expect(FAIL_FAST_CHAIN.test("bun run typecheck || bun run lint && bun run test")).toBe(false);
-  });
-
-  test("tell options from test filters", () => {
-    expect(testFilters("bun test --timeout=20000 --parallel")).toEqual([]);
-    expect(testFilters("bun test tests/repo/markdown.test.ts")).toEqual([
-      "tests/repo/markdown.test.ts",
-    ]);
   });
 });
 
@@ -79,9 +84,10 @@ describe("package.json", () => {
   });
 
   test("scripts run only Bun and locally installed tools", () => {
+    const names = new Set(Object.keys(manifest.scripts));
     const scripts = Object.values(manifest.scripts);
     expect(scripts.flatMap((script) => commands(script)).length).toBeGreaterThan(0);
-    expect(scripts.flatMap(disallowedCommands)).toEqual([]);
+    expect(scripts.flatMap((script) => disallowedCommands(script, names))).toEqual([]);
   });
 
   test("check, which CI runs, runs the typecheck, the lint and the whole test suite", () => {
@@ -93,10 +99,8 @@ describe("package.json", () => {
     expect(manifest.scripts.typecheck).toMatch(
       /^bunx --no-install --bun tsc (?=.*--noEmit)(?=.*-p tsconfig\.json)/,
     );
-    // Write option values as --option=value: any other argument filters the test files.
-    const testCommands = commands(manifest.scripts.test);
-    expect(testCommands).toEqual([expect.stringMatching(/^bun test(?: |$)/)]);
-    expect(testFilters(testCommands[0] ?? "")).toEqual([]);
+    // Any argument, a path or an option such as --test-name-pattern, can narrow the suite CI runs.
+    expect(manifest.scripts.test).toBe("bun test");
   });
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {

@@ -136,8 +136,12 @@ describe("checkLinks", () => {
   test("does not pair backticks across list items", () => {
     const docs = docsOf({
       "docs/a.md": "- type a ` to start\n- see [a](missing.md)\n- run `bun test`",
+      "docs/sub/b.md": "1. type a ` to start\n2. see [b](missing.md)\n3) run `bun test`",
     });
-    expect(checkLinks(docs, files)).toEqual([missing("missing.md")]);
+    expect(checkLinks(docs, files)).toEqual([
+      missing("missing.md"),
+      { file: "docs/sub/b.md", target: "missing.md", reason: "missing file" },
+    ]);
   });
 
   test("checks both an image and the link around it", () => {

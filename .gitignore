@@ -12,7 +12,9 @@ node_modules/
 !.env.example
 
 # Build output, package archives (bun pm pack), caches, logs and coverage reports
-dist/
+/dist/
+/apps/*/dist/
+/packages/*/dist/
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo

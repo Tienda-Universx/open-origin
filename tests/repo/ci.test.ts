@@ -59,11 +59,24 @@ function isPinned(ref: string): boolean {
 // triggers them ("pwn requests"); a workflow that needs one is a reviewed exception.
 const PRIVILEGED_EVENTS = ["pull_request_target", "workflow_run"];
 
+/** The events of an `on:` value that run untrusted code with the repository's secrets. */
+function privilegedEvents(on: unknown): string[] {
+  return triggers(on).filter((event) => PRIVILEGED_EVENTS.includes(event));
+}
+
 describe("workflow checks", () => {
   test("read the events of every form of `on:`", () => {
     expect(triggers("push")).toEqual(["push"]);
     expect(triggers(["push", "pull_request_target"])).toEqual(["push", "pull_request_target"]);
     expect(triggers({ workflow_run: { workflows: ["CI"] } })).toEqual(["workflow_run"]);
+  });
+
+  test("flag the events that run with the repository's secrets", () => {
+    expect(privilegedEvents({ pull_request_target: { types: ["opened"] }, push: null })).toEqual([
+      "pull_request_target",
+    ]);
+    expect(privilegedEvents(["workflow_run", "pull_request"])).toEqual(["workflow_run"]);
+    expect(privilegedEvents("pull_request")).toEqual([]);
   });
 
   test("find write access at any scope", () => {
@@ -113,7 +126,7 @@ describe("every workflow", () => {
     const events = triggers(flow.on);
     // A missing or unreadable `on:` would leave nothing to check.
     expect(events.length).toBeGreaterThan(0);
-    expect(events.filter((event) => PRIVILEGED_EVENTS.includes(event))).toEqual([]);
+    expect(privilegedEvents(flow.on)).toEqual([]);
   });
 
   test.each(workflows)("%s pins every action and reusable workflow", (_path, flow) => {

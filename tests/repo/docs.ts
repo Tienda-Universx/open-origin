@@ -80,8 +80,9 @@ function isExternal(target: string): boolean {
 /**
  * Relative link targets of a Markdown document, in order: inline links (whose text may wrap onto
  * the next line) and reference-style definitions. Code blocks, code spans, and external URLs are
- * ignored. Not checked: HTML `href` attributes and headings whose anchor depends on inline
- * formatting; the documentation uses neither.
+ * ignored. This approximates CommonMark; the documentation uses none of the cases it misses:
+ * HTML `href` attributes, anchors of headings with inline formatting, definitions directly under a
+ * heading or code block, backslashes in paths, escaped backticks, and a stray backtick in a table.
  */
 export function relativeTargets(markdown: string): string[] {
   return visibleText(markdown)
