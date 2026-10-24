@@ -62,10 +62,12 @@ export type WorldStatus = { readonly kind: "ok"; readonly tick: Tick } | Faulted
  * encoding by encodeSnapshot or snapshotBytes. Meanwhile every use of the world, read or step, is
  * refused through it, so nothing sees or saves partial state.
  */
-export interface ActiveStep {
+export interface WorldActivity {
   /**
    * The world_busy error for a call of `api` while the world is busy. During a tick it also records
-   * a fault of the tick at the ruleset code that made the call, so that catching it hides nothing.
+   * a fault of the tick at the ruleset code that made the call, so that catching it hides nothing;
+   * during an encoding it keeps the first refusal, so that an encoding that fails because of it
+   * throws it instead of blaming the state.
    */
   refuse(api: string): EngineError;
 }
@@ -98,7 +100,7 @@ export type WorldState<
    * What the world is busy with: the step in progress, from reading the commands to the end of the
    * tick, or an encoding while it reads the state.
    */
-  active: ActiveStep | undefined;
+  active: WorldActivity | undefined;
 };
 
 /** Lets the constructor tell createWorld from a host that reached it through `.constructor`. */

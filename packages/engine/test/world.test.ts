@@ -194,6 +194,68 @@ describe("createWorld reports every problem in one invalid_input", () => {
   });
 });
 
+describe("createWorld refuses every option it does not know", () => {
+  const NOT_OPTION = "not an option: the only option is audit";
+  // Deliberately ill-typed, as a JavaScript host can be.
+  const asOptions = (value: object) => value as { audit: boolean };
+
+  test("a misspelled audit is refused, not ignored, with the definition's problems", () => {
+    const init = definitionWith({ simSecondsPerTick: 0 });
+    expect(inputIssues(() => createWorld(init, asOptions({ audti: true })))).toEqual([
+      {
+        path: "/init/simSecondsPerTick",
+        message: "0 seconds per tick is not a positive safe integer",
+      },
+      { path: "/options/audti", message: NOT_OPTION },
+    ]);
+  });
+
+  test("every unknown key is listed, in canonical order, before the problems of audit", () => {
+    const options = Object.defineProperty({ zeta: 1, audit: "yes", "a/b": 2 }, "hidden", {
+      value: true,
+      enumerable: false,
+    });
+    expect(inputIssues(() => createWorld(definition(), asOptions(options)))).toEqual([
+      { path: "/options/a~1b", message: NOT_OPTION },
+      { path: "/options/hidden", message: NOT_OPTION },
+      { path: "/options/zeta", message: NOT_OPTION },
+      { path: "/options/audit", message: "audit must be a boolean, not string" },
+    ]);
+  });
+
+  test("symbol keys are refused at /options", () => {
+    const options = { audit: true, [Symbol("audit")]: false };
+    expect(inputIssues(() => createWorld(definition(), asOptions(options)))).toEqual([
+      { path: "/options", message: "the object has symbol keys (1): keys must be strings" },
+    ]);
+  });
+
+  test("options whose keys throw while listed are one issue at /options", () => {
+    const options = new Proxy(
+      { audit: true },
+      {
+        ownKeys() {
+          throw new Error("no keys");
+        },
+      },
+    );
+    expect(inputIssues(() => createWorld(definition(), asOptions(options)))).toEqual([
+      { path: "/options", message: "the object threw while being read: Error: no keys" },
+    ]);
+  });
+
+  test("known options still work", () => {
+    const audited = (options: object | undefined) =>
+      worldState(createWorld(definition(), options === undefined ? undefined : asOptions(options)))
+        .audit;
+    expect(audited({ audit: true })).toBe(true);
+    expect(audited({ audit: false })).toBe(false);
+    expect(audited(Object.assign(Object.create(null), { audit: true }))).toBe(true);
+    expect(audited({})).toBe(false);
+    expect(audited(undefined)).toBe(false);
+  });
+});
+
 describe("createWorld reports an object that throws while read, with its cause", () => {
   const THREW = "the object threw while being read: TypeError";
 

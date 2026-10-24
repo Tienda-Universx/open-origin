@@ -10,6 +10,7 @@ import {
   step,
   worldStatus,
 } from "../src/index.ts";
+import { worldState } from "../src/world/world.ts";
 import { STALE_CHUNK, STALE_GLOBAL } from "./support/barrier-rulesets.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { revokedProxy } from "./support/revoked.ts";
@@ -454,6 +455,7 @@ describe("after the schema, the ruleset and the state root", () => {
 
 describe("options", () => {
   const NOT_RECORD = "the options must be a record";
+  const NOT_OPTION = "not an option: the only option is audit";
   const options = (value: unknown) => {
     const error = engineErrorOf(() =>
       decodeSnapshot(TEXT, stepRuleset(), value as { audit: boolean }),
@@ -498,6 +500,51 @@ describe("options", () => {
   test("are checked before the text", () => {
     const error = engineErrorOf(() => decodeSnapshot("{", stepRuleset(), null as never));
     expect(error.code).toBe("invalid_input");
+    const unknown = engineErrorOf(() => decodeSnapshot("{", stepRuleset(), { audti: 1 } as never));
+    expect(unknown.issues).toEqual([{ path: "/options/audti", message: NOT_OPTION }]);
+  });
+
+  test("an unknown option is refused, not ignored, and every unknown key is listed", () => {
+    expect(options({ audti: true })).toEqual({
+      code: "invalid_input",
+      issues: [{ path: "/options/audti", message: NOT_OPTION }],
+    });
+    expect(options({ b: 1, audit: 2, a: 3 })).toEqual({
+      code: "invalid_input",
+      issues: [
+        { path: "/options/a", message: NOT_OPTION },
+        { path: "/options/b", message: NOT_OPTION },
+        { path: "/options/audit", message: "audit must be a boolean, not number" },
+      ],
+    });
+  });
+
+  test("a Proxy that throws only when audit is read is reported at /options/audit", () => {
+    const proxy = new Proxy(
+      { audit: true },
+      {
+        getOwnPropertyDescriptor(target, key) {
+          if (key === "audit") throw new Error("audit was read");
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+    expect(options(proxy)).toEqual({
+      code: "invalid_input",
+      issues: [
+        {
+          path: "/options/audit",
+          message: "the object threw while being read: Error: audit was read",
+        },
+      ],
+    });
+  });
+
+  test("known options still work", () => {
+    const { audit: unset } = worldState(decodeSnapshot(TEXT, stepRuleset(), {}));
+    const { audit: off } = worldState(decodeSnapshot(TEXT, stepRuleset(), { audit: false }));
+    const { audit: on } = worldState(decodeSnapshot(TEXT, stepRuleset(), { audit: true }));
+    expect([unset, off, on]).toEqual([false, false, true]);
   });
 
   test("audit must be a boolean", () => {

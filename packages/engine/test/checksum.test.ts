@@ -5,6 +5,7 @@ import {
   chunkKey,
   createWorld,
   digest,
+  encodeSnapshot,
   fullChecksum,
   type Seed,
   stateRoot,
@@ -92,13 +93,16 @@ describe("stateRoot", () => {
     expect(stateRoot(createWorld(definition))).toBe(expectedRoot(definition, chunks));
   });
 
-  test("equals fullChecksum and the composition on 200 random worlds", () => {
+  test("equals fullChecksum, the snapshot's root, and the composition on 200 random worlds", () => {
     const random = new Sfc32(2020);
     for (let sample = 0; sample < 200; sample += 1) {
       const { definition, chunks } = randomInit(random);
       const world = createWorld(definition);
-      expect(stateRoot(world)).toBe(fullChecksum(world));
-      expect(stateRoot(world)).toBe(expectedRoot(definition, chunks));
+      const root = expectedRoot(definition, chunks);
+      expect(stateRoot(world)).toBe(root);
+      expect(fullChecksum(world)).toBe(root);
+      // encodeSnapshot recomputes the root from the text it writes, through the same composition.
+      expect((JSON.parse(encodeSnapshot(world)) as { stateRoot: string }).stateRoot).toBe(root);
     }
   });
 

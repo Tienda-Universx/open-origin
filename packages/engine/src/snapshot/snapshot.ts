@@ -4,7 +4,8 @@
  * replicas of a world encode to the same text.
  *
  * - encodeSnapshot canonicalizes the whole state once and recomputes every digest from that same
- *   text. When the recomputed root differs from the incremental one, a write bypassed the barrier:
+ *   text (recomputeState, which fullChecksum and audit also use). When the recomputed root differs
+ *   from the incremental one, a write bypassed the barrier:
  *   the world is poisoned with integrity_violation and no text is returned. This is how such a
  *   write is found when audit is off. O(N) for N chunks: it runs at checkpoints, not every tick.
  * - decodeSnapshot accepts canonical text only, checks the schema, captures the ruleset, runs its
@@ -14,20 +15,18 @@
  * Integrity against corruption and tampering is SHA-256 over snapshotBytes, in the adapter; the
  * state root only detects accidental divergence.
  */
-import { arrayText, canonicalize, recordText } from "../canonical/encode.ts";
+import { canonicalize, recordText } from "../canonical/encode.ts";
 import { utf8Encode } from "../canonical/utf8.ts";
 import { type CanonicalValue, pointer } from "../canonical/value.ts";
-import { type Digest, Digester, hexOf } from "../digest/digest.ts";
-import { addLanes, type Lanes } from "../digest/lanes.ts";
+import type { Digest } from "../digest/digest.ts";
 import { EngineError, IssueList } from "../errors.ts";
 import {
   chunkTerm,
-  composeRoot,
   digestCache,
   globalDigest,
-  kernelDigest,
+  recomputeState,
+  type StateText,
 } from "../world/checksum.ts";
-import type { ChunkKey } from "../world/chunk.ts";
 import { ChunkIndex } from "../world/chunk-index.ts";
 import type { Ruleset, WorldOptions } from "../world/contracts.ts";
 import { readAudit } from "../world/create.ts";
@@ -35,79 +34,66 @@ import { integrityError } from "../world/integrity.ts";
 import { type CapturedRuleset, captureRuleset } from "../world/ruleset.ts";
 import { runValidator } from "../world/validators.ts";
 import {
-  type ActiveStep,
   type ChunkEntry,
   healthyState,
   newWorld,
   poison,
   type World,
+  type WorldActivity,
   type WorldState,
 } from "../world/world.ts";
 import { readSnapshot, SNAPSHOT_SCHEMA_VERSION, type SnapshotV1 } from "./schema.ts";
 
 /**
- * Marks a world while `encoder`, encodeSnapshot or snapshotBytes, reads it: a Proxy in its state
- * must not use it meanwhile.
+ * What a world is busy with while `encoder`, encodeSnapshot or snapshotBytes, reads it: every use
+ * of the world meanwhile, which only a Proxy in its state can make, is refused, and the first
+ * refusal is kept.
  */
-function encoding(encoder: string): ActiveStep {
-  return {
-    refuse: (api) => {
-      const message =
-        `${api} was called while ${encoder} read this world: ` +
-        "no function may use a world while it is encoded";
-      return new EngineError("world_busy", [{ path: "", message }]);
-    },
-  };
-}
+class Encoding implements WorldActivity {
+  readonly #encoder: string;
+  #refusal: EngineError | undefined;
 
-/** The chunk sum of a world without chunks. */
-const ZERO: Lanes = [0, 0, 0, 0];
+  constructor(encoder: string) {
+    this.#encoder = encoder;
+  }
 
-/** The domain tags of the global value and of chunks, as canonical text. */
-const GLOBAL_TAG = canonicalize("global");
-const CHUNK_TAG = canonicalize("chunk");
+  /** The first use of the world this encoding refused, if any. */
+  get refusal(): EngineError | undefined {
+    return this.#refusal;
+  }
 
-/** The canonical texts of the global value and the chunks, and the root recomputed from them. */
-type Encoded = {
-  readonly global: string;
-  readonly chunks: readonly (readonly [ChunkKey, string])[];
-  readonly root: Digest;
-};
-
-/**
- * Canonicalizes every value of `state` once: each text is written into the snapshot and hashed
- * into its digest, as digest(["chunk", key, chunk]) and digest(["global", global]) hash it, so
- * the root is recomputed from the very text the snapshot holds. Throws EngineError
- * ("invalid_value") at the first value that is not canonical.
- */
-function encodeState({ kernel, global, chunks }: WorldState): Encoded {
-  const digester = new Digester();
-  const globalText = canonicalize(global);
-  const globalPart = hexOf(digester.textWords(arrayText([GLOBAL_TAG, globalText])));
-  let chunkSum = ZERO;
-  const texts = chunks.sortedEntries().map(([key, { value }]): [ChunkKey, string] => {
-    const text = canonicalize(value);
-    const term = digester.textWords(arrayText([CHUNK_TAG, canonicalize(key), text]));
-    chunkSum = addLanes(chunkSum, term);
-    return [key, text];
-  });
-  const parts = { kernel: kernelDigest(kernel, digester), global: globalPart, chunkSum };
-  const root = composeRoot({ ...parts, chunkCount: texts.length }, digester);
-  return { global: globalText, chunks: texts, root };
+  refuse(api: string): EngineError {
+    const message =
+      `${api} was called while ${this.#encoder} read this world: ` +
+      "no function may use a world while it is encoded";
+    const refusal = new EngineError("world_busy", [{ path: "", message }]);
+    this.#refusal ??= refusal;
+    return refusal;
+  }
 }
 
 /**
- * The encoding of `state`, whose recomputed root equals its incremental one. Otherwise a write
- * bypassed the barrier: poisons the world and throws its integrity_violation, which names each
- * stale chunk and the global value.
+ * The encoding of `state`, whose recomputed root equals its incremental one. Throws, and returns
+ * no encoding, in three ways:
+ *
+ * - a Proxy in the state let the refusal of its use of the world escape its trap: that refusal,
+ *   world_busy, which leaves the world as it was, as every refused use does;
+ * - a value is not canonical, or the root differs: a write bypassed the barrier, so it poisons
+ *   the world and throws its integrity_violation, which names each stale chunk and the global
+ *   value;
+ * - anything else keeps its own error.
  */
-function verifiedEncoding(state: WorldState): Encoded {
-  let encoded: Encoded | undefined;
+function verifiedEncoding(state: WorldState, encoding: Encoding): StateText {
+  let encoded: StateText | undefined;
   try {
-    encoded = encodeState(state);
+    encoded = recomputeState(state);
   } catch (error) {
-    // A value that is not canonical: integrityError names it.
-    if (!EngineError.isEngineError(error)) throw error;
+    const { refusal } = encoding;
+    if (refusal !== undefined && EngineError.isEngineError(error) && error.cause === refusal) {
+      throw refusal;
+    }
+    // Only a value that is not canonical, which integrityError names, blames the state.
+    if (!EngineError.isEngineError(error) || error.code !== "invalid_value") throw error;
   }
   if (encoded !== undefined && encoded.root === state.digests.stateRoot) return encoded;
   const fault = integrityError(state);
@@ -116,9 +102,9 @@ function verifiedEncoding(state: WorldState): Encoded {
 }
 
 /** The text of `state`, whose members are written in canonical key order. */
-function snapshotText(state: WorldState): string {
+function snapshotText(state: WorldState, encoding: Encoding): string {
   const { header, kernel } = state;
-  const { global, chunks, root } = verifiedEncoding(state);
+  const { global, chunks, root } = verifiedEncoding(state, encoding);
   const { epoch, tick, nextEntityId, rng, config } = kernel;
   const world = recordText([
     ["chunks", recordText(chunks)],
@@ -139,9 +125,10 @@ function snapshotText(state: WorldState): string {
 /** The snapshot text of `world`, for a call of `api`, with the world busy while it is read. */
 function encodeFor(world: World, api: string): string {
   const state = healthyState(world, api);
-  state.active = encoding(api);
+  const encoding = new Encoding(api);
+  state.active = encoding;
   try {
-    return snapshotText(state);
+    return snapshotText(state, encoding);
   } finally {
     state.active = undefined;
   }

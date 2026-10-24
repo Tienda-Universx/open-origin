@@ -16,7 +16,7 @@ import {
   worldStatus,
 } from "../src/index.ts";
 import { worldState } from "../src/world/world.ts";
-import { BARRIER_CASES, bypassTick } from "./support/barrier-rulesets.ts";
+import { BARRIER_ROWS } from "./support/barrier-rulesets.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import {
   type Ctx,
@@ -417,10 +417,10 @@ describe("poisoning", () => {
 });
 
 describe("audit detects writes that bypass the barrier, at the tick they happen", () => {
-  test.each(BARRIER_CASES)("%s, as integrity_violation", (name, ruleset, issues) => {
+  test.each(BARRIER_ROWS)("%s, as integrity_violation", (_name, { ruleset, lag, issues }) => {
     const at = 3;
     const world = stepWorld(ruleset(at), {}, true);
-    const tick = bypassTick(name, at);
+    const tick = at + lag;
     for (let ticks = 1; ticks < tick; ticks += 1) step(world, []);
     const error = engineErrorOf(() => step(world, []));
     expect({ code: error.code, issues: error.issues }).toEqual({
@@ -430,19 +430,19 @@ describe("audit detects writes that bypass the barrier, at the tick they happen"
     expectPoisoned(world, tick, "integrity_violation", issues);
   });
 
-  test.each(BARRIER_CASES)(
+  test.each(BARRIER_ROWS)(
     "%s, undetected without audit until a full checksum",
-    (name, ruleset) => {
+    (_name, { ruleset, lag, notCanonical }) => {
       const at = 3;
       const world = stepWorld(ruleset(at));
-      const tick = bypassTick(name, at);
+      const tick = at + lag;
       for (let ticks = 1; ticks <= tick; ticks += 1) step(world, []);
       expect(worldStatus(world)).toEqual({ kind: "ok", tick });
-      if (name.includes("not canonical")) {
+      if (notCanonical !== undefined) {
         const error = engineErrorOf(() => fullChecksum(world));
         expect({ code: error.code, issues: error.issues }).toEqual({
           code: "invalid_value",
-          issues: [{ path: "/chunks/1,0/grass", message: "NaN is not a safe integer" }],
+          issues: [notCanonical],
         });
       } else expect(fullChecksum(world)).not.toBe(stateRoot(world));
     },

@@ -27,11 +27,11 @@ import { isRecord } from "../world/members.ts";
 import type { StreamIds } from "../world/ruleset.ts";
 import { headerDifferences } from "../world/versions.ts";
 import {
-  type ActiveStep,
   busyError,
   healthyState,
   poison,
   type World,
+  type WorldActivity,
   type WorldState,
 } from "../world/world.ts";
 import { readCommands } from "./commands.ts";
@@ -46,7 +46,7 @@ const REJECTED_EVENT = "engine.command_rejected";
 const UNKNOWN_TYPE = "unknown_type";
 
 /** Marks a world whose step is reading its commands: any use of the world meanwhile is refused. */
-const READING: ActiveStep = { refuse: busyError };
+const READING: WorldActivity = { refuse: busyError };
 const NOT_REJECTION =
   "returned a value that is not undefined or a rejection { reason, details? }, reason a non-empty string";
 

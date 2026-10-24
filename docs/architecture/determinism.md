@@ -268,7 +268,10 @@ checks run in this order:
    - `chunks` is a plain record (prototype `Object.prototype` or `null`, no symbol keys). Each key
      must parse as a chunk key. Each chunk is copied on its own and then checked by
      `validateChunk(key, chunk)`, so the problems of every chunk are reported;
-   - `options`, when given, is a record, and its `audit`, when present, is a boolean.
+   - `options`, when given, is a record whose only member is `audit`, a boolean when present.
+     Every other key is an issue at `/options/<key>`, all of them in canonical order before the
+     problems of `audit`, so a misspelled option such as `{ audti: true }` is refused instead of
+     turning audit off; symbol keys are one issue at `/options`.
 
 Every member of `init`, `options`, and the ruleset is read once, through its own descriptor: a
 getter never runs, and an accessor or a property that is not enumerable is an issue, as in
@@ -607,13 +610,22 @@ snapshot and into its digest (`["global", global]` and `["chunk", key, chunk]`, 
 holds. When it differs from the world's incremental root, a write bypassed the barrier: the world
 is poisoned with `integrity_violation`, which names each stale chunk and the global value as audit
 does, and no text is returned. This is how such a write is found when audit is off.
+`fullChecksum` and audit recompute the root with the same function (`recomputeState` in
+`world/checksum.ts`), so the three cannot disagree about the composition.
+
+Only a value that is not canonical, or a root that differs, blames the state. When a Proxy in the
+state uses the world during the encoding, the use is refused with `world_busy`; if the trap lets
+that refusal escape, so that the value cannot be read, encoding throws the refusal itself and
+leaves the world healthy and unchanged, as every refused use does. A trap that throws anything
+else leaves a value that cannot be read, which is not canonical: `integrity_violation`. Either
+way, no text is returned.
 
 ### Gates
 
 | Gate | Where | Refuses with |
 |---|---|---|
 | Integrity | `encodeSnapshot`, `snapshotBytes` | `integrity_violation`; the world is poisoned and no text is returned |
-| Options | `decodeSnapshot`, first, before the text | `invalid_input`: at `/options`, "the options must be a record", for options that are neither undefined nor a record (`null`, a number, a string, an array), and what was thrown for options that throw while read (a revoked Proxy); at `/options/audit` for an `audit` that is not a boolean, or that is an accessor or not enumerable. Other members are ignored, as `createWorld` ignores them |
+| Options | `decodeSnapshot`, first, before the text | `invalid_input`, as `createWorld` reports its options: at `/options`, "the options must be a record", for options that are neither undefined nor a record (`null`, a number, a string, an array), symbol keys, and what was thrown for options that throw while read or while their keys are listed (a revoked Proxy); at `/options/<key>` for every key other than `audit`; at `/options/audit` for an `audit` that is not a boolean, that is an accessor or not enumerable, or whose read throws, as with a Proxy that throws only when `audit` is read |
 | Canonical text | `decodeSnapshot`, with `parseCanonical` | `invalid_snapshot` with the parser's issue: whitespace, reordered keys, a float, or text that is not JSON |
 | Schema version | `decodeSnapshot`, before any member is checked | `unsupported_schema`, reported alone: a snapshot of another version may have other members, at the top level too |
 | Schema | `decodeSnapshot` | `invalid_snapshot` with every problem at once, in schema order (below): each missing and each extra member of the snapshot, the header, the world, `rng`, and `config`; versions that are not non-empty strings; a `stateRoot` that is not 32 lowercase hexadecimal digits; `epoch` and `tick` outside the safe integers from 0; `nextEntityId` outside the safe integers from 1; an algorithm other than `ctr-mix32@1`; a seed that is not two u32 words; `simSecondsPerTick` that is not a positive safe integer; and chunk keys that `parseChunkKey` rejects |
@@ -679,7 +691,13 @@ A world poisoned at tick N recovers from the last snapshot taken before N:
   audit;
 - a busy world: `encodeSnapshot`, `snapshotBytes`, and `versionDifferences` from a system and a
   handler, and a Proxy in the state whose trap steps the world while `encodeSnapshot` or
-  `snapshotBytes` reads it, refused with a message that names that function;
+  `snapshotBytes` reads it, refused with a message that names that function; a trap that lets the
+  refusal escape fails the encoding with that `world_busy` and leaves the world healthy, and one
+  that throws anything else is an `integrity_violation`;
+- the snapshot's `stateRoot` equal to the root computed independently from the formulas, on 200
+  random worlds;
+- unknown options refused at both entry points, every unknown key listed in canonical order, and
+  known options still accepted;
 - the frozen fixture (`packages/engine/test/fixtures/snapshot-v1.canonical.json`, the golden run at
   tick 37): its pinned SHA-256, a byte-identical re-encoding, and the pinned checksums of ticks 38
   to 40. `biome.json` excludes exactly its path from formatting, which

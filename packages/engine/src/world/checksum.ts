@@ -14,6 +14,7 @@
  * global digest, and the root; the kernel digest has a fixed size and is recomputed. A step
  * updates them for what it changed (step/commit.ts); fullChecksum recomputes them all.
  */
+import { arrayText, canonicalize } from "../canonical/encode.ts";
 import { type CanonicalValue, pointer } from "../canonical/value.ts";
 import { type Digest, Digester, digest, digestWords, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes } from "../digest/lanes.ts";
@@ -108,49 +109,63 @@ export function relocatePath(at: string, tagged: readonly unknown[], valuePath: 
   return valuePath;
 }
 
-/**
- * `error` with each issue moved from its path in `tagged` to its place in the world, as
- * relocatePath moves it, and the original as its cause; anything that is not an EngineError comes
- * back unchanged.
- */
-export function relocated(error: unknown, tagged: readonly unknown[], valuePath: string): unknown {
-  if (!EngineError.isEngineError(error)) return error;
-  const issues = error.issues.map(({ path, message }) => ({
-    path: relocatePath(path, tagged, valuePath),
-    message,
-  }));
-  return new EngineError(error.code, issues, { issueCount: error.issueCount, cause: error });
-}
+/** The domain tags of the global value and of chunks, as canonical text. */
+const GLOBAL_TAG = canonicalize("global");
+const CHUNK_TAG = canonicalize("chunk");
 
-/** `hash(tagged)`, where the value is the last part of `tagged` and lives at `valuePath`. */
-function hashAt<T>(
-  tagged: CanonicalValue[],
-  valuePath: string,
-  hash: (value: CanonicalValue) => T,
-): T {
+/**
+ * The canonical text of `value`, which lives at `valuePath` in the world. Throws, as canonicalize
+ * does, EngineError("invalid_value") at its first problem, with the path moved under `valuePath`
+ * and the value thrown while reading it, if any, as the cause.
+ */
+function textAt(value: CanonicalValue, valuePath: string): string {
   try {
-    return hash(tagged);
+    return canonicalize(value);
   } catch (error) {
-    throw relocated(error, tagged, valuePath);
+    if (!EngineError.isEngineError(error)) throw error;
+    const issues = error.issues.map(({ path, message }) => ({
+      path: `${valuePath}${path}`,
+      message,
+    }));
+    const options = { issueCount: error.issueCount, cause: error.cause };
+    throw new EngineError(error.code, issues, options);
   }
 }
 
+/** The canonical texts of the values of a state, and the root recomputed from them. */
+export type StateText = {
+  readonly global: string;
+  /** Each chunk's key and the canonical text of its value, in canonical key order. */
+  readonly chunks: readonly (readonly [ChunkKey, string])[];
+  readonly root: Digest;
+};
+
 /**
- * The state root of `state` recomputed from its values alone, never from a cached digest: O(N)
- * for N chunks. Throws EngineError("invalid_value") at the path of the first value that is not
- * canonical, as `/chunks/<key>/...` or `/global/...`, which only a write that bypassed the barrier
- * can cause.
+ * The state root of `state` recomputed from its values alone, never from a cached digest, and the
+ * canonical text of each value, written once: O(N) for N chunks. Each digest hashes the text of a
+ * tagged array built from that text, so encodeSnapshot hashes the very text it writes. Throws
+ * EngineError("invalid_value") at the path of the first value that is not canonical, as
+ * `/chunks/<key>/...` or `/global/...`, which only a write that bypassed the barrier can cause.
  */
-export function recomputeRoot({ kernel, global, chunks }: WorldState): Digest {
+export function recomputeState({ kernel, global, chunks }: WorldState): StateText {
   const digester = new Digester();
   let chunkSum = ZERO;
-  for (const [key, entry] of chunks.sortedEntries()) {
-    const term = hashAt(["chunk", key, entry.value], `/chunks${pointer([key])}`, digestWords);
+  const texts = chunks.sortedEntries().map(([key, entry]): [ChunkKey, string] => {
+    const text = textAt(entry.value, `/chunks${pointer([key])}`);
+    const term = digester.textWords(arrayText([CHUNK_TAG, canonicalize(key), text]));
     chunkSum = addLanes(chunkSum, term);
-  }
-  const globalPart = hashAt(["global", global], "/global", digest);
+    return [key, text];
+  });
+  const globalText = textAt(global, "/global");
+  const globalPart = hexOf(digester.textWords(arrayText([GLOBAL_TAG, globalText])));
   const parts = { kernel: kernelDigest(kernel, digester), global: globalPart, chunkSum };
-  return composeRoot({ ...parts, chunkCount: chunks.size }, digester);
+  const root = composeRoot({ ...parts, chunkCount: texts.length }, digester);
+  return { global: globalText, chunks: texts, root };
+}
+
+/** recomputeState(state).root, the root that fullChecksum and audit compare. */
+export function recomputeRoot(state: WorldState): Digest {
+  return recomputeState(state).root;
 }
 
 /**

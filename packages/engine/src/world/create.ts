@@ -12,7 +12,14 @@ import { chunkTerm, digestCache, globalDigest } from "./checksum.ts";
 import { type ChunkKey, readChunkKey } from "./chunk.ts";
 import { ChunkIndex } from "./chunk-index.ts";
 import type { WorldInit, WorldOptions } from "./contracts.ts";
-import { copyAt, expectRecord, readMember, readRecordKeys, UNREAD } from "./members.ts";
+import {
+  copyAt,
+  expectRecord,
+  readMember,
+  readOwnKeys,
+  readRecordKeys,
+  UNREAD,
+} from "./members.ts";
 import { type CapturedRuleset, captureRuleset } from "./ruleset.ts";
 import { runValidator } from "./validators.ts";
 import { type ChunkEntry, type Kernel, newWorld, type World, type WorldState } from "./world.ts";
@@ -101,13 +108,25 @@ function readChunks(
   return chunks;
 }
 
+/** The options createWorld and decodeSnapshot know, sorted by UTF-16 code units. */
+const OPTIONS: readonly string[] = ["audit"];
+const NOT_OPTION = "not an option: the only option is audit";
+
 /**
- * The `audit` option of `options`, which must be undefined or a record whose `audit` is a boolean;
- * false after an issue at `/options` or `/options/audit`.
+ * The `audit` option of `options`, which must be undefined or a record of known options whose
+ * `audit` is a boolean; false after an issue. Every other key is an issue at `/options/<key>`, in
+ * canonical order, so that a misspelled option is refused instead of ignored; symbol keys, an
+ * object that throws while its keys are listed, and a value that is not a record are one issue at
+ * `/options`; a problem of `audit` is at `/options/audit`.
  */
 export function readAudit(options: unknown, issues: IssueList): boolean {
   if (options === undefined) return false;
   if (!expectRecord(options, "/options", "the options must be a record", issues)) return false;
+  const keys = readOwnKeys(options, "/options", issues);
+  if (keys === undefined) return false;
+  for (const key of keys) {
+    if (!OPTIONS.includes(key)) issues.report(`/options${pointer([key])}`, NOT_OPTION);
+  }
   const audit = readMember(options, "audit", "/options/audit", issues);
   if (audit === undefined || typeof audit === "boolean") return audit === true;
   if (audit !== UNREAD)
@@ -166,7 +185,8 @@ function readDefinition(init: unknown, options: unknown): Definition {
  * 4. Every other problem is reported in one invalid_input: the seed must be two u32 words and
  *    simSecondsPerTick a positive safe integer; the global value and each chunk, in a plain record
  *    keyed by chunk key (parseChunkKey), are validated and copied as copyCanonical does, then
- *    checked by the ruleset's validators; `options` is a record whose `audit` is a boolean.
+ *    checked by the ruleset's validators; `options` is a record whose `audit` is a boolean, and
+ *    every other option is an issue at `/options/<key>` (readAudit).
  *
  * Each member of `init` and `options` is read once, through its own descriptor. The validators
  * receive the values the world keeps, not copies of them, as ruleset code does during a tick: a

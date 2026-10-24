@@ -111,9 +111,21 @@ export function readRecordKeys(
       sink.report(path, notRecord);
       return undefined;
     }
+    const keys = readOwnKeys(value, path, sink);
+    return keys === undefined ? undefined : { record: value, keys };
+  });
+}
+
+/**
+ * The own string keys of the host object `value`, enumerable or not, sorted by UTF-16 code units
+ * (canonical/order.ts), never in insertion order. Symbol keys are one issue at `path`, since a
+ * JSON Pointer cannot name them; undefined after `value` throws while its keys are listed.
+ */
+export function readOwnKeys(value: object, path: string, sink: IssueSink): string[] | undefined {
+  return guarded(path, sink, () => {
     const symbols = symbolKeyCount(value);
     if (symbols > 0) sink.report(path, symbolKeysMessage(symbols));
-    return { record: value, keys: sortedOwnKeys(value) };
+    return sortedOwnKeys(value);
   });
 }
 
