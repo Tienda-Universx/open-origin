@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { checkLinks, githubSlug, headingAnchors } from "./docs.ts";
+import { checkLinks, githubSlug, headingAnchors, type LinkIssue, relativeTargets } from "./docs.ts";
 import { REPO_ROOT, repoFiles } from "./files.ts";
+import { endsInsideBlock } from "./markdown.ts";
 
 /**
  * SHA-256 of the verbatim copies approved by the maintainer. They are records, not living
@@ -75,19 +76,121 @@ describe("checkLinks", () => {
     const docs = docsOf({ "docs/a.md": "`[x](missing.md)`\n```\n[y](missing.md)\n```" });
     expect(checkLinks(docs, files)).toEqual([]);
   });
+
+  const missing = (target: string): LinkIssue => ({
+    file: "docs/a.md",
+    target,
+    reason: "missing file",
+  });
+
+  test("checks link text that wraps onto the next line", () => {
+    const docs = docsOf({ "docs/a.md": "see [the missing\ndocument](missing.md) here" });
+    expect(checkLinks(docs, files)).toEqual([missing("missing.md")]);
+  });
+
+  test("checks links with any title form, brackets in their text, or parentheses in the path", () => {
+    const docs = docsOf({
+      "docs/a.md": [
+        "[a](single.md 'title') [b](paren.md (title)) [c](double.md \"title\")",
+        "[see [ADR] text](nested.md) [d](<spaced name.md>) [e](draft(1).md)",
+      ].join("\n"),
+    });
+    expect(checkLinks(docs, files)).toEqual(
+      ["single.md", "paren.md", "double.md", "nested.md", "spaced name.md", "draft(1).md"].map(
+        missing,
+      ),
+    );
+  });
+
+  test("checks the targets of reference-style link definitions", () => {
+    const docs = docsOf({
+      "docs/a.md": '[x][r] and [y][s]\n\n[r]: missing.md "title"\n[s]: <sub/b.md>',
+    });
+    expect(checkLinks(docs, files)).toEqual([missing("missing.md")]);
+  });
+
+  test("does not let a code span hide links beyond the end of its paragraph", () => {
+    const docs = docsOf({
+      "docs/a.md": "an unclosed `tick\n\n[x](missing.md) and a `closed` span",
+    });
+    expect(checkLinks(docs, files)).toEqual([missing("missing.md")]);
+  });
+
+  test("does not mistake footnotes or prose for link definitions", () => {
+    const docs = docsOf({
+      "docs/a.md": [
+        "Text.[^1]",
+        "",
+        "[^1]: Pending.",
+        "[^2]: See ADR 0003 for details.",
+        "",
+        "[Nota]: revisar esto después",
+        "",
+        "A definition cannot interrupt a paragraph:",
+        "[r]: lazy.md",
+      ].join("\n"),
+    });
+    expect(checkLinks(docs, files)).toEqual([]);
+  });
+
+  test("does not pair backticks across list items", () => {
+    const docs = docsOf({
+      "docs/a.md": "- type a ` to start\n- see [a](missing.md)\n- run `bun test`",
+    });
+    expect(checkLinks(docs, files)).toEqual([missing("missing.md")]);
+  });
+
+  test("checks both an image and the link around it", () => {
+    const docs = docsOf({ "docs/a.md": "[![CI](badge.svg)](missing.md)" });
+    expect(checkLinks(docs, files)).toEqual([missing("missing.md"), missing("badge.svg")]);
+  });
+
+  test("reports a link that climbs above the repository root", () => {
+    const docs = docsOf({ "README.md": "[up](../)", "docs/a.md": "[up](../../docs/a.md)" });
+    expect(checkLinks(docs, files)).toEqual([
+      { file: "README.md", target: "../", reason: "missing file" },
+      missing("../../docs/a.md"),
+    ]);
+  });
+
+  test("treats protocol-relative URLs as external", () => {
+    expect(checkLinks(docsOf({ "docs/a.md": "[x](//example.com/page)" }), files)).toEqual([]);
+  });
+
+  test("reports a malformed link instead of failing without context", () => {
+    const docs = docsOf({ "docs/a.md": "[x](100%.md) [y](%E0%A4%A.md)" });
+    expect(checkLinks(docs, files)).toEqual([
+      { file: "docs/a.md", target: "100%.md", reason: "invalid link" },
+      { file: "docs/a.md", target: "%E0%A4%A.md", reason: "invalid link" },
+    ]);
+  });
+
+  test("accepts links to the repository root and paths with parentheses", () => {
+    const withParens = new Set([...files, "docs/a (1).md", "docs/b(2).md"]);
+    const docs = docsOf({
+      "README.md": "[root](./) [p](<docs/a (1).md>) [q](docs/b(2).md)",
+      "docs/a.md": "[root](..) [also root](../)",
+    });
+    expect(checkLinks(docs, withParens)).toEqual([]);
+  });
 });
 
 describe("repository documentation", () => {
   test("every relative link in tracked Markdown files resolves", async () => {
-    const files = repoFiles(REPO_ROOT);
+    // git still lists a tracked file deleted from the working tree; a link to it must not resolve.
+    const files: string[] = [];
+    for (const path of repoFiles(REPO_ROOT)) {
+      if (await Bun.file(`${REPO_ROOT}${path}`).exists()) files.push(path);
+    }
     const docs = new Map<string, string>();
     for (const path of files.filter((file) => file.endsWith(".md"))) {
-      const file = Bun.file(`${REPO_ROOT}${path}`);
-      if (await file.exists()) docs.set(path, await file.text());
+      docs.set(path, await Bun.file(`${REPO_ROOT}${path}`).text());
     }
-    // Guard against a vacuous pass: the scan must see the documents that carry links.
-    expect(docs.has("README.md")).toBe(true);
-    expect(docs.has("docs/architecture/overview.md")).toBe(true);
+    // Guard against a vacuous pass: the scan must find the links of the documents that carry them,
+    // and no document may end inside a block that hides its later lines.
+    expect(relativeTargets(docs.get("README.md") ?? "")).not.toEqual([]);
+    expect(relativeTargets(docs.get("docs/architecture/overview.md") ?? "")).not.toEqual([]);
+    expect([...docs.keys()].filter((path) => endsInsideBlock(docs.get(path) ?? ""))).toEqual([]);
     expect(checkLinks(docs, new Set(files))).toEqual([]);
   });
 

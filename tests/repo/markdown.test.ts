@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { visibleLines } from "./markdown.ts";
+import { endsInsideBlock, visibleLines } from "./markdown.ts";
 
 const FENCED = "[fenced code]";
 
@@ -61,5 +61,19 @@ describe("visibleLines", () => {
       "",
       "kept  text",
     ]);
+  });
+});
+
+describe("endsInsideBlock", () => {
+  test("detects a document left inside an unclosed fence or HTML comment", () => {
+    expect(endsInsideBlock("text\n```\ncode")).toBe(true);
+    expect(endsInsideBlock("text <!-- note")).toBe(true);
+    // A comment marker shown in a code span opens a comment that hides the rest of the file.
+    expect(endsInsideBlock("Write `<!--` to start a comment.\n\nMore text.")).toBe(true);
+  });
+
+  test("accepts a document whose fences and comments are closed", () => {
+    expect(endsInsideBlock("text\n```\ncode\n```\n<!-- a -->\nend\n")).toBe(false);
+    expect(endsInsideBlock("")).toBe(false);
   });
 });
