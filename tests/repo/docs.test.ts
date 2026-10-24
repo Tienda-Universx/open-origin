@@ -153,6 +153,15 @@ describe("checkLinks", () => {
     ]);
   });
 
+  test("reports a link that climbs above the root with percent-encoded dots", () => {
+    // URL resolution reads %2e as a dot and stops at the root, so the link would look valid.
+    const docs = docsOf({ "README.md": "[a](%2e%2e/README.md) [b](.%2E/README.md)" });
+    expect(checkLinks(docs, files)).toEqual([
+      { file: "README.md", target: "%2e%2e/README.md", reason: "missing file" },
+      { file: "README.md", target: ".%2E/README.md", reason: "missing file" },
+    ]);
+  });
+
   test("treats protocol-relative URLs as external", () => {
     expect(checkLinks(docsOf({ "docs/a.md": "[x](//example.com/page)" }), files)).toEqual([]);
   });

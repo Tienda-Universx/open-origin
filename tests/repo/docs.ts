@@ -137,7 +137,9 @@ function resolve(file: string, target: string): { path: string; fragment: string
 /** Whether a relative link climbs above the repository root, which URL resolution hides. */
 function leavesRepository(file: string, target: string): boolean {
   let depth = file.split("/").length - 1;
-  for (const segment of (target.split(/[?#]/)[0] ?? "").split("/")) {
+  for (const raw of (target.split(/[?#]/)[0] ?? "").split("/")) {
+    // URL resolution reads a percent-encoded dot (%2e or %2E) as a dot in `.` and `..` segments.
+    const segment = raw.replace(/%2e/gi, ".");
     if (segment === "..") depth -= 1;
     else if (segment !== "." && segment !== "") depth += 1;
     if (depth < 0) return true;

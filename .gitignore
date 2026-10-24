@@ -11,11 +11,12 @@ node_modules/
 .env.*
 !.env.example
 
-# Build output, caches, logs and coverage reports
+# Build output, package archives (bun pm pack), caches, logs and coverage reports
 dist/
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo
+*.tgz
 *.log
 /coverage/
 
