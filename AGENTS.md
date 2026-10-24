@@ -3,9 +3,8 @@
 Instructions for humans and AI agents working in this repository. They apply to every batch
 ("tanda"), not only to the current one.
 The approved plan (`docs/roadmap/v0.1-plan.es.md`) and the ADRs (`docs/decisions/`) are the source
-of truth. If this file and an ADR disagree, the ADR wins and this file must be fixed. The plan is a
-verbatim record: its known errata are corrected in the ADRs and listed in the tracker log, and when
-the plan and an ADR disagree, the ADR wins.
+of truth. When this file or the plan disagrees with an ADR, the ADR wins; this file is then fixed,
+while the plan stays a verbatim record whose known errata are listed in the tracker log.
 
 ## Project in one paragraph
 
@@ -41,8 +40,9 @@ first, then check that a tool exists and which version it is (`bun --version`,
 2. **AI proposes, the engine decides.** Model output is validated, recorded as a command, and never
    trusted as a result. Experiment outcomes always come from the engine.
 3. **Pure, runtime-agnostic core.** `packages/engine` and `packages/agents` must not use Bun,
-   `node:*`, DOM APIs, `Math.random`, `Date`, `crypto.randomUUID`, or transcendental `Math`
-   functions (`sin`, `cos`, `exp`, `pow`, `**`). State holds only safe integers
+   `node:*`, DOM APIs, `Math.random`, `Date`, `crypto.randomUUID`, or math whose results each
+   JavaScript engine only approximates (`sin`, `cos`, `exp`, `pow`, `**`, and the rest listed in
+   ADR 0003). State holds only safe integers
    (`Number.isSafeInteger`), strings, booleans, arrays, and plain records.
 4. **Observer independence.** Nothing outside the world (who is watching, which UI is open, who
    pays) may influence the engine, the minds, or the cognitive budget allocator.
@@ -135,26 +135,26 @@ metric: readability, security, simplicity, performance, and correct behavior com
 | Practice | Rule |
 |---|---|
 | Guard clauses and early returns | Handle invalid and trivial cases first and return; avoid nested `if`/`else`. |
-| Cyclomatic complexity | Review every function above 10 decision paths: split it, or justify it with `// oxlint-disable-next-line eslint/complexity -- <reason>` in a reviewed change. |
-| Cognitive complexity | Code reads top to bottom; simplify first where it is hard to follow (limit 15). |
+| Cyclomatic complexity | Review every function above the limit (see Automated controls): split it, or justify it with `// oxlint-disable-next-line eslint/complexity -- <reason>` in a reviewed change. |
+| Cognitive complexity | Code reads top to bottom; simplify first where it is hard to follow. |
 | DRY | Remove real duplication of logic (same rule, same reason to change); never abstract code that only looks alike. |
 | Single responsibility | Each function, class, and module has one clear reason to change. |
 | Fail fast | Validate inputs and invariants at the boundary and report errors where they happen; never continue on a corrupt state. |
 | Type safety | Strict TypeScript; no unjustified `any`, unsafe `as` casts, non-null assertions, or `@ts-ignore`/`@ts-expect-error`. |
 | Testability and determinism | Pure functions with injected effects (time, randomness, I/O) and reproducible results, especially in the simulation core (architecture rule 3). |
 
-The same judgment applies to SOLID, KISS, YAGNI, separation of concerns, explicit contracts and
-errors, input and output validation, least privilege, compatibility and versioning, observability,
-measured performance, cost and dependency control, and up-to-date documentation.
+The principles the maintainer listed for every change (tracker L11) apply with the same judgment:
+SOLID, KISS, YAGNI, separation of concerns, explicit contracts and errors, input and output
+validation, least privilege, compatibility and versioning, observability, measured performance,
+cost and dependency control, and up-to-date documentation.
 
 ### Review checklist
 
 Evaluate every significant change for:
 
-- excessively long functions (limit 50 lines outside tests) and too many parameters (limit 4;
-  group related values in an object);
-- unnecessary dependencies: each new one is justified, pinned to an exact version, and published at
-  least two weeks earlier;
+- excessively long functions and too many parameters (limits in Automated controls; group related
+  values in an object);
+- unnecessary dependencies: each new one is justified and pinned as ADR 0015 requires;
 - high coupling between modules and violations of the hexagonal boundaries (dependency rule in
   `docs/architecture/overview.md`: the core never imports adapters);
 - dead and duplicated code;
@@ -175,7 +175,8 @@ each lint rule below still fires.
 | Cyclomatic complexity above 10, nesting deeper than 4 | oxlint (only these rules) | Enforced |
 | ADR format, invisible characters, CI and package invariants, links, verbatim documents | `tests/repo/` | Enforced |
 | Hexagonal boundaries | Biome `noRestrictedImports` per package | Added with the first package (T2) |
-| Duplicated code, dead exports, race conditions, performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T6, T7, and T10 |
+| Duplicated code, dead exports | None yet | Review checklist |
+| Race conditions, performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T6, T7, and T10 |
 
 See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choices and thresholds.
 
@@ -200,8 +201,8 @@ See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choi
 
 ## Workflow
 
-- Work in batches ("tandas") from `docs/roadmap/v0.1-tracker.md`; one branch per batch, merged
-  through pull requests. Never commit directly to `main`.
+- Work in batches ("tandas") from `docs/roadmap/v0.1-tracker.md`. Each pull request has its own
+  branch; a batch ships as one pull request or a chain of them. Never commit directly to `main`.
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `build:`, `ci:`, `chore:`), small and
   descriptive. Commit messages carry no AI attribution trailers (such as `Co-Authored-By`).
 - Pull requests are merged with a merge commit (no squash, no rebase-merge), parent first in stacked
