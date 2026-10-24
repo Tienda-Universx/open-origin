@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/.codegraph", "!**/.atl", "!**/*.md"]
+    "includes": ["**", "!**/*.md"]
   },
   "formatter": {
     "enabled": true,

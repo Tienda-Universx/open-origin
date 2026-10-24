@@ -1,3 +1,7 @@
+# Text files are stored and checked out with LF line endings on every platform, so Biome's format
+# check passes on Windows clones too.
+* text=auto eol=lf
+
 # The vision and the approved plan are verbatim records pinned by SHA-256
 # (tests/repo/docs.test.ts): never convert their line endings.
 docs/vision/master-vision.es.md -text

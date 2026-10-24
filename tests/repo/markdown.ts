@@ -65,3 +65,12 @@ export function visibleLines(lines: readonly string[]): string[] {
 export function visibleText(markdown: string): string[] {
   return visibleLines(markdown.replace(/^\uFEFF/, "").split(/\r?\n/));
 }
+
+/**
+ * Whether a document ends inside a fenced code block or an HTML comment. An unclosed block hides
+ * every later line from the checks; a comment marker shown in a code span opens one by mistake.
+ */
+export function endsInsideBlock(markdown: string): boolean {
+  const sentinel = "end of document";
+  return visibleText(`${markdown}\n${sentinel}`).at(-1) !== sentinel;
+}

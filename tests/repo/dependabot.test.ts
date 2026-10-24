@@ -28,10 +28,15 @@ describe("Dependabot version updates", () => {
     "%s: weekly updates at the root, two weeks after a release, as build commits (ADRs 0015, 0016)",
     (ecosystem) => {
       const update = config.updates.find((entry) => entry["package-ecosystem"] === ecosystem);
-      expect(update?.directory).toBe("/");
-      expect(update?.schedule.interval).toBe("weekly");
+      expect(update).toMatchObject({
+        directory: "/",
+        schedule: { interval: "weekly" },
+        "commit-message": { prefix: "build" },
+      });
+      // Only default-days: per-version overrides (semver-*-days) or exclude lists would let a
+      // release skip the cooldown.
+      expect(Object.keys(update?.cooldown ?? {})).toEqual(["default-days"]);
       expect(update?.cooldown?.["default-days"]).toBeGreaterThanOrEqual(14);
-      expect(update?.["commit-message"]?.prefix).toBe("build");
       // One group for minor and patch updates; each major update gets its own pull request.
       expect(Object.values(update?.groups ?? {})).toEqual([
         { patterns: ["*"], "update-types": ["minor", "patch"] },
