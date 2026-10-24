@@ -56,10 +56,11 @@ whole world per tick.
   live state.
 - `World` keeps its state in ES2022 private fields and is recognized with a brand check, so a
   forged object is rejected.
-- Inside the tick, ruleset code gets live references for speed. `writeChunk` and `writeGlobal`
-  mark data dirty; the context is revoked when `step` returns. The core has no `async`, no
-  `Promise`, and no timers, and systems and handlers must return `undefined`, so ruleset code runs
-  only inside `step`.
+- Inside the tick, ruleset code gets live references for speed, and so do the ruleset's
+  validators, at creation and at every commit, after the digests of what they check are taken.
+  `writeChunk` and `writeGlobal` mark data dirty; the context is revoked when `step` returns. The
+  core has no `async`, no `Promise`, and no timers, and systems and handlers must return
+  `undefined`, so ruleset code runs only inside `step`.
 - A write that bypasses the barrier is detected, not prevented: every tick in `audit` mode
   (tests), and on every snapshot encoding in production, which recomputes every digest and refuses
   to produce a snapshot whose state disagrees with its incremental checksums.
@@ -152,11 +153,12 @@ the batch that defines the length of a day, an internal law (plan O-13).
   (`Object.keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`,
   `getOwnPropertyDescriptors`) outside the ordering helper, binding or destructuring `Object`,
   and `.constructor`, which reaches the `Function` constructor;
-- `JSON` is allowed only in the canonical encoder, `Map` only in the canonical walk, which looks up
-  the objects it has entered and never iterates them, and `Math` only in the integer helper
-  module; `Set` stays denied. Each of these three globals has a GritQL plugin of its own that
-  reports every reference to it outside a type, registered in `biome.json` for `src` minus its
-  one exception file, because an override replaces a rule's options instead of merging them;
+- `JSON` is allowed only in the canonical encoder, `Map` only in the canonical walk and the tick
+  context, which look up the objects a walk has entered and the draw sequences of a tick and never
+  iterate them, and `Math` only in the integer helper module; `Set` stays denied. Each of these
+  three globals has a GritQL plugin of its own that reports every reference to it outside a type,
+  registered in `biome.json` for `src` minus its exception files, because an override replaces a
+  rule's options instead of merging them;
 - a repository test rejects reference directives, every `declare` declaration (a local
   `declare const Bun` would bypass both the type library and the global rules), declaration
   files, imports that leave `src`, Biome suppression comments, and `@ts-ignore`,

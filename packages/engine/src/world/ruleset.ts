@@ -5,17 +5,24 @@
  * Command types are enumerated in canonical order, never in insertion order.
  */
 import type { CanonicalValue, IssueSink } from "../canonical/value.ts";
-import { pointer, validateCanonical } from "../canonical/value.ts";
+import { pointer } from "../canonical/value.ts";
 import { IssueList } from "../errors.ts";
 import { streamId } from "../rng/mix32.ts";
 import type { ChunkKey } from "./chunk.ts";
 import type { Command, DeepReadonly, ReadView, RulesetVersions, TickContext } from "./contracts.ts";
-import { expectRecord, readElements, readMember, readRecordKeys, UNREAD } from "./members.ts";
+import {
+  expectRecord,
+  readElements,
+  readMember,
+  readRecordKeys,
+  readText,
+  UNREAD,
+} from "./members.ts";
 
 type Value = CanonicalValue;
 
 /** Stream ids by declared name, in a record without a prototype. */
-type StreamIds = { readonly [name: string]: number };
+export type StreamIds = { readonly [name: string]: number };
 
 /** A system as the kernel keeps it. Its results are checked where it is called. */
 type CapturedSystem = {
@@ -57,26 +64,12 @@ type Claims = {
 /** A system or a command handler, and the stream ids it has claimed. */
 type Owner = { readonly label: string; readonly ids: { [name: string]: number } };
 
-const VERSION_NAMES: readonly (keyof RulesetVersions)[] = ["brain", "generator", "ruleset"];
-
 /**
- * `value` if it is a non-empty canonical string; otherwise undefined, after an issue at `path`
- * unless readMember already reported it.
+ * The version names in canonical order (UTF-16 code units), not in the order the docs list them:
+ * readVersions reports the missing ones in this order, so their paths come sorted, as the paths
+ * of a record's keys do.
  */
-function readText(value: unknown, path: string, what: string, sink: IssueSink): string | undefined {
-  if (value === UNREAD) return undefined;
-  if (typeof value !== "string") {
-    sink.report(path, `${what} must be a string, not ${typeof value}`);
-    return undefined;
-  }
-  if (value === "") {
-    sink.report(path, `${what} must not be empty`);
-    return undefined;
-  }
-  const problems = validateCanonical(value);
-  for (const problem of problems) sink.report(`${path}${problem.path}`, problem.message);
-  return problems.length === 0 ? value : undefined;
-}
+const VERSION_NAMES: readonly (keyof RulesetVersions)[] = ["brain", "generator", "ruleset"];
 
 /** `name` unless it starts with the prefix the kernel keeps for itself (ADR 0020). */
 function unreserved(name: string, path: string, what: string, sink: IssueSink): string | undefined {
@@ -261,7 +254,7 @@ function readCommands(
 export function captureRuleset(ruleset: unknown): CapturedRuleset {
   const issues = new IssueList();
   if (!expectRecord(ruleset, "", "the ruleset must be a record", issues)) {
-    throw issues.error("invalid_ruleset");
+    throw issues.toError("invalid_ruleset");
   }
   const source: object = ruleset;
   const claims: Claims = { issues, owners: Object.create(null), names: Object.create(null) };

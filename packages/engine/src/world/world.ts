@@ -25,7 +25,7 @@ type WorldHeader = {
   readonly brainVersion: string;
 };
 
-/** The kernel's own state, hashed as the kernel digest. `step` advances the first three. */
+/** The kernel's own state, hashed as the kernel digest. `step` advances tick and nextEntityId. */
 export type Kernel = {
   epoch: number;
   tick: Tick;
@@ -43,15 +43,37 @@ export type ChunkEntry<C extends CanonicalValue = CanonicalValue> = { value: C; 
  */
 export type DigestCache = { globalDigest: Digest; chunkSum: Lanes; stateRoot: Digest };
 
-/** What worldStatus reports. A world becomes faulted when a tick fails; that arrives with `step`. */
-export type WorldStatus =
-  | { readonly kind: "ok"; readonly tick: Tick }
-  | {
-      readonly kind: "faulted";
-      readonly tick: Tick;
-      readonly code: EngineErrorCode;
-      readonly issues: readonly Issue[];
-    };
+/**
+ * A world whose tick failed (ADR 0020, failures): the tick that failed, which is the tick step
+ * was computing (or, for tick_overflow, the last tick), and the error step threw.
+ */
+export type FaultedStatus = {
+  readonly kind: "faulted";
+  readonly tick: Tick;
+  readonly code: EngineErrorCode;
+  readonly issues: readonly Issue[];
+};
+
+/** What worldStatus reports: a healthy world and its tick, or a faulted one and its diagnosis. */
+export type WorldStatus = { readonly kind: "ok"; readonly tick: Tick } | FaultedStatus;
+
+/**
+ * A step in progress on a world: it reads the commands, then runs the tick. While it runs, every
+ * use of the world, read or step, is refused through it, so nothing sees or saves partial state.
+ */
+export interface ActiveStep {
+  /**
+   * The world_busy error for a call of `api` during the step. During the tick it also records a
+   * fault of the tick at the ruleset code that made the call, so that catching it hides nothing.
+   */
+  refuse(api: string): EngineError;
+}
+
+/** The world_busy error for a call of `api` while a step runs on its world. */
+export function busyError(api: string): EngineError {
+  const message = `${api} was called during a step of this world: no function may use a world while it steps`;
+  return new EngineError("world_busy", [{ path: "", message }]);
+}
 
 /**
  * Everything a world holds, with its global value a G and its chunks Cs, as the ruleset's
@@ -69,8 +91,10 @@ export type WorldState<
   readonly digests: DigestCache;
   /** Whether every tick recomputes every digest, to detect writes that bypass the barrier. */
   readonly audit: boolean;
-  /** Only "ok" until `step` can fail. */
-  readonly status: { readonly kind: "ok" };
+  /** Faulted from the moment a tick fails, and for good (poison). */
+  status: { readonly kind: "ok" } | FaultedStatus;
+  /** The step in progress, while step runs, from reading the commands to the end of the tick. */
+  active: ActiveStep | undefined;
 };
 
 /** Lets the constructor tell createWorld from a host that reached it through `.constructor`. */
@@ -129,33 +153,77 @@ export function worldState(value: unknown): WorldState {
   return stateOf(value);
 }
 
-/** What `world` is doing: `{ kind: "ok", tick }`, in a fresh record. */
+/**
+ * The state of `value`, for a call of `api`, if no step is running on it. Throws
+ * EngineError("invalid_input") when `value` is not a world, and EngineError("world_busy") during a
+ * step, whose partial state nothing may read (ADR 0020, failures).
+ */
+export function idleState(value: unknown, api: string): WorldState {
+  const state = worldState(value);
+  if (state.active !== undefined) throw state.active.refuse(api);
+  return state;
+}
+
+/**
+ * The state of `value`, for a call of `api`, if no step is running on it and its last tick did
+ * not fail. Throws as idleState does, and EngineError("world_faulted") when the world is poisoned:
+ * a world whose tick failed can no longer be read, hashed, or stepped (ADR 0020, failures).
+ */
+export function healthyState(value: unknown, api: string): WorldState {
+  const state = idleState(value, api);
+  const { status } = state;
+  if (status.kind === "ok") return state;
+  const { tick, code } = status;
+  const message = `the world faulted at tick ${tick} with ${code}: only worldStatus reads it; recover from the last snapshot`;
+  throw new EngineError("world_faulted", [{ path: "", message }]);
+}
+
+/** Poisons `state` with `fault`, at the tick its kernel is at. */
+export function poison(state: WorldState, fault: EngineError): void {
+  state.status = {
+    kind: "faulted",
+    tick: state.kernel.tick,
+    code: fault.code,
+    issues: fault.issues,
+  };
+}
+
+/**
+ * What `world` is doing, in a fresh record: `{ kind: "ok", tick }`, or, once a tick failed,
+ * `{ kind: "faulted", tick, code, issues }`. It is the one function a faulted world answers, and,
+ * like every other, it throws EngineError("world_busy") while a step runs on the world.
+ */
 export function worldStatus(world: World): WorldStatus {
-  const { kernel } = worldState(world);
-  return { kind: "ok", tick: kernel.tick };
+  const { kernel, status } = idleState(world, "worldStatus");
+  if (status.kind === "ok") return { kind: "ok", tick: kernel.tick };
+  const issues = status.issues.map(({ path, message }) => ({ path, message }));
+  return { kind: "faulted", tick: status.tick, code: status.code, issues };
 }
 
 /**
  * Reads of `world` for the host. Each call reads the world as it is then and returns a detached
  * copy: changing what it returns never changes the world. readChunk throws
  * EngineError("invalid_value") for a key that is not a chunk key, and returns undefined for a key
- * that has no chunk.
+ * that has no chunk. readView and every method of the view throw EngineError("world_faulted")
+ * once the world is poisoned, and EngineError("world_busy") while a step runs on it.
  */
 export function readView<G extends CanonicalValue, C extends CanonicalValue>(
   world: World<G, C>,
 ): ReadView<G, C> {
-  worldState(world);
+  healthyState(world, "readView");
   // The ruleset's validators accepted these values as a G and as Cs when they entered the world.
   return {
     get tick() {
-      return worldState(world).kernel.tick;
+      return healthyState(world, "view.tick").kernel.tick;
     },
-    chunkKeys: () => worldState(world).chunks.sortedKeys(),
+    chunkKeys: () => healthyState(world, "view.chunkKeys").chunks.sortedKeys(),
     readChunk(key) {
+      const { chunks } = healthyState(world, "view.readChunk");
       parseChunkKey(key);
-      const entry = worldState(world).chunks.get(key);
+      const entry = chunks.get(key);
       return entry === undefined ? undefined : (copyCanonical(entry.value) as DeepReadonly<C>);
     },
-    readGlobal: () => copyCanonical(worldState(world).global) as DeepReadonly<G>,
+    readGlobal: () =>
+      copyCanonical(healthyState(world, "view.readGlobal").global) as DeepReadonly<G>,
   };
 }

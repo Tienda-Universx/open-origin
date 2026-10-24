@@ -359,6 +359,68 @@ describe("createWorld and the ruleset", () => {
   });
 });
 
+describe("validators receive the values the world keeps: a change is detected, not prevented", () => {
+  test("a validateChunk that changes its chunk leaves a root that fullChecksum disagrees with", () => {
+    const ruleset = rulesetWith({
+      validateChunk: (_key: string, chunk: { grass: unknown }) => {
+        chunk.grass = 0;
+        return [];
+      },
+    });
+    const world = createWorld(definitionWith({ ruleset }));
+    expect(readView(world).readChunk("1,0")).toEqual({ grass: 0 });
+    expect(fullChecksum(world)).not.toBe(stateRoot(world));
+  });
+
+  test("so does a validateGlobal that changes the global value", () => {
+    const ruleset = rulesetWith({
+      validateGlobal: (global: { population: number }) => {
+        global.population += 1;
+        return [];
+      },
+    });
+    const world = createWorld(definitionWith({ ruleset }));
+    expect(readView(world).readGlobal()).toEqual({ population: 4, names: ["Ana", "Zoe"] });
+    expect(fullChecksum(world)).not.toBe(stateRoot(world));
+  });
+
+  test("and a validator that keeps its value and changes it after createWorld", () => {
+    let kept: { population: number } | undefined;
+    const ruleset = rulesetWith({
+      validateGlobal: (global: { population: number }) => {
+        kept = global;
+        return [];
+      },
+    });
+    const world = createWorld(definitionWith({ ruleset }));
+    expect(fullChecksum(world)).toBe(stateRoot(world));
+    if (kept === undefined) throw new Error("validateGlobal did not run");
+    kept.population = 7;
+    expect(fullChecksum(world)).not.toBe(stateRoot(world));
+  });
+});
+
+describe("createWorld reports each member that is not enumerable once", () => {
+  const NOT_ENUMERABLE = "the property is not enumerable: only enumerable data properties are read";
+
+  test.each(["ruleset", "seed", "simSecondsPerTick", "global", "chunks"])(
+    "/init/%s, and no second issue for the value it did not read",
+    (key) => {
+      const init = Object.defineProperty(definition(), key, { enumerable: false });
+      expect(inputIssues(() => createWorld(init))).toEqual([
+        { path: `/init/${key}`, message: NOT_ENUMERABLE },
+      ]);
+    },
+  );
+
+  test("/options/audit", () => {
+    const options = Object.defineProperty({}, "audit", { value: true, enumerable: false });
+    expect(inputIssues(() => createWorld(definition(), options))).toEqual([
+      { path: "/options/audit", message: NOT_ENUMERABLE },
+    ]);
+  });
+});
+
 describe("the host never holds live state", () => {
   test("changing the definition after createWorld changes nothing", () => {
     const init = definition();

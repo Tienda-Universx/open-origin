@@ -5,6 +5,8 @@ export { type Digest, digest } from "./digest/digest.ts";
 export { EngineError, type EngineErrorCode, type Issue } from "./errors.ts";
 export { mix32, type Seed, streamId, tickKey } from "./rng/mix32.ts";
 export { DrawSequence } from "./rng/random.ts";
+export { MAX_PAYLOAD_BYTES } from "./step/commands.ts";
+export { step } from "./step/step.ts";
 export { nextTick, simSeconds, type Tick } from "./time/tick.ts";
 export { ENGINE_VERSION } from "./version.ts";
 export { chunkHashes, fullChecksum, stateRoot } from "./world/checksum.ts";
@@ -28,6 +30,8 @@ export type {
   Ruleset,
   RulesetSystem,
   RulesetVersions,
+  StepResult,
+  StepStats,
   TickContext,
   TickRandom,
   WorldInit,

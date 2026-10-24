@@ -1,8 +1,9 @@
 /**
- * The contracts between the kernel, the ruleset, and the host (plan §4, ADR 0020). Types only: the
- * tick context and command application arrive with `step`.
+ * The contracts between the kernel, the ruleset, and the host (plan §4, ADR 0020). Types only:
+ * step/context.ts implements the tick context, and step/step.ts the step.
  */
 import type { CanonicalValue } from "../canonical/value.ts";
+import type { Digest } from "../digest/digest.ts";
 import type { Issue } from "../errors.ts";
 import type { Seed } from "../rng/mix32.ts";
 import type { Tick } from "../time/tick.ts";
@@ -73,7 +74,13 @@ export interface ReadView<G extends CanonicalValue, C extends CanonicalValue> {
   readGlobal(): DeepReadonly<G>;
 }
 
-/** Draws for one stream that the system or handler declared (ADR 0020, randomness). */
+/**
+ * Draws for one stream that the system or handler declared (ADR 0020, randomness). Each draws from
+ * the sequence of (stream, id) for the tick, keyed by tickKey(tick, id), whose counter continues
+ * across calls and restarts every tick. `u32` and `int` keyed by an entity and `permutation` keyed
+ * by a resource with the same id share one sequence within a stream: an owner that draws for both
+ * purposes should declare a stream for each, so that neither shifts the other's draws.
+ */
 export interface TickRandom {
   u32(stream: string, entity: EntityId): number;
   /** An integer in [0, bound), for an integer `bound` in [1, 2^32]. */
@@ -82,7 +89,12 @@ export interface TickRandom {
   permutation(stream: string, resourceId: number, count: number): number[];
 }
 
-/** What a system or a handler may do during a tick; revoked when `step` returns. */
+/**
+ * What a system or a handler may do during a tick; revoked when `step` returns, after which every
+ * method throws EngineError("context_expired"). Reads return live values, so that writing through
+ * one, or keeping one past the tick, is a write that bypasses the barrier: detected by audit and
+ * by snapshot encoding, not prevented (ADR 0020, ownership). Misusing a method is a fault.
+ */
 export interface TickContext<G extends CanonicalValue, C extends CanonicalValue>
   extends ReadView<G, C> {
   /** The live chunk `key`, marked dirty. */
@@ -144,4 +156,33 @@ export type WorldInit<G extends CanonicalValue, C extends CanonicalValue> = {
 export type WorldOptions = {
   /** Recompute every digest after each tick to detect writes that bypass the barrier (tests). */
   readonly audit?: boolean;
+};
+
+/** What one tick did, counted (ADR 0020, cost). */
+export type StepStats = {
+  /** The commands given to step. */
+  readonly commands: number;
+  /** The commands rejected: those of an unknown type and those `check` refused. */
+  readonly rejected: number;
+  readonly events: number;
+  /** The chunks that existed before the tick and were written through writeChunk. */
+  readonly dirtyChunks: number;
+  readonly createdChunks: number;
+  /**
+   * The UTF-8 bytes of canonical text the commit hashed: the changed chunks, the global value when
+   * it changed, and digests of a fixed size. Audit's full recomputation is not counted.
+   */
+  readonly hashedBytes: number;
+};
+
+/** What step returns to the host: fresh values that the world keeps no reference to. */
+export type StepResult = {
+  /** The tick the step computed. */
+  readonly tick: Tick;
+  /** digest(["tick", stateRoot, digest(["events", events])]): the state and what the tick emitted. */
+  readonly checksum: Digest;
+  readonly events: readonly EngineEvent[];
+  /** The chunks written or created during the tick, sorted by UTF-16 code units. */
+  readonly changedChunks: readonly ChunkKey[];
+  readonly stats: StepStats;
 };

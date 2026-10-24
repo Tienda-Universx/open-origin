@@ -89,6 +89,62 @@ describe("IssueList", () => {
     expect(list.count).toBe(120);
   });
 
+  test("toError returns, without throwing, the kept issues, the full count, and the first cause", () => {
+    const list = new IssueList();
+    const cause = new Error("first cause");
+    list.report("/a", "no cause");
+    for (const { path, message } of issues(55)) list.report(path, message, cause);
+    list.report("/b", "a later cause", new Error("later"));
+    const error = list.toError("invalid_input");
+    expect(error).toBeInstanceOf(EngineError);
+    expect(error.code).toBe("invalid_input");
+    expect(error.issues).toEqual([{ path: "/a", message: "no cause" }, ...issues(49)]);
+    expect(error.message).toBe(
+      "invalid_input at /a: no cause; 57 issues in all, 7 dropped beyond the first 50",
+    );
+    expect(error.cause).toBe(cause);
+  });
+
+  test("toError of an empty list is an error without issues or a cause", () => {
+    const error = new IssueList().toError("invalid_value");
+    expect(error.issues).toEqual([]);
+    expect(error.message).toBe("invalid_value");
+    expect(Object.hasOwn(error, "cause")).toBe(false);
+  });
+
+  test("toError detaches its error: later reports change it not, and a later call sees them", () => {
+    const list = new IssueList();
+    list.report("/a", "first");
+    const first = list.toError("invalid_value");
+    list.report("/b", "second", new Error("late cause"));
+    expect(first.issues).toEqual([{ path: "/a", message: "first" }]);
+    expect(Object.hasOwn(first, "cause")).toBe(false);
+    const second = list.toError("invalid_value");
+    expect(second).not.toBe(first);
+    expect(second.issues).toEqual([
+      { path: "/a", message: "first" },
+      { path: "/b", message: "second" },
+    ]);
+  });
+
+  test("throwIfAny throws what toError returns, with the count and the first cause", () => {
+    const list = new IssueList();
+    const cause = new Error("cause");
+    list.report("/a", "with a cause", cause);
+    list.report("/b", "without");
+    let thrown: unknown;
+    try {
+      list.throwIfAny("invalid_input");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toEqual(list.toError("invalid_input"));
+    expect((thrown as EngineError).cause).toBe(cause);
+    expect((thrown as EngineError).message).toBe(
+      "invalid_input at /a: with a cause; 2 issues in all",
+    );
+  });
+
   test("throwIfAny does nothing while the list is empty", () => {
     expect(() => new IssueList().throwIfAny("invalid_value")).not.toThrow();
   });

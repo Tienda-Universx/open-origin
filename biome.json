@@ -107,6 +107,7 @@
                   "SharedArrayBuffer": "SharedArrayBuffer shares memory between threads; the engine is single-threaded (ADR 0003).",
                   "Atomics": "Atomics serves shared-memory threads; the engine is single-threaded (ADR 0003).",
                   "Promise": "The engine is synchronous: asynchronous work belongs to the host (ADR 0003, plan §I.1).",
+                  "Proxy": "A Proxy runs code on every property access, so a value behind one can answer differently on each read: engine values are plain data (ADR 0020, ownership).",
                   "Set": "Set iterates in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1).",
                   "WeakMap": "WeakMap keeps state outside the canonical, hashed world (plan §I.1).",
                   "WeakSet": "WeakSet keeps state outside the canonical, hashed world (plan §I.1).",
@@ -159,7 +160,11 @@
       "plugins": ["./packages/engine/lint/global-math.grit"]
     },
     {
-      "includes": ["packages/engine/src/**", "!packages/engine/src/canonical/value.ts"],
+      "includes": [
+        "packages/engine/src/**",
+        "!packages/engine/src/canonical/value.ts",
+        "!packages/engine/src/step/context.ts"
+      ],
       "plugins": ["./packages/engine/lint/global-map.grit"]
     }
   ]

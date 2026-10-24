@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { digestWords, hexOf } from "../src/digest/digest.ts";
 import { canonicalize, digest } from "../src/index.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 
@@ -27,6 +28,11 @@ describe("digest", () => {
     const digests = values.map(digest);
     expect(new Set(digests).size).toBe(values.length);
     for (const text of digests) expect(text).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("hexOf writes four u32 words, most significant first, each in 8 zero-padded digits", () => {
+    expect(hexOf([0, 1, 0xabcdef, 0xffffffff])).toBe("000000000000000100abcdefffffffff");
+    expect(hexOf(digestWords(["chunk", "0:0", { a: 1 }]))).toBe(digest(["chunk", "0:0", { a: 1 }]));
   });
 
   test("rejects a value that is not canonical, as canonicalize does", () => {

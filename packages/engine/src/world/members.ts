@@ -8,21 +8,27 @@
  * at its path with the thrown value as its cause, never a raw exception. The canonical parts of
  * these objects go through copyCanonicalReported instead.
  */
+import { copyCanonicalReported } from "../canonical/copy.ts";
 import { ownKeyCount, sortedOwnKeys, symbolKeyCount } from "../canonical/order.ts";
 import {
+  type CanonicalValue,
   describeThrown,
   type IssueSink,
   lengthOf,
   sparseMessage,
   symbolKeysMessage,
+  validateCanonical,
 } from "../canonical/value.ts";
+import type { IssueList } from "../errors.ts";
 
 const ACCESSOR = "the property is an accessor: only data properties are read";
 const NOT_ENUMERABLE = "the property is not enumerable: only enumerable data properties are read";
 
 /**
- * What readMember returns for a member it already reported, an accessor or one that threw, so
- * that callers do not report it a second time.
+ * What readMember returns for a member it already reported: an accessor, a property that is not
+ * enumerable, or a read that threw. Every caller checks for it before anything else, so that the
+ * member is reported once, never a second time as a missing or invalid value. A host cannot
+ * forge it: it is a fresh symbol, and index.ts does not export it.
  */
 export const UNREAD: unique symbol = Symbol("unread");
 
@@ -38,6 +44,21 @@ export function isRecord(value: unknown): value is object {
 /** A sink that reports every issue to `sink`, with `prefix` before its path. */
 export function under(sink: IssueSink, prefix: string): IssueSink {
   return { report: (path, message, cause) => sink.report(`${prefix}${path}`, message, cause) };
+}
+
+/**
+ * A canonical copy of `value`, which readMember read, with its issues at `path`; undefined after
+ * any, or when readMember already reported the member.
+ */
+export function copyAt(
+  value: unknown,
+  path: string,
+  issues: IssueList,
+): CanonicalValue | undefined {
+  if (value === UNREAD) return undefined;
+  const before = issues.count;
+  const copy = copyCanonicalReported(value, under(issues, path));
+  return issues.count === before ? copy : undefined;
 }
 
 /** Reports at `path` that an object threw `error` while being read. */
@@ -150,4 +171,28 @@ export function readElements(
     }
     return elements;
   });
+}
+
+/**
+ * `value` if it is a non-empty canonical string; otherwise undefined, after an issue at `path`
+ * unless readMember already reported it.
+ */
+export function readText(
+  value: unknown,
+  path: string,
+  what: string,
+  sink: IssueSink,
+): string | undefined {
+  if (value === UNREAD) return undefined;
+  if (typeof value !== "string") {
+    sink.report(path, `${what} must be a string, not ${typeof value}`);
+    return undefined;
+  }
+  if (value === "") {
+    sink.report(path, `${what} must not be empty`);
+    return undefined;
+  }
+  const problems = validateCanonical(value);
+  for (const problem of problems) sink.report(`${path}${problem.path}`, problem.message);
+  return problems.length === 0 ? value : undefined;
 }
