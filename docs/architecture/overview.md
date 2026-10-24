@@ -45,18 +45,15 @@ server      → engine, agents, protocol, ai-gateway
 web         → protocol
 ```
 
-- Lint-enforced extra rule: the server's cognitive allocation module cannot import the WebSocket
-  subscriptions module.
+- Extra rule, enforced by lint from the batch that creates both modules: the server's cognitive
+  allocation module cannot import the WebSocket subscriptions module.
 - The engine owns all state, body and mind; `agents` contributes pure policies and prompt logic
   (§E.3). There is one snapshot and one source of truth.
 - §E.2 predates the two-interface decision and does not list `apps/admin` or `packages/ui`. What
   §E.6 states: `protocol` has `public` and `admin` audiences; `packages/ui` holds presentational
   components (props, no fetch) shared by both apps, and data containers live in each app.
-- `packages/protocol` exposes two separate entry points, `@open-origin/protocol/public` and
-  `@open-origin/protocol/admin`. `apps/web` may import only the public entry; `apps/admin` may
-  import both. Decided 2026-10-24 and implemented in T6 and T8; T8 enforces it with an
-  import-boundary check and the public `dist/` scan (plan §N criterion 18;
-  [0009](../decisions/0009-public-and-private-admin-interfaces.md)).
+- `packages/protocol` exposes a public and an admin entry point; which app may import which is
+  decided in [0009](../decisions/0009-public-and-private-admin-interfaces.md#decision).
 
 ## World plane and presentation plane
 
@@ -134,7 +131,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `packages/agents/` | T4 | Policies, memory, prompts, provenance |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
-| `tests/` | T6 | End-to-end: synchronization, recovery, observer invariance. Since T1, `tests/repo/` holds the repository checks: ADR format (`adr.ts`), shared Markdown line filter (`markdown.ts`), git file listing (`files.ts`), invisible and bidirectional character scan (`hygiene.ts`), CI workflow invariants (`ci.test.ts`), `package.json` invariants (`package.test.ts`), lint rules that must fire (`lint.test.ts`), relative links (`docs.ts`), and verbatim-document hashes (`docs.test.ts`) |
+| `tests/` | T1, T6 | T1: repository checks in `tests/repo/` (see `AGENTS.md`, Automated controls); T6: end-to-end synchronization, recovery and observer-invariance tests |
 | `docs/` | T1 | Vision, plan, tracker, ADRs, architecture; determinism spec in T2, persistence spec in T7 |
 | `.github/workflows/ci.yml` | T1 | CI |
 | `docker-compose.yml` | T7 | Local Postgres |
@@ -162,5 +159,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 
 ## Related
 
-- [Interfaces](interfaces.md): public and admin interfaces, design system, PixiJS ↔ React.
-- [Data classification](data-classification.md): classes C0–C4 and how they are enforced.
+- [Interfaces](interfaces.md): planes, message flow, acceptance criteria, and roadmap of both
+  interfaces.
+- [Data classification](data-classification.md): access by interface, enforcement map, and tests
+  for classes C0–C4.

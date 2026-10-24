@@ -34,15 +34,16 @@ enforced in code, not by repository walls:
 
 We will revisit this decision when one of these holds: separate teams need independent release
 cadences; a part of the code needs a different license or must stay private; a commercial
-storefront becomes a separate product; or CI time stays above 10 minutes even with per-path jobs.
+storefront becomes a separate product; or CI time approaches the 10-minute job timeout even with
+per-path jobs.
 
 ## Consequences
 
 - A change to a protocol DTO, its server projection and the interface that renders it lands in one
   pull request, reviewed and tested together; DTOs never drift between repositories.
 - One toolchain, one lockfile, one CI workflow and one license (AGPL-3.0) to maintain.
-- Every contributor clones the whole project, and CI checks every package on each change; at the
-  size of v0.1 this costs seconds.
+- Every contributor clones the whole project, and CI checks every package on each change. T1 CI
+  runs took 10–15 seconds (GitHub Actions runs 40054956794 to 40062968688).
 - Security does not depend on repository separation: the repository is public, so the admin plane
   stays protected by authentication, authorization and separate listeners (0009), never by hiding
   its code.

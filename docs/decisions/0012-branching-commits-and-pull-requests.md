@@ -17,9 +17,9 @@ We will deliver every batch through branches and pull requests into `main`.
 
 | Rule | Detail | Source |
 |---|---|---|
-| One branch per batch | Each batch has a branch and a PR (≈400 lines as a reference), tests and docs next to the code, and a prior brief (goal, scope, files, dependencies, risks, tests, criteria) | Plan §M, O-19 |
+| One branch per PR | Each PR has its own branch (≈400 lines as a reference), with tests and docs next to the code. A batch ships as one PR or a chain of PRs, after a prior brief (goal, scope, files, dependencies, risks, tests, criteria) | Plan §M, O-19 |
 | Never commit to `main` | All changes reach `main` through a pull request | Vision §32 |
-| Chained PRs | A batch with separable deliveries uses chained PRs, each based on the previous branch (T1: two PRs, O-27; T8: three PRs, §M) | Plan O-27, §M, §P |
+| Chained PRs | A batch with separable deliveries ships as several PRs; a chained PR is based on the previous PR's branch (T1: PRs #1, #2, and #4, tracker T1-D; T8: three PRs, §M) | Plan O-27, §M, §P |
 | Conventional Commits | Small, descriptive commits per work unit | Plan O-19, §P; vision §32 |
 | No AI attribution in commits | Commit messages carry no `Co-Authored-By` or similar AI trailers. A PR description may carry a tooling footer; it never enters history (see "Merge commits") | Plan O-19, §P; maintainer delegation, 2026-10-24 (tracker L11, L12) |
 | Merge commits | PRs are merged with a merge commit (no squash, no rebase-merge) that keeps the work-unit commits. The merge commit uses GitHub's default merge message, which carries the PR title, never the PR body | Maintainer delegation, 2026-10-24 (tracker L11, L12) |
@@ -34,17 +34,14 @@ We will deliver every batch through branches and pull requests into `main`.
 
 ## Consequences
 
-- Each batch is reviewable on its own, and large text-only deliveries do not hide tooling changes
-  (the reason T1 is split into two PRs, plan §P).
+- Each PR is reviewable on its own, and large text-only deliveries do not hide tooling changes
+  (the reason T1 was split into several PRs, plan §P).
 - Branch protection is a maintainer action outside the repository; until it is enabled, the rule
   relies on discipline and review.
-- The ≈400-line size is a reference, not a hard limit.
 - `main` keeps every work-unit commit, plus one merge commit per PR.
 - The repository still allows squash and rebase merging (GitHub API, checked 2026-10-24), so the
   merge-commit rule is policy only until the maintainer disables those merge modes in the
   repository settings.
-- In T1, pushes and PRs made with the Codespace's built-in credentials did not start workflows; CI
-  ran after a new push with a user-authenticated token (an empty commit; tracker L10).
 
 ## Alternatives considered
 

@@ -22,17 +22,15 @@ audience (plan §E.4).
 | **C1 Inhabitant-internal** | Memory, beliefs, thoughts, goals, relationships, prompts, raw LLM outputs, context manifests | Research role; the inhabitant itself (through its perception) | Public clients, other inhabitants |
 | **C2 Player-private** (future) | Account, email, IP, sessions, payments, private messages | The player; minimum necessary operation | Other clients, inhabitants, LLM providers (only in-world text travels, moderated and without personal data) |
 | **C3 Operations and research** | World seed (predicts terrain and all randomness), law parameters, reference truth, observation metrics, logs, admin tools | Server; authenticated and audited research/admin role | Any public client |
-| **C4 Secrets** | Provider API keys, database credentials, tokens, the master key | Infrastructure secrets (database credentials, tokens, the master key): host environment variables or secret manager. Provider API keys entered in the admin panel: encrypted in the database (see Mechanisms). The admin panel can only **write** keys (create, rotate, delete) and shows a fingerprint, never the value | Clients and client bundles, logs, prompts, snapshots, admin API responses |
+| **C4 Secrets** | Provider API keys, database credentials, tokens, the master key | The admin panel can only **write** keys; where each secret is stored is decided in [0009](0009-public-and-private-admin-interfaces.md#decision) | Clients and client bundles, logs, prompts, snapshots, admin API responses |
 
 Mechanisms:
 - Explicit projection functions (`toPublicView`, `toResearchView`) with allowlisted DTOs in
   `protocol`. An entity is never serialized whole.
 - Tests check that every key of each public message belongs to the allowlist.
 - CI scans the client `dist/` for secret patterns. Only `VITE_PUBLIC_*` variables reach the bundle.
-- Provider API keys entered in the admin panel are stored encrypted in the database with AES-GCM
-  via WebCrypto, with the master key in an environment variable; an environment variable takes
-  precedence over a stored key (plan O-25, §E.6;
-  [0009](0009-public-and-private-admin-interfaces.md)). This refines the C4 row of plan §E.4, which
+- C4 storage follows [0009](0009-public-and-private-admin-interfaces.md#decision) (plan O-25,
+  §E.6). Storing provider API keys encrypted in the database refines the C4 row of plan §E.4, which
   names only environment variables or a secret manager.
 - A separate admin/research plane. v0.1: binds to `127.0.0.1` and requires a local token, behind a
   flag (O-21). Before any public exposure: authentication, authorization (RBAC), and an audit log

@@ -30,10 +30,11 @@ Admin security rules:
   `dist/` for admin routes and modules.
 - **Separate admin API**: own listener, routes, and DTOs (`protocol` with `public` and `admin`
   audiences).
-- **Separate DTO entry points** (decided 2026-10-24; implemented in T6 and T8). `packages/protocol`
-  exposes two entry points, `@open-origin/protocol/public` and `@open-origin/protocol/admin`.
-  `apps/web` may import only the public entry; `apps/admin` may import both. T8 enforces it with an
-  import-boundary check and the public `dist/` scan (plan §N criterion 18).
+- **Separate DTO entry points** (decided 2026-10-24; to be implemented in T6 and T8).
+  `packages/protocol` exposes two entry points, `@open-origin/protocol/public` and
+  `@open-origin/protocol/admin`. `apps/web` may import only the public entry; `apps/admin` may
+  import both. T8 will enforce it with an import-boundary check and the public `dist/` scan (plan
+  §N criterion 18).
 - **World-affecting actions** (pause, change AI mode, create world, adjust budget) are commands
   with `admin` provenance, recorded in the log and in an append-only audit log. An experimental
   configuration change opens a new epoch. Watching from the panel affects nothing (P9).
@@ -41,12 +42,11 @@ Admin security rules:
   rule [D]; adopted under the maintainer's delegation of technical decisions,
   [tracker](../roadmap/v0.1-tracker.md) L11, L12). Provider API keys entered in the panel are stored
   encrypted in the database with AES-GCM via WebCrypto, with the master key in an environment
-  variable. Infrastructure secrets (database credentials, tokens, the master key) live in host
-  environment variables or a secret manager
-  ([0008](0008-data-classification-and-audience-projections.md)). The panel is write-only: it can
-  create, rotate, and delete keys but only shows a fingerprint (last 4 characters). An environment
-  variable takes precedence over a stored key. Keys never reach clients, logs, prompts, snapshots,
-  or admin API responses.
+  variable. Infrastructure secrets (database credentials, tokens, the master key; class C4 in
+  [0008](0008-data-classification-and-audience-projections.md)) live in host environment variables
+  or a secret manager. The panel is write-only: it can create, rotate, and delete keys but only
+  shows a fingerprint (last 4 characters). An environment variable takes precedence over a stored
+  key. Keys never reach clients, logs, prompts, snapshots, or admin API responses.
 - **Double key for paid spend.** The panel cannot enable `paid` unless the server started with
   `AI_ALLOW_PAID=true` ([0004](0004-ai-proposes-engine-decides.md)).
 - **Codespaces.** A forwarded port can become public, so the panel requires the token even locally

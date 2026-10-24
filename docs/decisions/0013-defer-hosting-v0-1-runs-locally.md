@@ -31,7 +31,8 @@ activated, nothing deployed. The frontend compiles to static files but is not de
 Conclusions recorded from plan §J.3 (the rejected options are under "Alternatives considered"):
 - **Bun + Postgres is the reference** for the engine: zero adaptation and no platform limits.
 - For the frontend, the existing Pages project would be reused when authorized; its v3 build
-  image ships Bun 1.2.15, so `BUN_VERSION=1.4.4` must be set or the build done in Actions.
+  image ships Bun 1.2.15, so `BUN_VERSION` must be set to the Bun version pinned in
+  `packageManager`, or the build done in Actions.
 
 ## Consequences
 

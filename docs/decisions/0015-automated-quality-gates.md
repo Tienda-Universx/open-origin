@@ -31,10 +31,14 @@ We will enforce, in `bun run lint` (part of `bun run check` and CI):
 
 - Biome with the recommended preset plus: cognitive complexity above 15, functions over 50 lines
   (tests excluded), more than 4 parameters, `else` after `return`, nested ternaries, non-null
-  assertions, parameter reassignment, import cycles, explicit `any` and `@ts-ignore`, all as errors;
-- oxlint, pinned to 1.87.0 (published more than two weeks before adoption), restricted to
-  cyclomatic complexity above 10 and nesting deeper than 4; its default rule categories stay off so
-  it never duplicates Biome.
+  assertions, parameter reassignment, import cycles, explicit `any`, `@ts-ignore`, and unused
+  variables, imports, and function parameters, all as errors;
+- oxlint, pinned to 1.87.0, restricted to cyclomatic complexity above 10 and nesting deeper than 4;
+  its default rule categories stay off so it never duplicates Biome.
+
+New dev dependencies are pinned to an exact version published at least two weeks earlier, so a
+compromised or broken release has time to be detected and withdrawn before adoption (oxlint 1.87.0
+was chosen this way).
 
 A function may exceed the cyclomatic limit only with an inline
 `oxlint-disable-next-line eslint/complexity -- <reason>` accepted in review. `tests/repo/lint.test.ts`

@@ -23,11 +23,16 @@ Deliberation contract (plan §K.5):
 - The LLM answers JSON validated against a schema: `{ thought?, proposals: [...] }`.
 - Each proposal passes preconditions, technical capability (acting with a technique requires having
   learned it), and the ethical action catalog. Thinking and hypothesizing have no content limits.
-- It applies at `t + k`, with the adopted default `k` = 25 ticks plus 25 ticks of grace
-  (2026-10-24, configurable; [0003](0003-authoritative-deterministic-engine.md)); a rejection
-  becomes the inhabitant's experience.
+- It applies at `t + k`, with `k` = 25 ticks plus 25 ticks of grace
+  ([0003](0003-authoritative-deterministic-engine.md)); a rejection becomes the inhabitant's
+  experience.
 - Each decision stores a **context manifest**: IDs of included memories and perceptions, template
   version, model, prompt hash, and raw output.
+
+**Adopted defaults (2026-10-24), configurable.** `k`, R = 60, and the cognitive allocation rule
+below were marked [D] in the plan; they were adopted under the maintainer's delegation of technical
+decisions ([tracker](../roadmap/v0.1-tracker.md) L11, L12) and are revisited with measurements in
+the batch that implements each one (plan §M).
 
 AI modes (plan §J.4), implemented by an in-house gateway over `fetch` (O-20):
 
@@ -44,11 +49,9 @@ AI modes (plan §J.4), implemented by an in-house gateway over `fetch` (O-20):
   ((input + output `max_tokens`) × price), reconciles with the real `usage` afterwards, and rejects
   the call if the reservation exceeds the balance. Provider caps add to local caps, never replace
   them. Local counters of tokens, neurons, and dollars always run (§J.6).
-- **Cognitive allocation: adopted default (2026-10-24), configurable** (plan §J.5, marked [D]
-  there; adopted under the maintainer's delegation of technical decisions,
-  [tracker](../roadmap/v0.1-tracker.md) L11, L12). Each inhabitant gets an equal daily share C/N; a
-  common pool serves high **internal** salience triggers (new phenomenon, conversation); the queue
-  is ordered by trigger tick with a deterministic tie-break; everything is recorded.
+- **Cognitive allocation** (plan §J.5). Each inhabitant gets an equal daily share C/N; a common
+  pool serves high **internal** salience triggers (new phenomenon, conversation); the queue is
+  ordered by trigger tick with a deterministic tie-break; everything is recorded.
 - Cognitive allocation depends only on world data, never on who watches or who pays
   ([0005](0005-observer-independence.md)). Shared time never depends on the AI budget. Each world
   with LLMs declares its budget and resulting cognitive density. The research budget is separate.
@@ -56,14 +59,11 @@ AI modes (plan §J.4), implemented by an in-house gateway over `fetch` (O-20):
 ## Consequences
 
 - From 100 inhabitants the free LLM is a minor fraction of cognition: the world must be rich in
-  deterministic (P0) behavior and LLM deliberation exceptional (§J.5). R = 60 (adopted default,
-  2026-10-24, configurable; [0003](0003-authoritative-deterministic-engine.md)) is the default for
-  the demo with AI off; worlds with LLMs choose R according to their budget (O-10).
+  deterministic (P0) behavior and LLM deliberation exceptional (§J.5). R = 60
+  ([0003](0003-authoritative-deterministic-engine.md)) is the default for the demo with AI off;
+  worlds with LLMs choose R according to their budget (O-10).
 - Model output is auditable and replayable from the log (reproducibility level N2).
 - Plan §N criteria 11 and 12 verify the defaults and the mock behavior; T9 builds the gateway.
-- The allocation default, `k`, and R = 60 were adopted under the maintainer's delegation of
-  technical decisions (tracker L11, L12); they are revisited with measurements in the batch that
-  implements them (plan §M).
 
 ## Alternatives considered
 
