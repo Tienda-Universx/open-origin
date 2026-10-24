@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { REPO_ROOT } from "./files.ts";
 
 /**
@@ -15,14 +15,42 @@ setDefaultTimeout(60_000);
 const scratch = mkdtempSync(join(tmpdir(), "open-origin-lint-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-// Biome reads the repository configuration from the scratch directory, outside git.
-const biomeConfig = await Bun.file(`${REPO_ROOT}biome.json`).json();
-writeFileSync(
-  join(scratch, "biome.json"),
-  JSON.stringify({ ...biomeConfig, vcs: { enabled: false } }),
-);
+/** The absolute path of the scratch-relative path `name`, with its directories created. */
+function scratchPath(name: string): string {
+  const path = join(scratch, name);
+  mkdirSync(dirname(path), { recursive: true });
+  return path;
+}
 
-type Tool = "biome" | "oxlint" | "tsc";
+/** Writes `content` at the scratch-relative path `name` and returns its absolute path. */
+function writeScratch(name: string, content: string): string {
+  const path = scratchPath(name);
+  writeFileSync(path, content);
+  return path;
+}
+
+type PluginEntry = string | { path: string };
+type BiomeConfig = { plugins?: PluginEntry[]; overrides?: { plugins?: PluginEntry[] }[] };
+
+/** Every GritQL plugin the configuration registers, at the top level or in an override. */
+function pluginPaths(config: BiomeConfig): string[] {
+  const overrides = (config.overrides ?? []).flatMap((override) => override.plugins ?? []);
+  return [...(config.plugins ?? []), ...overrides].map((entry) =>
+    typeof entry === "string" ? entry : entry.path,
+  );
+}
+
+// Biome reads the repository configuration from the scratch directory, outside git. Override
+// globs and plugin paths resolve from that directory, so fixtures and plugins keep their
+// repository-relative paths there.
+const biomeConfig = (await Bun.file(`${REPO_ROOT}biome.json`).json()) as BiomeConfig;
+writeScratch("biome.json", JSON.stringify({ ...biomeConfig, vcs: { enabled: false } }));
+for (const plugin of pluginPaths(biomeConfig)) {
+  copyFileSync(join(REPO_ROOT, plugin), scratchPath(plugin));
+}
+
+/** `tsc` checks with the settings every package shares; `tsc-engine` with the engine's own. */
+type Tool = "biome" | "oxlint" | "tsc" | "tsc-engine";
 
 /** How long a linter may run before it is killed and reported as timed out. */
 const TOOL_TIMEOUT_MS = 30_000;
@@ -30,27 +58,32 @@ const TOOL_TIMEOUT_MS = 30_000;
 /** `exitCode` is null when the tool was killed (a timeout), whatever the Bun types say. */
 type LintResult = { exitCode: number | null; output: string };
 
-/** The command line that checks the fixture `paths` with the repository's own settings. */
-function commandLine(tool: Tool, paths: string[]): string[] {
-  if (tool === "biome") return ["biome", "lint", `--config-path=${scratch}`, ...paths];
-  if (tool === "oxlint") {
-    return ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
-  }
-  // tsc checks exactly these files with the compiler options every package shares.
-  const config = join(scratch, "tsconfig.json");
-  writeFileSync(
-    config,
-    JSON.stringify({ extends: `${REPO_ROOT}tsconfig.base.json`, files: paths }),
+/** A scratch tsconfig that checks exactly `paths` with the settings of the project `base`. */
+function tscCommand(base: string, paths: string[]): string[] {
+  const config = writeScratch(
+    "tsconfig.json",
+    // `include: []` drops the files the base project includes, such as the engine's own sources.
+    JSON.stringify({ extends: `${REPO_ROOT}${base}`, include: [], files: paths }),
   );
   return ["tsc", "--noEmit", "-p", config];
 }
 
+/** The command line that checks the fixture `paths` with the repository's own settings. */
+function commandLine(tool: Tool, paths: string[]): string[] {
+  if (tool === "biome") {
+    // Without --max-diagnostics=none, Biome prints only the first 20 diagnostics.
+    return ["biome", "lint", "--max-diagnostics=none", `--config-path=${scratch}`, ...paths];
+  }
+  if (tool === "oxlint") {
+    return ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
+  }
+  if (tool === "tsc-engine") return tscCommand("packages/engine/tsconfig.json", paths);
+  return tscCommand("tsconfig.base.json", paths);
+}
+
 function run(tool: Tool, files: Record<string, string>): LintResult {
-  for (const [name, source] of Object.entries(files)) writeFileSync(join(scratch, name), source);
-  const args = commandLine(
-    tool,
-    Object.keys(files).map((name) => join(scratch, name)),
-  );
+  const paths = Object.entries(files).map(([name, source]) => writeScratch(name, source));
+  const args = commandLine(tool, paths);
   // Run from the repository root so bunx finds the locally installed tools.
   // A hung tool is killed and reported as timed out, instead of blocking the run
   // (Bun's per-test timeout cannot fire while spawnSync blocks the event loop).
@@ -276,5 +309,347 @@ describe("TypeScript strict mode", () => {
     // The fixture breaks exactly this rule, so the failing exit code comes from it alone.
     expect(exitCode).not.toBe(0);
     expect([...new Set(output.match(/TS\d{4,5}/g))]).toEqual([code]);
+  });
+});
+
+const ENGINE_SRC = "packages/engine/src";
+const ENGINE_TEST = "packages/engine/test";
+
+/** One Biome diagnostic: the scratch-relative fixture, its rule (or `plugin`), and its text. */
+type Diagnostic = { file: string; category: string; text: string };
+
+/** A diagnostic starts with `<path>:<line>:<column> <category>` and runs to the next one. */
+const DIAGNOSTIC_HEADER = /^(\S+):\d+:\d+ (\S+)[^\n]*━$/gm;
+
+function biomeDiagnostics(output: string): Diagnostic[] {
+  const headers = [...output.matchAll(DIAGNOSTIC_HEADER)];
+  return headers.map((header, index) => ({
+    file: (header[1] ?? "").replace(`${scratch}/`, ""),
+    category: header[2] ?? "",
+    text: output.slice(header.index, headers[index + 1]?.index ?? output.length),
+  }));
+}
+
+/** Globals the engine core may not reference (ADR 0003 P5). */
+const DENIED_GLOBALS = [
+  "Math",
+  "Date",
+  "Intl",
+  "globalThis",
+  "WeakRef",
+  "FinalizationRegistry",
+  "SharedArrayBuffer",
+  "Atomics",
+  "Promise",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Function",
+  "Bun",
+  "crypto",
+  "performance",
+  "structuredClone",
+  "Reflect",
+  "JSON",
+] as const;
+
+/**
+ * A source that breaks purity rules: the rules it must trigger (sorted), and how many of its
+ * diagnostics must carry `message` (one unless stated).
+ */
+type PurityCase = { source: string; rules: string[]; message: string; matches?: number };
+
+const RESTRICTED_GLOBAL = ["lint/style/noRestrictedGlobals"];
+const PLUGIN = ["plugin"];
+const KEY_ORDER_MESSAGE = "Key enumeration through `Object`";
+const LOCALE_MESSAGE = "Locale-sensitive methods depend on the host";
+const CONSTRUCTOR_MESSAGE = "`.constructor` reaches the `Function` constructor";
+const RESTRICTED_IMPORT = ["lint/style/noRestrictedImports"];
+
+/** Fixture file names and the diagnostics each one must raise under packages/engine/src. */
+const PURITY_CASES: Record<string, PurityCase> = {
+  ...Object.fromEntries(
+    DENIED_GLOBALS.map((name) => [
+      `global-${name}.ts`,
+      {
+        source: `export const ref = ${name};\n`,
+        rules: RESTRICTED_GLOBAL,
+        message: `Do not use the global variable ${name}.`,
+      },
+    ]),
+  ),
+  "exponent.ts": {
+    source: "export const cube = 2 ** 3;\n",
+    rules: PLUGIN,
+    message: "`**` and `**=` are implementation-approximated",
+  },
+  "exponent-assignment.ts": {
+    source:
+      "export function square(x: number): number {\n  let y = x;\n  y **= 2;\n  return y;\n}\n",
+    rules: PLUGIN,
+    message: "`**` and `**=` are implementation-approximated",
+  },
+  "async.ts": {
+    source: [
+      "export async function load() {\n  return 1;\n}",
+      "export const arrow = async () => 1;",
+      "export const expression = async function (this: { n: number }) {\n  return this.n;\n};",
+      "export class Loader {\n  private n = 1;\n  async read() {\n    return this.helper();\n  }",
+      "  private async helper() {\n    return this.n;\n  }\n}",
+      "export const methods = {\n  async read() {\n    return 1;\n  },\n};\n",
+    ].join("\n"),
+    rules: PLUGIN,
+    message: "The engine is synchronous: `async` functions",
+    matches: 6,
+  },
+  "await.ts": {
+    source: "export const value = await 0;\nfor await (const item of [1]) {\n  value + item;\n}\n",
+    rules: PLUGIN,
+    message: "The engine is synchronous: `await`",
+    matches: 2,
+  },
+  "locale.ts": {
+    source: [
+      'export const order = "a".localeCompare("b");',
+      "export const text = (1).toLocaleString();",
+      'export const upper = "a".toLocaleUpperCase();',
+      'export const lower = "a".toLocaleLowerCase();',
+      "type Day = { toLocaleDateString(): string; toLocaleTimeString(): string };",
+      "export const date = (day: Day): string => day.toLocaleDateString();",
+      "export const time = (day: Day): string => day.toLocaleTimeString();\n",
+    ].join("\n"),
+    rules: PLUGIN,
+    message: LOCALE_MESSAGE,
+    matches: 6,
+  },
+  "object-keys.ts": {
+    source: [
+      "export const keys = Object.keys({});",
+      "export const values = Object.values({});",
+      "export const entries = Object.entries({});",
+      "export const names = Object.getOwnPropertyNames({});",
+      "export const symbols = Object.getOwnPropertySymbols({});",
+      "export const descriptors = Object.getOwnPropertyDescriptors({});\n",
+    ].join("\n"),
+    rules: PLUGIN,
+    message: KEY_ORDER_MESSAGE,
+    matches: 6,
+  },
+  "object-binding.ts": {
+    source: [
+      "export const O = Object;",
+      "export const { keys } = Object;",
+      "export function bind(seed: unknown): unknown {\n  let target = seed;\n  target = Object;\n  return target;\n}\n",
+    ].join("\n"),
+    rules: PLUGIN,
+    message: "Binding `Object` to a name hides",
+    matches: 3,
+  },
+  "constructor.ts": {
+    source: [
+      "export const make = (() => undefined).constructor;",
+      "export class Clock {\n  kind(): unknown {\n    return this.constructor;\n  }\n}\n",
+    ].join("\n"),
+    rules: PLUGIN,
+    message: CONSTRUCTOR_MESSAGE,
+    matches: 2,
+  },
+  "for-in.ts": {
+    source:
+      "export function count(record: Record<string, number>): number {\n  let total = 0;\n  for (const key in record) total += key.length;\n  return total;\n}\n",
+    rules: ["lint/suspicious/noForIn"],
+    message: "Unexpected for-in loop.",
+  },
+  "console.ts": {
+    source: 'console.log("tick");\n',
+    rules: ["lint/suspicious/noConsole"],
+    message: "Don't use console.",
+  },
+  "process.ts": {
+    source: "export const env = process.env;\n",
+    rules: ["lint/correctness/noProcessGlobal"],
+    message: "Usage of the `process` global is discouraged.",
+  },
+  "node-fs.ts": {
+    source: 'import { readFileSync } from "node:fs";\nexport const read = readFileSync;\n',
+    rules: ["lint/correctness/noNodejsModules", ...RESTRICTED_IMPORT],
+    message: "`node:*` modules are host APIs",
+  },
+  "bun.ts": {
+    source: 'import { file } from "bun";\nexport const open = file;\n',
+    rules: RESTRICTED_IMPORT,
+    message: "`bun` and `bun:*` are host APIs",
+  },
+  "bun-test.ts": {
+    source: 'import { test } from "bun:test";\nexport const check = test;\n',
+    rules: RESTRICTED_IMPORT,
+    message: "`bun` and `bun:*` are host APIs",
+  },
+  "package.ts": {
+    source: [
+      'import { parse } from "some-package";',
+      'export { helper } from "@scope/tools";',
+      "export const read = parse;\n",
+    ].join("\n"),
+    rules: RESTRICTED_IMPORT,
+    message: "The engine depends on nothing",
+    matches: 2,
+  },
+};
+
+/** Recommended everywhere, so only the src run can prove the engine override turns it on. */
+const EVAL_CASE: Record<string, PurityCase> = {
+  "eval.ts": {
+    source: 'export const one = eval("1");\n',
+    rules: ["lint/security/noGlobalEval"],
+    message: "Do not use eval().",
+  },
+};
+
+/** The fixtures at `directory`, keyed by their scratch-relative paths. */
+function sourcesIn(directory: string, cases: Record<string, PurityCase>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(cases).map(([name, { source }]) => [`${directory}/${name}`, source]),
+  );
+}
+
+describe("engine purity controls (packages/engine/src)", () => {
+  // One Biome run lints every fixture, to bound CI time.
+  let lintedSources: { exitCode: number | null; diagnostics: Diagnostic[] } | undefined;
+  function srcRun(): { exitCode: number | null; diagnostics: Diagnostic[] } {
+    if (lintedSources === undefined) {
+      const { exitCode, output } = run("biome", {
+        ...sourcesIn(ENGINE_SRC, PURITY_CASES),
+        ...sourcesIn(ENGINE_SRC, EVAL_CASE),
+      });
+      lintedSources = { exitCode, diagnostics: biomeDiagnostics(output) };
+    }
+    return lintedSources;
+  }
+
+  test("fixtures under src fail the lint, every diagnostic as an error", () => {
+    const { exitCode, diagnostics } = srcRun();
+    expect(exitCode).toBe(1);
+    expect(diagnostics.filter((diagnostic) => !diagnostic.text.includes("\n\n  × "))).toEqual([]);
+  });
+
+  test.each(Object.entries({ ...PURITY_CASES, ...EVAL_CASE }))(
+    "Biome rejects %s under src",
+    (name, expected) => {
+      const found = srcRun().diagnostics.filter(
+        (diagnostic) => diagnostic.file === `${ENGINE_SRC}/${name}`,
+      );
+      expect([...new Set(found.map((diagnostic) => diagnostic.category))].sort()).toEqual(
+        expected.rules,
+      );
+      expect(found.filter((diagnostic) => diagnostic.text.includes(expected.message))).toHaveLength(
+        expected.matches ?? 1,
+      );
+    },
+  );
+
+  test("a computed key, quoted or in backticks, does not hide a member from the plugin", () => {
+    // Biome's useLiteralKeys only informs about these keys, so the plugin is the gate.
+    const { exitCode, output } = run("biome", {
+      [`${ENGINE_SRC}/computed-keys.ts`]: [
+        'export const keys = Object["keys"]({});',
+        "export const values = Object[`values`]({});",
+        "export const names = Object['getOwnPropertyNames']({});",
+        'export const order = "a"["localeCompare"]("b");',
+        'export const text = "a"[`toLocaleString`]();',
+        'export const make = (() => undefined)["constructor"];',
+        "export const build = (() => undefined)[`constructor`];\n",
+      ].join("\n"),
+    });
+    const plugin = biomeDiagnostics(output).filter(({ category }) => category === "plugin");
+    expect(exitCode).toBe(1);
+    expect(plugin.filter(({ text }) => text.includes(KEY_ORDER_MESSAGE))).toHaveLength(3);
+    expect(plugin.filter(({ text }) => text.includes(LOCALE_MESSAGE))).toHaveLength(2);
+    expect(plugin.filter(({ text }) => text.includes(CONSTRUCTOR_MESSAGE))).toHaveLength(2);
+    expect(plugin).toHaveLength(7);
+  });
+
+  /** Lints `files`; `checked` proves Biome linted them all instead of skipping them. */
+  function lintSummary(files: Record<string, string>) {
+    const { exitCode, output } = run("biome", files);
+    const checked = Number(/Checked (\d+) files?/.exec(output)?.[1]);
+    return { exitCode, checked, diagnostics: biomeDiagnostics(output) };
+  }
+
+  test("the same sources pass outside src: the controls are scoped to the engine core", () => {
+    const files = sourcesIn(ENGINE_TEST, PURITY_CASES);
+    expect(lintSummary(files)).toEqual({
+      exitCode: 0,
+      checked: Object.keys(files).length,
+      diagnostics: [],
+    });
+  });
+
+  test("engine-style code passes under src: relative imports, integers, ordered loops", () => {
+    const summary = lintSummary({
+      [`${ENGINE_SRC}/sum.ts`]: [
+        'import { double } from "./integers/double.ts";',
+        "",
+        "export function sum(values: readonly number[]): number {",
+        "  let total = 0;",
+        "  for (const value of values) {",
+        "    total += double(value);",
+        "  }",
+        "  return total;",
+        "}",
+        "",
+        // A string that contains `**=` is not the operator.
+        'export const label = { text: "" };',
+        'label.text = "**=";',
+        "",
+        // Calling `Object` members that do not enumerate keys, and declaring a constructor, are fine.
+        "export const frozen = Object.freeze({ total: 0 });",
+        "export class Counter {",
+        "  readonly start: number;",
+        "  constructor(start: number) {",
+        "    this.start = start;",
+        "  }",
+        "}\n",
+      ].join("\n"),
+      [`${ENGINE_SRC}/integers/double.ts`]: "export const double = (x: number): number => x * 2;\n",
+    });
+    expect(summary).toEqual({ exitCode: 0, checked: 2, diagnostics: [] });
+  });
+});
+
+describe("engine compiler settings (packages/engine/tsconfig.json)", () => {
+  /** Host APIs outside ECMAScript: the engine's `lib` and `types` must not declare them. */
+  const HOST_GLOBALS = ["console", "Bun", "process", "TextEncoder", "setTimeout", "crypto"];
+
+  test("reject host globals", () => {
+    const { exitCode, output } = run(
+      "tsc-engine",
+      Object.fromEntries(
+        HOST_GLOBALS.map((name) => [
+          `${ENGINE_SRC}/host-${name}.ts`,
+          `export const ref = ${name};\n`,
+        ]),
+      ),
+    );
+    expect(exitCode).not.toBe(0);
+    // Each fixture fails on its own global, and nothing else fails (no configuration error).
+    const errors = output.match(/error TS\d+: [^\n]*/g) ?? [];
+    expect(errors).toHaveLength(HOST_GLOBALS.length);
+    for (const name of HOST_GLOBALS) {
+      expect(output).toMatch(
+        new RegExp(`host-${name}\\.ts\\(1,20\\): error TS\\d+: Cannot find name '${name}'`),
+      );
+    }
+  });
+
+  test("accept ECMAScript 2024 (String.prototype.isWellFormed)", () => {
+    const es2024 = {
+      [`${ENGINE_SRC}/es2024.ts`]: 'export const wellFormed = "x".isWellFormed();\n',
+    };
+    expect(run("tsc-engine", es2024)).toEqual({
+      exitCode: 0,
+      output: expect.not.stringContaining("error TS"),
+    });
   });
 });

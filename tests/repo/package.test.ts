@@ -1,15 +1,39 @@
 import { describe, expect, test } from "bun:test";
+import { REPO_ROOT, repoFiles } from "./files.ts";
 
 type Manifest = {
   packageManager: string;
+  workspaces: string[];
   scripts: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies: Record<string, string>;
 };
 
+/** The fields this file checks in a workspace package's manifest. */
+type WorkspaceManifest = {
+  scripts?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+
 const manifest = (await Bun.file(
   new URL("../../package.json", import.meta.url),
 ).json()) as Manifest;
+
+/** Repository-relative paths of the files named `name` at the root of a workspace package. */
+function workspaceFiles(name: string): string[] {
+  const files = repoFiles(REPO_ROOT);
+  return manifest.workspaces.flatMap((workspace) => {
+    const glob = new Bun.Glob(`${workspace}/${name}`);
+    return files.filter((path) => glob.match(path));
+  });
+}
+
+const workspaceManifests = await Promise.all(
+  workspaceFiles("package.json").map(async (path) => ({
+    path,
+    manifest: (await Bun.file(`${REPO_ROOT}${path}`).json()) as WorkspaceManifest,
+  })),
+);
 
 /** The commands of a script: the parts separated by `&&`, `||`, `;`, a pipe, `&`, or a newline. */
 function commands(script = ""): string[] {
@@ -42,6 +66,16 @@ function disallowedCommands(script: string, scripts: ReadonlySet<string>): strin
 /** Project scripts joined by `&&`, so the chain stops at the first step that fails. */
 const FAIL_FAST_CHAIN = /^bun run [\w:-]+(?: && bun run [\w:-]+)*$/;
 
+/** The dependencies whose version is not an exact `major.minor.patch` pin (plan §P). */
+function looselyPinned(dependencies: Record<string, string> = {}): string[] {
+  return Object.entries(dependencies)
+    .filter(([, version]) => !/^\d+\.\d+\.\d+$/.test(version))
+    .map(([name, version]) => `${name}@${version}`);
+}
+
+/** One step of the typecheck script: tsc, forced onto Bun, on one project. */
+const TSC_STEP = /^bunx --no-install --bun tsc --noEmit -p (\S+)$/;
+
 describe("script checks", () => {
   const scripts = new Set(["lint", "typecheck"]);
 
@@ -69,6 +103,26 @@ describe("script checks", () => {
       "bun testx",
     ]);
     expect(disallowedCommands("bun run $(echo lint)", scripts)).toEqual(["bun run $(echo lint)"]);
+  });
+
+  test("report every dependency that is not pinned to an exact version", () => {
+    expect(
+      looselyPinned({
+        exact: "1.2.3",
+        caret: "^1.2.3",
+        tilde: "~1.2.3",
+        range: ">=1.0.0",
+        tag: "latest",
+        prerelease: "1.2.3-rc.1",
+      }),
+    ).toEqual([
+      "caret@^1.2.3",
+      "tilde@~1.2.3",
+      "range@>=1.0.0",
+      "tag@latest",
+      "prerelease@1.2.3-rc.1",
+    ]);
+    expect(looselyPinned(undefined)).toEqual([]);
   });
 
   test("accept a chain only when every step must pass", () => {
@@ -113,8 +167,60 @@ describe("package.json", () => {
 
   test("has no runtime dependencies and pins every dev dependency exactly (plan §P)", () => {
     expect(manifest.dependencies).toBeUndefined();
-    const loose = Object.entries(manifest.devDependencies).filter(
-      ([, version]) => !/^\d+\.\d+\.\d+$/.test(version),
+    expect(looselyPinned(manifest.devDependencies)).toEqual([]);
+  });
+
+  test("typecheck runs every workspace's own tsconfig, stopping at the first failure", () => {
+    const script = manifest.scripts.typecheck ?? "";
+    const steps = script.split(" && ");
+    // Any other separator (`;`, `||`, a pipe) would let a failing project pass the check.
+    expect(steps.filter((step) => !TSC_STEP.test(step))).toEqual([]);
+    const projects = steps.map((step) => TSC_STEP.exec(step)?.[1]);
+    expect(projects).toEqual(
+      expect.arrayContaining(["tsconfig.json", ...workspaceFiles("tsconfig.json")]),
+    );
+  });
+});
+
+describe("tsconfig.json", () => {
+  test("the root program typechecks every workspace test file", () => {
+    const result = Bun.spawnSync(
+      ["bunx", "--no-install", "--bun", "tsc", "-p", "tsconfig.json", "--listFilesOnly"],
+      { cwd: REPO_ROOT, timeout: 30_000 },
+    );
+    expect(result.exitCode).toBe(0);
+    const program = new Set(
+      result.stdout
+        .toString()
+        .split("\n")
+        .filter((path) => path.startsWith(REPO_ROOT))
+        .map((path) => path.slice(REPO_ROOT.length)),
+    );
+    const tests = workspaceFiles("test/**/*.ts");
+    // An empty list would make the check pass without checking anything.
+    expect(tests).toContain("packages/engine/test/version.test.ts");
+    expect(tests.filter((path) => !program.has(path))).toEqual([]);
+  });
+});
+
+describe("workspace package manifests", () => {
+  test("include the engine, so the checks below cannot pass on an empty list", () => {
+    expect(workspaceManifests.map(({ path }) => path)).toContain("packages/engine/package.json");
+  });
+
+  test("scripts run only Bun and locally installed tools", () => {
+    const disallowed = workspaceManifests.flatMap(({ path, manifest: { scripts = {} } }) => {
+      const names = new Set(Object.keys(scripts));
+      return Object.values(scripts)
+        .flatMap((script) => disallowedCommands(script, names))
+        .map((command) => `${path}: ${command}`);
+    });
+    expect(disallowed).toEqual([]);
+  });
+
+  test("pin every dev dependency exactly (plan §P)", () => {
+    const loose = workspaceManifests.flatMap(({ path, manifest: { devDependencies } }) =>
+      looselyPinned(devDependencies).map((dependency) => `${path}: ${dependency}`),
     );
     expect(loose).toEqual([]);
   });

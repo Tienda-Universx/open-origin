@@ -144,12 +144,19 @@ the batch that defines the length of a day, an internal law (plan O-13).
 **Determinism rules enforced by tools.** In `packages/engine/src`:
 
 - the type library is ES2024 without host types;
-- Biome denies host and non-deterministic globals, Node modules, `console`, `process`, `eval`,
+- Biome denies host and non-deterministic globals (among them `Reflect` and `JSON`, which
+  enumerate or serialize keys in insertion order), Node modules, `console`, `process`, `eval`,
   `for…in`, and non-relative imports;
-- a GritQL plugin denies `**`, `async`/`await`, locale-dependent methods, and
-  `Object.keys`/`values`/`entries` outside the ordering helper;
-- `Math` is allowed only in the integer helper module, and `Map`/`Set` only in listed modules;
-- a repository test rejects reference directives, `declare global`, and imports that leave `src`.
+- a GritQL plugin denies `**`, `async`/`await`, locale-dependent methods, own-key enumeration
+  (`Object.keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`,
+  `getOwnPropertyDescriptors`) outside the ordering helper, binding or destructuring `Object`,
+  and `.constructor`, which reaches the `Function` constructor;
+- `Math` is allowed only in the integer helper module, `JSON` only in the canonical encoder, and
+  `Map`/`Set` only in listed modules; each exception is a reviewed override in `biome.json`;
+- a repository test rejects reference directives, every `declare` declaration (a local
+  `declare const Bun` would bypass both the type library and the global rules), declaration
+  files, imports that leave `src`, Biome suppression comments, and `@ts-ignore`,
+  `@ts-expect-error`, or `@ts-nocheck`.
 
 Each rule has a fixture that proves it rejects.
 
