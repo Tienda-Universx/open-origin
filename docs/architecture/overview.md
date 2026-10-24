@@ -134,7 +134,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `packages/agents/` | T4 | Policies, memory, prompts, provenance |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
-| `tests/` | T6 | End-to-end: synchronization, recovery, observer invariance. Since T1, `tests/repo/` holds the repository checks: ADR format (`adr.ts`), shared Markdown line filter (`markdown.ts`), git file listing (`files.ts`), invisible and bidirectional character scan (`hygiene.ts`), CI workflow invariants (`ci.test.ts`), relative links (`docs.ts`), and verbatim-document hashes (`docs.test.ts`) |
+| `tests/` | T6 | End-to-end: synchronization, recovery, observer invariance. Since T1, `tests/repo/` holds the repository checks: ADR format (`adr.ts`), shared Markdown line filter (`markdown.ts`), git file listing (`files.ts`), invisible and bidirectional character scan (`hygiene.ts`), CI workflow invariants (`ci.test.ts`), `package.json` invariants (`package.test.ts`), lint rules that must fire (`lint.test.ts`), relative links (`docs.ts`), and verbatim-document hashes (`docs.test.ts`) |
 | `docs/` | T1 | Vision, plan, tracker, ADRs, architecture; determinism spec in T2, persistence spec in T7 |
 | `.github/workflows/ci.yml` | T1 | CI |
 | `docker-compose.yml` | T7 | Local Postgres |
@@ -157,6 +157,8 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0011](../decisions/0011-language-of-artifacts.md) | Language of artifacts |
 | [0012](../decisions/0012-branching-commits-and-pull-requests.md) | Branching, commits, and pull requests |
 | [0013](../decisions/0013-defer-hosting-v0-1-runs-locally.md) | Hosting deferred; v0.1 runs locally only |
+| [0014](../decisions/0014-keep-a-single-repository.md) | Single repository for the backend and the interfaces |
+| [0015](../decisions/0015-automated-quality-gates.md) | Automated quality gates with Biome and oxlint |
 
 ## Related
 
