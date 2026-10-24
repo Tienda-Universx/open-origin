@@ -148,7 +148,8 @@ dependency control; critical review of every change.
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `build:`, `ci:`, `chore:`), small and
   descriptive. Commit messages carry no AI attribution trailers (such as `Co-Authored-By`).
 - Pull requests are merged with a merge commit (no squash, no rebase-merge), parent first in stacked
-  PRs, using GitHub's default merge message (never the PR body).
+  PRs, using GitHub's default merge message (never the PR body); see
+  [ADR 0012](docs/decisions/0012-branching-commits-and-pull-requests.md).
 - Push and open pull requests with a user-authenticated token. In T1, pushes and pull requests made
   with a Codespace's built-in credentials did not start GitHub Actions workflows.
 - Tests and docs ship with the behavior they cover.
