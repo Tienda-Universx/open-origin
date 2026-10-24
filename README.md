@@ -19,7 +19,7 @@ reality.
 
 ## Quickstart
 
-Requirements: [Bun](https://bun.com) 1.4.4 (pinned in `package.json`).
+Requirements: [Bun](https://bun.com), at the version pinned in the `packageManager` field of `package.json`.
 
 ```sh
 bun install
@@ -54,7 +54,7 @@ v0.1). Todavía no hay nada desplegado.
 
 - El motor de simulación es la única fuente de verdad; la IA solo propone.
 - El mundo funciona completo sin IA; los proveedores de IA son opcionales y vienen apagados.
-- Para empezar: `bun install` y `bun run check` (requiere Bun 1.4.4).
+- Para empezar: `bun install` y `bun run check` (requiere la versión de Bun fijada en el campo `packageManager` de `package.json`).
 - La visión original y el plan aprobado están en `docs/vision/` y `docs/roadmap/`.
 
 Licencia: AGPL-3.0.
