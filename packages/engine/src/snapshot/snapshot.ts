@@ -45,15 +45,20 @@ import {
 } from "../world/world.ts";
 import { readSnapshot, SNAPSHOT_SCHEMA_VERSION, type SnapshotV1 } from "./schema.ts";
 
-/** Marks a world while it is encoded: a Proxy in its state must not use it meanwhile. */
-const ENCODING: ActiveStep = {
-  refuse: (api) => {
-    const message =
-      `${api} was called while encodeSnapshot read this world: ` +
-      "no function may use a world while it is encoded";
-    return new EngineError("world_busy", [{ path: "", message }]);
-  },
-};
+/**
+ * Marks a world while `encoder`, encodeSnapshot or snapshotBytes, reads it: a Proxy in its state
+ * must not use it meanwhile.
+ */
+function encoding(encoder: string): ActiveStep {
+  return {
+    refuse: (api) => {
+      const message =
+        `${api} was called while ${encoder} read this world: ` +
+        "no function may use a world while it is encoded";
+      return new EngineError("world_busy", [{ path: "", message }]);
+    },
+  };
+}
 
 /** The chunk sum of a world without chunks. */
 const ZERO: Lanes = [0, 0, 0, 0];
@@ -134,7 +139,7 @@ function snapshotText(state: WorldState): string {
 /** The snapshot text of `world`, for a call of `api`, with the world busy while it is read. */
 function encodeFor(world: World, api: string): string {
   const state = healthyState(world, api);
-  state.active = ENCODING;
+  state.active = encoding(api);
   try {
     return snapshotText(state);
   } finally {
@@ -166,18 +171,20 @@ type Hashed = { readonly global: Digest; readonly chunks: ChunkIndex<ChunkEntry>
 
 /**
  * The digests of `snapshot`, its values checked by the validators of `ruleset`, and every issue
- * at `/world/global/...` and `/world/chunks/<key>/...` reported to `issues`. The digests are taken
- * before the validators run, as createWorld takes them.
+ * at `/world/global/...` and `/world/chunks/<key>/...` reported to `issues`. Every digest is taken
+ * before any validator runs, so a validator that changes a value it is given, or one it kept from
+ * an earlier call, leaves a stale digest that fullChecksum and encodeSnapshot find (ADR 0020,
+ * ownership), as at createWorld and at the commit.
  */
 function validated(snapshot: SnapshotV1, ruleset: CapturedRuleset, issues: IssueList): Hashed {
   const { global, chunks } = snapshot;
   const hashed = { global: globalDigest(global), chunks: new ChunkIndex<ChunkEntry>() };
+  for (const [key, value] of chunks) hashed.chunks.add(key, { value, term: chunkTerm(key, value) });
   // Called without a receiver, so ruleset code cannot reach the captured ruleset through `this`.
   const { validateGlobal, validateChunk } = ruleset;
   runValidator("validateGlobal", "/world/global", () => validateGlobal(global), issues);
   for (const [key, value] of chunks) {
     const path = `/world/chunks${pointer([key])}`;
-    hashed.chunks.add(key, { value, term: chunkTerm(key, value) });
     runValidator("validateChunk", path, () => validateChunk(key, value), issues);
   }
   return hashed;

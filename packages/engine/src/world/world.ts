@@ -58,13 +58,14 @@ export type FaultedStatus = {
 export type WorldStatus = { readonly kind: "ok"; readonly tick: Tick } | FaultedStatus;
 
 /**
- * A step in progress on a world: it reads the commands, then runs the tick. While it runs, every
- * use of the world, read or step, is refused through it, so nothing sees or saves partial state.
+ * What a world is busy with: a step, which reads the commands and then runs the tick, or an
+ * encoding by encodeSnapshot or snapshotBytes. Meanwhile every use of the world, read or step, is
+ * refused through it, so nothing sees or saves partial state.
  */
 export interface ActiveStep {
   /**
-   * The world_busy error for a call of `api` during the step. During the tick it also records a
-   * fault of the tick at the ruleset code that made the call, so that catching it hides nothing.
+   * The world_busy error for a call of `api` while the world is busy. During a tick it also records
+   * a fault of the tick at the ruleset code that made the call, so that catching it hides nothing.
    */
   refuse(api: string): EngineError;
 }
@@ -93,7 +94,10 @@ export type WorldState<
   readonly audit: boolean;
   /** Faulted from the moment a tick fails, and for good (poison). */
   status: { readonly kind: "ok" } | FaultedStatus;
-  /** The step in progress, while step runs, from reading the commands to the end of the tick. */
+  /**
+   * What the world is busy with: the step in progress, from reading the commands to the end of the
+   * tick, or an encoding while it reads the state.
+   */
   active: ActiveStep | undefined;
 };
 
@@ -154,9 +158,10 @@ export function worldState(value: unknown): WorldState {
 }
 
 /**
- * The state of `value`, for a call of `api`, if no step is running on it. Throws
+ * The state of `value`, for a call of `api`, if it is not busy. Throws
  * EngineError("invalid_input") when `value` is not a world, and EngineError("world_busy") during a
- * step, whose partial state nothing may read (ADR 0020, failures).
+ * step, whose partial state nothing may read (ADR 0020, failures), or while it is encoded, which a
+ * Proxy in its state could otherwise change.
  */
 export function idleState(value: unknown, api: string): WorldState {
   const state = worldState(value);
@@ -165,8 +170,7 @@ export function idleState(value: unknown, api: string): WorldState {
 }
 
 /**
- * The state of `value`, for a call of `api`, if no step is running on it and its last tick did
- * not fail. Throws as idleState does, and EngineError("world_faulted") when the world is poisoned:
+ * The state of `value`, for a call of `api`, if it is not busy and its last tick did not fail. Throws as idleState does, and EngineError("world_faulted") when the world is poisoned:
  * a world whose tick failed can no longer be read, hashed, or stepped (ADR 0020, failures).
  */
 export function healthyState(value: unknown, api: string): WorldState {
@@ -195,11 +199,12 @@ export function poison(state: WorldState, fault: EngineError): void {
 /**
  * What `world` is doing, in a fresh record: `{ kind: "ok", tick }`, or, once a tick failed,
  * `{ kind: "faulted", tick, code, issues }`. It is the one function a faulted world answers, and,
- * like every other, it throws EngineError("world_busy") while a step runs on the world: during
- * the tick the kernel is already at the tick being computed, so any answer would report a partial
- * state. Only ruleset code that holds its world, which faults the tick, or a host Proxy among the
- * commands can call it then. step clears the busy mark in a `finally`, so once step returns or
- * throws, worldStatus answers again.
+ * like every other, it throws EngineError("world_busy") while a step runs on the world or it is
+ * encoded: during the tick the kernel is already at the tick being computed, so any answer would
+ * report a partial state. Only ruleset code that holds its world, which faults the tick, a host
+ * Proxy among the commands, or a Proxy in the state while it is encoded can call it then. step and
+ * the encoders clear the busy mark in a `finally`, so once they return or throw, worldStatus
+ * answers again.
  */
 export function worldStatus(world: World): WorldStatus {
   const { kernel, status } = idleState(world, "worldStatus");

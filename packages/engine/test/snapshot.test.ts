@@ -13,8 +13,14 @@ import {
   type World,
   worldStatus,
 } from "../src/index.ts";
+import { worldState } from "../src/world/world.ts";
 import { tallyRuleset, tallyWorld } from "./fixtures/tally-ruleset.ts";
-import { BARRIER_CASES, bypassTick } from "./support/barrier-rulesets.ts";
+import {
+  BARRIER_CASES,
+  bypassTick,
+  STALE_CHUNK,
+  STALE_GLOBAL,
+} from "./support/barrier-rulesets.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 import { type Data, stepRuleset, stepWorld, system, writable } from "./support/step-rulesets.ts";
@@ -85,6 +91,22 @@ describe("encode, decode, encode", () => {
   });
 });
 
+describe("an epoch other than 0", () => {
+  test("round-trips, and a decoded world steps on in it", () => {
+    const world = tallyWorld([11, 12]);
+    step(world, []);
+    // Opening an epoch arrives with T7: here the engine's internals set one, as it will.
+    const state = worldState(world);
+    state.kernel.epoch = 7;
+    state.digests.stateRoot = fullChecksum(world);
+    const text = encodeSnapshot(world);
+    expect(text).toContain(',"epoch":7,');
+    const decoded = decodeSnapshot(text, tallyRuleset());
+    expect(encodeSnapshot(decoded)).toBe(text);
+    expect(step(decoded, [])).toEqual(step(world, []));
+  });
+});
+
 describe("encoding finds writes behind the barrier without audit", () => {
   test.each(BARRIER_CASES)(
     "%s: integrity_violation, poisoned, and no text",
@@ -113,6 +135,32 @@ describe("encoding finds writes behind the barrier without audit", () => {
     },
   );
 
+  test("every stale chunk and the global value are named, at encoding and by audit", () => {
+    const ruleset = stepRuleset([
+      system("sneaky", (ctx) => {
+        for (const key of ["0,0", "1,0"]) (ctx.readChunk(key) as Data).grass = 50;
+        (ctx.readGlobal() as Data).population = 50;
+      }),
+    ]);
+    const issues = [
+      { path: "/chunks/0,0", message: STALE_CHUNK },
+      { path: "/chunks/1,0", message: STALE_CHUNK },
+      { path: "/global", message: STALE_GLOBAL },
+    ];
+    const plain = stepWorld(ruleset);
+    step(plain, []);
+    const encoding = engineErrorOf(() => encodeSnapshot(plain));
+    expect({ code: encoding.code, issues: encoding.issues }).toEqual({
+      code: "integrity_violation",
+      issues,
+    });
+    const audited = engineErrorOf(() => step(stepWorld(ruleset, {}, true), []));
+    expect({ code: audited.code, issues: audited.issues }).toEqual({
+      code: "integrity_violation",
+      issues,
+    });
+  });
+
   test("snapshotBytes runs the same check", () => {
     const [, ruleset, issues] = BARRIER_CASES[0] ?? [];
     if (ruleset === undefined || issues === undefined) throw new Error("no barrier case");
@@ -127,48 +175,53 @@ describe("encoding finds writes behind the barrier without audit", () => {
 });
 
 describe("a world is busy while it is encoded", () => {
-  test("a Proxy in the state whose trap steps the world is refused, and the text is unchanged", () => {
-    let hook: (() => void) | undefined;
-    const world = stepWorld(
-      stepRuleset([
-        system("trapper", (ctx) => {
-          if (ctx.tick !== 1) return;
-          writable(ctx, "0,0").inner = new Proxy<Data>(
-            { a: 1 },
-            {
-              getOwnPropertyDescriptor(target, key) {
-                hook?.();
-                return Reflect.getOwnPropertyDescriptor(target, key);
+  test.each([
+    ["encodeSnapshot", encodeSnapshot],
+    ["snapshotBytes", snapshotBytes],
+  ] as const)(
+    "a Proxy in the state whose trap steps the world during %s is refused",
+    (api, encode) => {
+      let hook: (() => void) | undefined;
+      const world = stepWorld(
+        stepRuleset([
+          system("trapper", (ctx) => {
+            if (ctx.tick !== 1) return;
+            writable(ctx, "0,0").inner = new Proxy<Data>(
+              { a: 1 },
+              {
+                getOwnPropertyDescriptor(target, key) {
+                  hook?.();
+                  return Reflect.getOwnPropertyDescriptor(target, key);
+                },
               },
-            },
-          );
-        }),
-      ]),
-    );
-    step(world, []);
-    const before = encodeSnapshot(world);
-    let inner: unknown;
-    hook = () => {
-      try {
-        step(world, []);
-      } catch (error) {
-        inner = error;
-      }
-    };
-    expect(encodeSnapshot(world)).toBe(before);
-    hook = undefined;
-    expect(inner).toMatchObject({
-      code: "world_busy",
-      issues: [
-        {
-          path: "",
-          message:
-            "step was called while encodeSnapshot read this world: no function may use a world while it is encoded",
-        },
-      ],
-    });
-    expect(worldStatus(world)).toEqual({ kind: "ok", tick: 1 });
-  });
+            );
+          }),
+        ]),
+      );
+      step(world, []);
+      const before = encode(world);
+      let inner: unknown;
+      hook = () => {
+        try {
+          step(world, []);
+        } catch (error) {
+          inner = error;
+        }
+      };
+      expect(encode(world)).toEqual(before);
+      hook = undefined;
+      expect(inner).toMatchObject({
+        code: "world_busy",
+        issues: [
+          {
+            path: "",
+            message: `step was called while ${api} read this world: no function may use a world while it is encoded`,
+          },
+        ],
+      });
+      expect(worldStatus(world)).toEqual({ kind: "ok", tick: 1 });
+    },
+  );
 });
 
 describe("snapshots share nothing with the host", () => {

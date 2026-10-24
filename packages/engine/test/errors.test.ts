@@ -54,6 +54,12 @@ describe("EngineError", () => {
     );
   });
 
+  test("exposes the count of every issue found as issueCount", () => {
+    expect(new EngineError("invalid_value", issues(51)).issueCount).toBe(51);
+    expect(new EngineError("invalid_value", issues(50), { issueCount: 120 }).issueCount).toBe(120);
+    expect(new EngineError("invalid_value", issues(3), { issueCount: 1 }).issueCount).toBe(3);
+  });
+
   test("never counts fewer issues than it was given", () => {
     const error = new EngineError("invalid_value", issues(3), { issueCount: 1 });
     expect(error.message).toBe("invalid_value at /0: problem 0; 3 issues in all");

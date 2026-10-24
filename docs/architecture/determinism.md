@@ -594,7 +594,7 @@ the ruleset's validators, and the state root; step checks that the versions allo
 | `encodeSnapshot(world)` | O(N) | The text, after the integrity check below. The world is busy while it is read, so a Proxy in the state cannot step or read it meanwhile |
 | `snapshotBytes(world)` | O(N) | The UTF-8 bytes of the same text, in a fresh array, which adapters hash with SHA-256 |
 | `decodeSnapshot(text, ruleset, options?)` | O(N) | A new world, after the gates below; `options.audit` as in `createWorld` |
-| `versionDifferences(world)` | O(1) | Each difference between the header and the running versions, in a fresh array |
+| `versionDifferences(world)` | O(1) | Each difference between the header and the running versions, in a fresh array. Plan §4 writes `versionDifferences(world, ruleset)`; the world runs the ruleset it captured, so that ruleset is the one compared and no second argument is taken |
 
 Encoding and decoding cost O(N) for N chunks, so they run at checkpoints and on load, never every
 tick.
@@ -613,17 +613,37 @@ does, and no text is returned. This is how such a write is found when audit is o
 | Gate | Where | Refuses with |
 |---|---|---|
 | Integrity | `encodeSnapshot`, `snapshotBytes` | `integrity_violation`; the world is poisoned and no text is returned |
-| Options | `decodeSnapshot`, first | `invalid_input` at `/options/audit` |
+| Options | `decodeSnapshot`, first, before the text | `invalid_input`: at `/options`, "the options must be a record", for options that are neither undefined nor a record (`null`, a number, a string, an array), and what was thrown for options that throw while read (a revoked Proxy); at `/options/audit` for an `audit` that is not a boolean, or that is an accessor or not enumerable. Other members are ignored, as `createWorld` ignores them |
 | Canonical text | `decodeSnapshot`, with `parseCanonical` | `invalid_snapshot` with the parser's issue: whitespace, reordered keys, a float, or text that is not JSON |
-| Schema version | `decodeSnapshot` | `unsupported_schema`, reported alone: a snapshot of another version may have other members |
-| Schema | `decodeSnapshot` | `invalid_snapshot` with every problem at once, in path order: each missing and each extra member of the snapshot, the header, the world, `rng`, and `config`; versions that are not non-empty strings; a `stateRoot` that is not 32 lowercase hexadecimal digits; `epoch` and `tick` outside the safe integers from 0; `nextEntityId` outside the safe integers from 1; an algorithm other than `ctr-mix32@1`; a seed that is not two u32 words; `simSecondsPerTick` that is not a positive safe integer; and chunk keys that `parseChunkKey` rejects |
+| Schema version | `decodeSnapshot`, before any member is checked | `unsupported_schema`, reported alone: a snapshot of another version may have other members, at the top level too |
+| Schema | `decodeSnapshot` | `invalid_snapshot` with every problem at once, in schema order (below): each missing and each extra member of the snapshot, the header, the world, `rng`, and `config`; versions that are not non-empty strings; a `stateRoot` that is not 32 lowercase hexadecimal digits; `epoch` and `tick` outside the safe integers from 0; `nextEntityId` outside the safe integers from 1; an algorithm other than `ctr-mix32@1`; a seed that is not two u32 words; `simSecondsPerTick` that is not a positive safe integer; and chunk keys that `parseChunkKey` rejects |
 | Ruleset | `decodeSnapshot`, after the schema | `invalid_ruleset`, as `createWorld` reports it |
 | Content | `decodeSnapshot`, last | `invalid_snapshot` with every issue the ruleset's validators return for the global value and each chunk, and a stored `stateRoot` that differs from the recomputed one, at once |
 | Replay | `step`, after the brand, busy, and health guards | `version_mismatch` with every difference between the header and `ENGINE_VERSION` and the ruleset's versions; the world stays healthy and unchanged |
 
+Schema order is the order in which the gate reads the snapshot: the top level, the header,
+`stateRoot`, then the world. At each record come its missing members, in the schema's order, then
+its extra members, in canonical key order, then the problems of its own members, in the schema's
+order. The world's members are `epoch`, `tick`, `nextEntityId`, `rng`, `config`, `global`, and
+`chunks`, each chunk key in canonical order. A world missing `tick` and `config` and with an
+extra member `aaa` reports `/world/tick`, `/world/config`, then `/world/aaa`.
+
 A decoded world keeps the versions its header records, even when they differ from the running
 engine or ruleset: it loads, but it cannot be replayed. Worlds that `createWorld` makes always
-match.
+match. The replay gate runs before step reads a command, so no host code among the commands runs.
+
+The validators run after every digest is taken, as at `createWorld` and at the commit: a
+validator that changes a value it is given, at decoding, leaves a stale digest that
+`fullChecksum` and `encodeSnapshot` find.
+
+### Recovery
+
+A world poisoned at tick N recovers from the last snapshot taken before N:
+
+- Decoded with a corrected ruleset that keeps the same version labels, it continues exactly as
+  the corrected ruleset runs from tick 0, provided the fault changed no state before N.
+- Decoded with a corrected ruleset that bumps its version, it loads, and `step` refuses it with
+  `version_mismatch`: replay requires equal versions, by design until T7 opens epochs.
 
 ### What is promised, and what is not
 
@@ -638,19 +658,28 @@ match.
 
 - the version 1 text of a small world, written by value; `snapshotBytes` as the UTF-8 of that text;
 - the round trip of 40 fuzzed tally worlds, byte for byte, with equal roots and full checksums;
-- every schema rejection above, missing and extra members at every level reported at once, and
-  schema versions 0 and 2 reported alone;
+- every schema rejection above, missing and extra members at every level reported at once in
+  schema order, an uppercase `stateRoot`, and schema versions 0 and 2 reported alone, version 2
+  with a member added or removed at the top level included;
+- options checked before the text, every kind of options that is not a record, and the true count
+  of more than 50 parser issues;
 - a tampered state root, a changed value under an unchanged root, and validator issues reported
-  with the root in one error;
+  with the root in one error; validators that change what they check at decoding, found at
+  encoding;
+- an epoch other than 0, round-tripped and stepped;
 - the replay gate for each version field and for all four at once, and for a ruleset with other
-  versions, each leaving the world unchanged;
+  versions, each leaving the world unchanged; and that it runs before any command is read;
+- recovery after a fault with a corrected ruleset, with the same version labels and with a bumped
+  version;
 - resumption at ticks 0, 1, 2, 37, 299, 300, and 999 of the golden run: every later checksum and
   the final text equal the uninterrupted run's (in memory; a child-process resume arrives with the
   next pull request);
 - each write behind the barrier, without audit, found by `encodeSnapshot`, which poisons the world
-  and returns no text;
+  and returns no text; several stale chunks and the global value, each named, at encoding and by
+  audit;
 - a busy world: `encodeSnapshot`, `snapshotBytes`, and `versionDifferences` from a system and a
-  handler, and a Proxy in the state whose trap steps the world while it is encoded;
+  handler, and a Proxy in the state whose trap steps the world while `encodeSnapshot` or
+  `snapshotBytes` reads it, refused with a message that names that function;
 - the frozen fixture (`packages/engine/test/fixtures/snapshot-v1.canonical.json`, the golden run at
   tick 37): its pinned SHA-256, a byte-identical re-encoding, and the pinned checksums of ticks 38
   to 40. `biome.json` excludes exactly its path from formatting, which

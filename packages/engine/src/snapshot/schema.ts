@@ -5,10 +5,13 @@
  *   brainVersion }, stateRoot, world: { epoch, tick, nextEntityId, rng: { algorithm:
  *   "ctr-mix32@1", seed }, config: { simSecondsPerTick }, global, chunks } }
  *
- * readSnapshot parses canonical text only, then checks the schema version first: a snapshot of
- * another version may have other members, so its version is reported alone, as
- * unsupported_schema. Every other problem is reported in one invalid_snapshot: every missing and
- * every extra member, at every level, and every member out of its bounds, each at its path.
+ * readSnapshot parses canonical text only, then checks the schema version first, before any
+ * member: a snapshot of another version may have other members, so its version is reported alone,
+ * as unsupported_schema. Every other problem is reported in one invalid_snapshot, each at its
+ * path, in schema order: the top level, the header, the state root, then the world. At each
+ * record come its missing members, in the schema's order, then its extra members, in canonical
+ * key order, then the problems of its own members, in the schema's order; the world's members are
+ * epoch, tick, nextEntityId, rng, config, global, and chunks, each chunk key in canonical order.
  */
 import { parseCanonical } from "../canonical/encode.ts";
 import { sortedOwnKeys } from "../canonical/order.ts";
@@ -261,22 +264,23 @@ function parseSnapshot(text: string): CanonicalValue {
     return parseCanonical(text);
   } catch (error) {
     if (!EngineError.isEngineError(error)) throw error;
-    throw new EngineError("invalid_snapshot", error.issues, { cause: error });
+    const { issues, issueCount } = error;
+    throw new EngineError("invalid_snapshot", issues, { issueCount, cause: error });
   }
 }
 
 /**
  * The version 1 snapshot that `text` writes. Throws EngineError("invalid_snapshot") for text that
- * is not canonical, with the parser's issues, and for every problem of the schema at once, in the
- * order of their paths; EngineError("unsupported_schema") when the snapshot names another schema
- * version.
+ * is not canonical, with the parser's issues and their count, and for every problem of the schema
+ * at once, in schema order; EngineError("unsupported_schema") when the snapshot names another
+ * schema version.
  */
 export function readSnapshot(text: string): SnapshotV1 {
   const snapshot = parseSnapshot(text);
   expectSupportedVersion(snapshot);
   const issues = new IssueList();
   const top = exactMembers(snapshot, SHAPES.top, issues);
-  // Members are read in the order of their paths, so the issues come in that order too.
+  // Members are read in schema order, so the issues come in that order too.
   const result: SnapshotV1 = {
     header: readHeader(member(top, "header"), issues),
     stateRoot: readStateRoot(member(top, "stateRoot"), issues),

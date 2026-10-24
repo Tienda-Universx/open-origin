@@ -84,6 +84,8 @@ function summarize(code: EngineErrorCode, kept: readonly Issue[], count: number)
 export class EngineError extends Error {
   readonly code: EngineErrorCode;
   readonly issues: readonly Issue[];
+  /** How many issues were found, those dropped beyond MAX_ISSUES included. */
+  readonly issueCount: number;
   readonly #brand = true;
 
   /**
@@ -105,6 +107,7 @@ export class EngineError extends Error {
     this.name = "EngineError";
     this.code = code;
     this.issues = kept;
+    this.issueCount = count;
   }
 }
 

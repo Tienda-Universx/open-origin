@@ -4,12 +4,15 @@ import {
   decodeSnapshot,
   type EngineErrorCode,
   encodeSnapshot,
+  fullChecksum,
   type Issue,
   stateRoot,
   step,
   worldStatus,
 } from "../src/index.ts";
+import { STALE_CHUNK, STALE_GLOBAL } from "./support/barrier-rulesets.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
+import { revokedProxy } from "./support/revoked.ts";
 import {
   type Data,
   type StepRuleset,
@@ -74,6 +77,17 @@ describe("the schema version", () => {
     });
   });
 
+  test.each([
+    ["an extra member at the top", (snapshot: Tree) => (snapshot.regions = 1)],
+    ["a missing member at the top", (snapshot: Tree) => delete snapshot.stateRoot],
+  ])("version 2 with %s is unsupported_schema: the version is gated first", (_name, change) => {
+    const text = changed((snapshot) => {
+      header(snapshot).snapshotSchemaVersion = 2;
+      change(snapshot);
+    });
+    expect(rejection(text).code).toBe("unsupported_schema");
+  });
+
   test("a version that is not a number is unsupported too", () => {
     const text = changed((snapshot) => {
       header(snapshot).snapshotSchemaVersion = "1";
@@ -126,6 +140,20 @@ describe("the schema gate", () => {
     );
   });
 
+  test("reports in schema order: at each record, missing members first, then extra ones", () => {
+    const text = changed((snapshot) => {
+      const data = worldOf(snapshot);
+      delete data.tick;
+      delete data.config;
+      data.aaa = 1;
+    });
+    expect(rejection(text).issues).toEqual([
+      { path: "/world/tick", message: MISSING },
+      { path: "/world/config", message: MISSING },
+      { path: "/world/aaa", message: EXTRA },
+    ]);
+  });
+
   test("a snapshot that is not a record, and members that are missing at the top", () => {
     expect(rejection("[]")).toEqual(
       invalid([
@@ -163,6 +191,18 @@ describe("the schema gate", () => {
       "a state root that is not a digest",
       (snapshot) => {
         snapshot.stateRoot = ROOT.slice(1);
+      },
+      [
+        {
+          path: "/stateRoot",
+          message: "the state root must be a digest: 32 lowercase hexadecimal digits",
+        },
+      ],
+    ],
+    [
+      "a state root in uppercase",
+      (snapshot) => {
+        snapshot.stateRoot = "A".repeat(32);
       },
       [
         {
@@ -309,6 +349,16 @@ describe("only canonical text is decoded", () => {
     );
   });
 
+  test("keeps the true count of the parser's issues beyond the 50 it keeps", () => {
+    const floats = `[${Array.from({ length: 60 }, () => "0.5").join(",")}]`;
+    const text = TEXT.replace('"global":{"population":0}', `"global":${floats}`);
+    const error = engineErrorOf(() => decodeSnapshot(text, stepRuleset()));
+    expect(error.code).toBe("invalid_snapshot");
+    expect(error.issues).toHaveLength(50);
+    expect(error.issueCount).toBe(60);
+    expect(error.message).toEndWith("; 60 issues in all, 10 dropped beyond the first 50");
+  });
+
   test("rejects text that is not JSON, and a value that is not text", () => {
     expect(rejection("{").code).toBe("invalid_snapshot");
     expect(rejection(7)).toEqual(
@@ -363,6 +413,35 @@ describe("after the schema, the ruleset and the state root", () => {
     );
   });
 
+  test("validators that change what they check are detected, not prevented, as in createWorld", () => {
+    let kept: Data | undefined;
+    const meddling: StepRuleset = {
+      ...stepRuleset(),
+      validateGlobal: (value) => {
+        (value as Data).population = 5;
+        return [];
+      },
+      validateChunk: (key, value) => {
+        if (key === "0,0") kept = value as Data;
+        else if (kept !== undefined) kept.grass = 99;
+        (value as Data).checked = true;
+        return [];
+      },
+    };
+    const decoded = decodeSnapshot(TEXT, meddling);
+    expect(stateRoot(decoded)).toBe(ROOT);
+    expect(fullChecksum(decoded)).not.toBe(ROOT);
+    const error = engineErrorOf(() => encodeSnapshot(decoded));
+    expect({ code: error.code, issues: error.issues }).toEqual({
+      code: "integrity_violation",
+      issues: [
+        { path: "/chunks/0,0", message: STALE_CHUNK },
+        { path: "/chunks/1,0", message: STALE_CHUNK },
+        { path: "/global", message: STALE_GLOBAL },
+      ],
+    });
+  });
+
   test("a broken ruleset is invalid_ruleset, after the schema", () => {
     const broken = { ...stepRuleset(), validateChunk: 1 } as unknown as StepRuleset;
     expect(rejection(TEXT, broken).code).toBe("invalid_ruleset");
@@ -374,6 +453,53 @@ describe("after the schema, the ruleset and the state root", () => {
 });
 
 describe("options", () => {
+  const NOT_RECORD = "the options must be a record";
+  const options = (value: unknown) => {
+    const error = engineErrorOf(() =>
+      decodeSnapshot(TEXT, stepRuleset(), value as { audit: boolean }),
+    );
+    return { code: error.code, issues: error.issues };
+  };
+
+  test.each([
+    ["null", null],
+    ["a number", 1],
+    ["a string", "audit"],
+    ["an array", [true]],
+  ])("%s is not a record: invalid_input at /options", (_name, value) => {
+    expect(options(value)).toEqual({
+      code: "invalid_input",
+      issues: [{ path: "/options", message: NOT_RECORD }],
+    });
+  });
+
+  test("options that throw while read, or an accessor audit, are invalid_input", () => {
+    const revoked = options(revokedProxy());
+    expect(revoked.code).toBe("invalid_input");
+    expect(revoked.issues.map(({ path }) => path)).toEqual(["/options"]);
+    expect(revoked.issues[0]?.message).toStartWith("the object threw while being read: TypeError");
+    expect(
+      options({
+        get audit() {
+          return true;
+        },
+      }),
+    ).toEqual({
+      code: "invalid_input",
+      issues: [
+        {
+          path: "/options/audit",
+          message: "the property is an accessor: only data properties are read",
+        },
+      ],
+    });
+  });
+
+  test("are checked before the text", () => {
+    const error = engineErrorOf(() => decodeSnapshot("{", stepRuleset(), null as never));
+    expect(error.code).toBe("invalid_input");
+  });
+
   test("audit must be a boolean", () => {
     const error = engineErrorOf(() =>
       decodeSnapshot(TEXT, stepRuleset(), { audit: 1 } as unknown as { audit: boolean }),

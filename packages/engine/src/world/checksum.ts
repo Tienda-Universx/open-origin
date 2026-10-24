@@ -119,7 +119,7 @@ export function relocated(error: unknown, tagged: readonly unknown[], valuePath:
     path: relocatePath(path, tagged, valuePath),
     message,
   }));
-  return new EngineError(error.code, issues, { cause: error });
+  return new EngineError(error.code, issues, { issueCount: error.issueCount, cause: error });
 }
 
 /** `hash(tagged)`, where the value is the last part of `tagged` and lives at `valuePath`. */

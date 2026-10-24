@@ -14,7 +14,7 @@ import { tallyCommands, tallyRuleset } from "./fixtures/tally-ruleset.ts";
  * `fixtures/snapshot-v1.canonical.json` is the snapshot of the golden tally run (seed
  * [0x5eed, 0x7a11], the commands of tallyCommands) at tick 37, written by encodeSnapshot on
  * 2026-10-24 with ENGINE_VERSION 0.1.0. biome.json excludes exactly this file from formatting
- * (tests/repo/engine-lint.test.ts proves it), and its SHA-256 is pinned here.
+ * (tests/repo/format-exclusions.test.ts proves it), and its SHA-256 is pinned here.
  *
  * Every future engine must keep loading this fixture: directly while version 1 is the current
  * schema, and through the `v1 -> v2` migration once version 2 exists. Never regenerate or edit it;
