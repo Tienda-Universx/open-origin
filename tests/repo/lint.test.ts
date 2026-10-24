@@ -34,15 +34,16 @@ function run(tool: Tool, files: Record<string, string>): LintResult {
       ? ["biome", "lint", `--config-path=${scratch}`, ...paths]
       : ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
   // Run from the repository root so bunx finds the locally installed tools.
-  // A hung tool fails the test with a diagnosis instead of blocking the run (Bun's per-test
-  // timeout cannot fire while spawnSync blocks the event loop).
+  // A hung tool is killed after 30 seconds and reported as timed out, instead of blocking the run
+  // (Bun's per-test timeout cannot fire while spawnSync blocks the event loop).
   const result = Bun.spawnSync(["bunx", "--no-install", "--bun", ...args], {
     cwd: REPO_ROOT,
     timeout: 30_000,
   });
+  const timedOut = result.exitedDueToTimeout ? `${tool} timed out after 30 seconds\n` : "";
   return {
     exitCode: result.exitCode,
-    output: `${result.stdout.toString()}${result.stderr.toString()}`,
+    output: `${timedOut}${result.stdout.toString()}${result.stderr.toString()}`,
   };
 }
 
@@ -99,6 +100,15 @@ describe("automated quality controls", () => {
     expect(exitCode).toBe(1);
     expect(output.match(/eslint\(complexity\)/g)).toHaveLength(1);
     expect(output).toContain("eslint(max-depth)");
+  });
+
+  test("limits sit exactly where configured: 4 parameters and the 50-line function pass", () => {
+    const four =
+      "export function q(a: number, b: number, c: number, d: number): number {\n  return a + b + c + d;\n}\n";
+    expect(run("biome", { "four-params.ts": four }).exitCode).toBe(0);
+    // The body is the 48 statements plus `let` and `return`: exactly 50 lines.
+    expect(run("biome", { "at-limit.ts": longFunction(48) }).exitCode).toBe(0);
+    expect(run("biome", { "over-limit.ts": longFunction(49) }).exitCode).toBe(1);
   });
 
   test("the 50-line limit is lifted for test files only", () => {
