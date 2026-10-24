@@ -15,9 +15,9 @@
   ],
   "scripts": {
     "check": "bun run typecheck && bun run lint && bun run test",
-    "typecheck": "bunx --bun tsc --noEmit -p tsconfig.json",
-    "lint": "bunx --bun biome check .",
-    "format": "bunx --bun biome check --write .",
+    "typecheck": "bunx --no-install --bun tsc --noEmit -p tsconfig.json",
+    "lint": "bunx --no-install --bun biome check .",
+    "format": "bunx --no-install --bun biome check --write .",
     "test": "bun test"
   },
   "devDependencies": {
