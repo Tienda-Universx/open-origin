@@ -89,6 +89,29 @@ describe("IssueList", () => {
     expect(list.count).toBe(120);
   });
 
+  test("toError returns, without throwing, the kept issues, the full count, and the first cause", () => {
+    const list = new IssueList();
+    const cause = new Error("first cause");
+    list.report("/a", "no cause");
+    for (const { path, message } of issues(55)) list.report(path, message, cause);
+    list.report("/b", "a later cause", new Error("later"));
+    const error = list.toError("invalid_input");
+    expect(error).toBeInstanceOf(EngineError);
+    expect(error.code).toBe("invalid_input");
+    expect(error.issues).toEqual([{ path: "/a", message: "no cause" }, ...issues(49)]);
+    expect(error.message).toBe(
+      "invalid_input at /a: no cause; 57 issues in all, 7 dropped beyond the first 50",
+    );
+    expect(error.cause).toBe(cause);
+  });
+
+  test("toError of an empty list is an error without issues or a cause", () => {
+    const error = new IssueList().toError("invalid_value");
+    expect(error.issues).toEqual([]);
+    expect(error.message).toBe("invalid_value");
+    expect(Object.hasOwn(error, "cause")).toBe(false);
+  });
+
   test("throwIfAny does nothing while the list is empty", () => {
     expect(() => new IssueList().throwIfAny("invalid_value")).not.toThrow();
   });

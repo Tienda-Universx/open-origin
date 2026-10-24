@@ -57,6 +57,11 @@ type Claims = {
 /** A system or a command handler, and the stream ids it has claimed. */
 type Owner = { readonly label: string; readonly ids: { [name: string]: number } };
 
+/**
+ * The version names in canonical order (UTF-16 code units), not in the order the docs list them:
+ * readVersions reports the missing ones in this order, so their paths come sorted, as the paths
+ * of a record's keys do.
+ */
 const VERSION_NAMES: readonly (keyof RulesetVersions)[] = ["brain", "generator", "ruleset"];
 
 /**
@@ -261,7 +266,7 @@ function readCommands(
 export function captureRuleset(ruleset: unknown): CapturedRuleset {
   const issues = new IssueList();
   if (!expectRecord(ruleset, "", "the ruleset must be a record", issues)) {
-    throw issues.error("invalid_ruleset");
+    throw issues.toError("invalid_ruleset");
   }
   const source: object = ruleset;
   const claims: Claims = { issues, owners: Object.create(null), names: Object.create(null) };

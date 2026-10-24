@@ -44,6 +44,26 @@ describe("mix32", () => {
     ]);
   });
 
+  test("describes a word that is not a number by its type alone, without running its code", () => {
+    const hostile = {
+      valueOf: () => {
+        throw new Error("valueOf ran");
+      },
+      toString: () => {
+        throw new Error("toString ran");
+      },
+    };
+    // Deliberately ill-typed, as a JavaScript caller can be.
+    const key = ["1", hostile, true, 1n] as unknown as readonly number[];
+    const notU32 = (type: string) => `a value of type ${type} is not an integer in [0, 4294967295]`;
+    expect(engineErrorOf(() => mix32([1, 2], 0, key, 0)).issues).toEqual([
+      { path: "/key/0", message: notU32("string") },
+      { path: "/key/1", message: notU32("object") },
+      { path: "/key/2", message: notU32("boolean") },
+      { path: "/key/3", message: notU32("bigint") },
+    ]);
+  });
+
   test("rejects a seed that is not a pair and a key that is not an array", () => {
     // Deliberately ill-typed, as a JavaScript caller can be.
     const pair = [1, 2, 3] as unknown as Seed;

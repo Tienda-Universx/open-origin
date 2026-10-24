@@ -4,11 +4,12 @@
  */
 import { copyCanonicalReported } from "../canonical/copy.ts";
 import { type CanonicalValue, describeThrown, pointer } from "../canonical/value.ts";
+import type { Digest } from "../digest/digest.ts";
 import { type Issue, IssueList } from "../errors.ts";
 import { readSeed, type Seed } from "../rng/mix32.ts";
 import { secondsPerTickProblem } from "../time/tick.ts";
 import { ENGINE_VERSION } from "../version.ts";
-import { chunkTerm, digestCache } from "./checksum.ts";
+import { chunkTerm, digestCache, globalDigest } from "./checksum.ts";
 import { type ChunkKey, readChunkKey } from "./chunk.ts";
 import { ChunkIndex } from "./chunk-index.ts";
 import type { WorldInit, WorldOptions } from "./contracts.ts";
@@ -32,21 +33,28 @@ function copyMember(init: object, key: string, issues: IssueList): CanonicalValu
   return copyAt(readMember(init, key, path, issues), path, issues);
 }
 
-function readWorldSeed(init: object, issues: IssueList): Seed {
+/** The seed, two u32 words; undefined after an issue. */
+function readWorldSeed(init: object, issues: IssueList): Seed | undefined {
   const copy = copyMember(init, "seed", issues);
-  if (copy === undefined) return [0, 0];
+  if (copy === undefined) return undefined;
   const problems: Issue[] = [];
   const seed = readSeed(copy, problems);
   for (const { path, message } of problems) issues.report(`/init${path}`, message);
-  return seed;
+  return problems.length === 0 ? seed : undefined;
 }
 
-function readSecondsPerTick(init: object, issues: IssueList): number {
+/** The seconds per tick, a positive safe integer; undefined after an issue. */
+function readSecondsPerTick(init: object, issues: IssueList): number | undefined {
   const path = "/init/simSecondsPerTick";
   const value = readMember(init, "simSecondsPerTick", path, issues);
-  const problem = value === UNREAD ? undefined : secondsPerTickProblem(value);
-  if (problem !== undefined) issues.report(path, problem);
-  return typeof value === "number" ? value : 0;
+  if (value === UNREAD) return undefined;
+  const problem = secondsPerTickProblem(value);
+  if (problem !== undefined) {
+    issues.report(path, problem);
+    return undefined;
+  }
+  // secondsPerTickProblem found no problem, so the value is a positive safe integer.
+  return value as number;
 }
 
 /** Whether `issue`, part of a canonical copy, is a record { path, message } with a JSON Pointer. */
@@ -83,24 +91,39 @@ function runValidator(
   for (const issue of found) issues.report(`${path}${issue.path}`, issue.message);
 }
 
-function readGlobal(init: object, ruleset: CapturedRuleset, issues: IssueList): CanonicalValue {
-  const global = copyMember(init, "global", issues);
-  if (global === undefined) return false;
+/** A global value as createWorld keeps it: the copy, and its digest. */
+type HashedGlobal = { readonly value: CanonicalValue; readonly digest: Digest };
+
+/**
+ * The global value and its digest, or undefined after an issue. The digest is taken before
+ * validateGlobal runs, so a validator that changes the value it is given, or keeps it and changes
+ * it later, leaves a cache that fullChecksum disagrees with: detected, as every write that
+ * bypasses the barrier is, not prevented (ADR 0020, ownership).
+ */
+function readGlobal(
+  init: object,
+  ruleset: CapturedRuleset,
+  issues: IssueList,
+): HashedGlobal | undefined {
+  const value = copyMember(init, "global", issues);
+  if (value === undefined) return undefined;
+  const hashed = { value, digest: globalDigest(value) };
   // Called without a receiver, so ruleset code cannot reach the captured ruleset through `this`.
   const { validateGlobal } = ruleset;
-  runValidator("validateGlobal", "/init/global", () => validateGlobal(global), issues);
-  return global;
+  runValidator("validateGlobal", "/init/global", () => validateGlobal(value), issues);
+  return hashed;
 }
 
 /**
  * The chunks, by key in canonical order: each key checked with readChunkKey, each value copied on
  * its own and then checked by validateChunk, so that every problem of every chunk is reported.
+ * Each chunk's term is taken before validateChunk runs, as readGlobal takes the global digest.
  */
 function readChunks(
   init: object,
   ruleset: CapturedRuleset,
   issues: IssueList,
-): [ChunkKey, CanonicalValue][] {
+): [ChunkKey, ChunkEntry][] {
   const value = readMember(init, "chunks", "/init/chunks", issues);
   const notRecord = "the chunks must be a record of chunks by chunk key";
   const read = readRecordKeys(value, "/init/chunks", notRecord, issues);
@@ -108,15 +131,16 @@ function readChunks(
   const { record, keys } = read;
   // Called without a receiver, so ruleset code cannot reach the captured ruleset through `this`.
   const { validateChunk } = ruleset;
-  const chunks: [ChunkKey, CanonicalValue][] = [];
+  const chunks: [ChunkKey, ChunkEntry][] = [];
   for (const key of keys) {
     const path = `/init/chunks${pointer([key])}`;
     const { problems } = readChunkKey(key);
     for (const message of problems ?? []) issues.report(path, message);
     const chunk = copyAt(readMember(record, key, path, issues), path, issues);
     if (problems !== undefined || chunk === undefined) continue;
+    const entry: ChunkEntry = { value: chunk, term: chunkTerm(key, chunk) };
     runValidator("validateChunk", path, () => validateChunk(key, chunk), issues);
-    chunks.push([key, chunk]);
+    chunks.push([key, entry]);
   }
   return chunks;
 }
@@ -139,6 +163,35 @@ function rulesetOf(init: object): CapturedRuleset {
   return captureRuleset(ruleset);
 }
 
+/** Everything createWorld reads from `{ init, options }`, validated and copied. */
+type Definition = {
+  readonly ruleset: CapturedRuleset;
+  readonly seed: Seed;
+  readonly simSecondsPerTick: number;
+  readonly global: HashedGlobal;
+  readonly chunks: readonly [ChunkKey, ChunkEntry][];
+  readonly audit: boolean;
+};
+
+/** Reads `init` and `options` in the order createWorld documents, and throws on any issue. */
+function readDefinition(init: unknown, options: unknown): Definition {
+  const issues = new IssueList();
+  if (!expectRecord(init, "/init", "the world definition must be a record", issues)) {
+    throw issues.toError("invalid_input");
+  }
+  const ruleset = rulesetOf(init);
+  const seed = readWorldSeed(init, issues);
+  const simSecondsPerTick = readSecondsPerTick(init, issues);
+  const global = readGlobal(init, ruleset, issues);
+  const chunks = readChunks(init, ruleset, issues);
+  const audit = readAudit(options, issues);
+  // Each reader returns undefined only after an issue; the checks also narrow the types.
+  if (issues.count > 0 || seed === undefined || simSecondsPerTick === undefined || !global) {
+    throw issues.toError("invalid_input");
+  }
+  return { ruleset, seed, simSecondsPerTick, global, chunks, audit };
+}
+
 /**
  * A new world at tick 0, epoch 0, with the next entity id 1, from the definition `init`. Issue
  * paths point into `{ init, options }`, except those of invalid_ruleset, which point into the
@@ -155,23 +208,24 @@ function rulesetOf(init: object): CapturedRuleset {
  *    keyed by chunk key (parseChunkKey), are validated and copied as copyCanonical does, then
  *    checked by the ruleset's validators; `options` is a record whose `audit` is a boolean.
  *
- * Each member of `init` and `options` is read once, through its own descriptor.
+ * Each member of `init` and `options` is read once, through its own descriptor. The validators
+ * receive the values the world keeps, not copies of them, as ruleset code does during a tick: a
+ * validator must not change or keep what it is given. The digests are taken before the
+ * validators run, so a validator that does is detected by fullChecksum, as any write that
+ * bypasses the barrier is, but not prevented (ADR 0020, ownership).
  */
 export function createWorld<G extends CanonicalValue, C extends CanonicalValue>(
   init: WorldInit<G, C>,
   options?: WorldOptions,
 ): World<G, C> {
-  const issues = new IssueList();
-  if (!expectRecord(init, "/init", "the world definition must be a record", issues)) {
-    throw issues.error("invalid_input");
-  }
-  const ruleset = rulesetOf(init);
-  const seed = readWorldSeed(init, issues);
-  const simSecondsPerTick = readSecondsPerTick(init, issues);
-  const global = readGlobal(init, ruleset, issues);
-  const chunkList = readChunks(init, ruleset, issues);
-  const audit = readAudit(options, issues);
-  issues.throwIfAny("invalid_input");
+  const {
+    ruleset,
+    seed,
+    simSecondsPerTick,
+    global,
+    chunks: entries,
+    audit,
+  } = readDefinition(init, options);
   const kernel: Kernel = {
     epoch: 0,
     tick: 0,
@@ -180,7 +234,7 @@ export function createWorld<G extends CanonicalValue, C extends CanonicalValue>(
     config: { simSecondsPerTick },
   };
   const chunks = new ChunkIndex<ChunkEntry>();
-  for (const [key, value] of chunkList) chunks.add(key, { value, term: chunkTerm(key, value) });
+  for (const [key, entry] of entries) chunks.add(key, entry);
   const { versions } = ruleset;
   const state: WorldState = {
     header: {
@@ -190,10 +244,10 @@ export function createWorld<G extends CanonicalValue, C extends CanonicalValue>(
       brainVersion: versions.brain,
     },
     kernel,
-    global,
+    global: global.value,
     chunks,
     ruleset,
-    digests: digestCache(kernel, global, chunks),
+    digests: digestCache(kernel, global.digest, chunks),
     audit,
     status: { kind: "ok" },
   };

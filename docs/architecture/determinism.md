@@ -238,8 +238,11 @@ reading it, and its state root; `step` arrives in the next pull request. Code:
 ### Chunk keys
 
 A chunk key is `"x,y"`, both coordinates safe integers in canonical decimal, as a template literal
-writes them: `chunkKey({ x: -1, y: 0 })` is `"-1,0"`. `chunkKey` reads `x` and `y` as own data
-properties, as every host object is read (below). `parseChunkKey` accepts a part only when
+writes them: `chunkKey({ x: -1, y: 0 })` is `"-1,0"`. `chunkKey` takes any object that is not an
+array and reads only its `x` and `y`, each once, as own, enumerable data properties, as every host
+object is read (below): an inherited coordinate is read as missing, an accessor never runs and is
+an issue, a property that is not enumerable is an issue, and an object that throws while read is
+one issue at `""`. `parseChunkKey` accepts a part only when
 writing its number back gives the same text, so it rejects `-0`, `+1`, `01`, spaces, `1e3`,
 `0x10`, `1.0`, empty parts, and values beyond the safe range. A key that is not two parts joined
 by one comma is rejected as a whole. Both throw `invalid_value` with every problem.
@@ -273,6 +276,14 @@ value as the error's `cause`. Issue paths are JSON Pointers, so a key with `/` o
 A validator must return a list of `{ path, message }` records whose paths are JSON Pointers. Each
 issue it returns is reported under the path of its value. A validator that throws or returns
 anything else is one issue at that path.
+
+Validators receive the values the world keeps, not copies, as ruleset code does during a tick: a
+validator must not change or keep what it is given. Copying each value for its validator would cost
+a deep copy per dirty chunk at every commit, the cost for which ADR 0020 rejected copy-on-write.
+Instead, the global digest and each chunk term are taken before the validators run, so a validator
+that changes its value, at once or later through a reference it kept, leaves a cache that
+`fullChecksum` disagrees with: it is detected, like every write that bypasses the barrier, not
+prevented.
 
 ### Capturing the ruleset
 
@@ -321,13 +332,18 @@ The world keeps its chunks in a lazy, sorted index, so creating a chunk never co
 
 ### What the tests check
 
-- chunk keys round-trip and reject every malformed form above;
+- chunk keys round-trip and reject every malformed form above, and `chunkKey` rejects inherited,
+  accessor, and non-enumerable coordinates;
 - the index orders `"-1,0"` < `"0,0"` < `"10,0"` < `"2,0"`, keeps adds pending (an observable
   `pendingCount`) until asked while counting them in its `size`, and agrees with a full sort
   under random adds;
 - every ruleset rule, all reported at once, including a real `streamId` collision;
 - every `createWorld` check, all reported at once, and validators that throw, return malformed
   results, or try to use `this`;
+- a member that is not enumerable (the ruleset, the seed, the seconds per tick, the global value,
+  the chunks, and `options.audit`) is reported once, never again as a missing value;
+- a validator that changes its value, or keeps it and changes it later, makes `fullChecksum`
+  disagree with `stateRoot`;
 - host isolation: changing the definition, the ruleset, and everything `readView`, `worldStatus`,
   and `chunkHashes` returned leaves `stateRoot`, `fullChecksum`, and `chunkHashes` unchanged;
 - forged worlds (a record, a Proxy of a world whose traps throw, a revoked Proxy, an object whose

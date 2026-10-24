@@ -24,6 +24,17 @@ describe("chunkKey and parseChunkKey", () => {
     expect(parseChunkKey(key)).toEqual(coord);
   });
 
+  test("chunkKey reads only x and y, from any object that is not an array", () => {
+    class Point {
+      constructor(
+        readonly x: number,
+        readonly y: number,
+      ) {}
+    }
+    expect(chunkKey(new Point(3, -4))).toBe("3,-4");
+    expect(chunkKey({ x: 1, y: 2, z: Number.NaN } as ChunkCoord)).toBe("1,2");
+  });
+
   test("parseChunkKey returns a fresh record", () => {
     const first = parseChunkKey("3,4");
     expect(parseChunkKey("3,4")).not.toBe(first);
@@ -72,6 +83,24 @@ describe("chunkKey rejects coordinates", () => {
       { path: "/x", message: "the property is an accessor: only data properties are read" },
     ]);
     expect(calls).toBe(0);
+  });
+
+  test("that are inherited, as missing: only own properties are read", () => {
+    const coord = Object.create({ x: 1, y: 2 }) as ChunkCoord;
+    expect(engineErrorOf(() => chunkKey(coord)).issues).toEqual([
+      { path: "/x", message: "a value of type undefined is not a safe integer" },
+      { path: "/y", message: "a value of type undefined is not a safe integer" },
+    ]);
+  });
+
+  test("that are not enumerable", () => {
+    const coord = Object.defineProperty({ x: 1 }, "y", { value: 2, enumerable: false });
+    expect(engineErrorOf(() => chunkKey(coord as ChunkCoord)).issues).toEqual([
+      {
+        path: "/y",
+        message: "the property is not enumerable: only enumerable data properties are read",
+      },
+    ]);
   });
 
   test("that are not a record", () => {

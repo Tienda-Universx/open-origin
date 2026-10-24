@@ -97,8 +97,12 @@ export class IssueList {
     if (cause !== undefined && this.#cause === undefined) this.#cause = { error: cause };
   }
 
-  /** An EngineError with `code`, the collected issues, and the first cause reported. */
-  error(code: EngineErrorCode): EngineError {
+  /**
+   * A new EngineError with `code`, the issues kept, the count of every issue reported, and the
+   * first cause any issue was reported with, which need not be the first issue's. It does not
+   * throw: callers throw what it returns, or call throwIfAny.
+   */
+  toError(code: EngineErrorCode): EngineError {
     const issueCount = this.count;
     const options =
       this.#cause === undefined ? { issueCount } : { issueCount, cause: this.#cause.error };
@@ -107,6 +111,6 @@ export class IssueList {
 
   /** Throws an EngineError with `code` and the collected issues, if there are any. */
   throwIfAny(code: EngineErrorCode): void {
-    if (this.count > 0) throw this.error(code);
+    if (this.count > 0) throw this.toError(code);
   }
 }

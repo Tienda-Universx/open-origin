@@ -35,7 +35,8 @@ function kernelDigest({ epoch, tick, nextEntityId, rng, config }: Kernel): Diges
   return digest(["kernel", kernel]);
 }
 
-function globalDigest(global: CanonicalValue): Digest {
+/** The global digest, digest(["global", global]). */
+export function globalDigest(global: CanonicalValue): Digest {
   return digest(["global", global]);
 }
 
@@ -56,13 +57,13 @@ function sumTerms(chunks: ChunkIndex<ChunkEntry>): Lanes {
   return sum;
 }
 
-/** The digests of a world with this kernel, global value, and chunks, whose terms are set. */
+/** The digests of a world with this kernel, global digest, and chunks, whose terms are set. */
 export function digestCache(
   kernel: Kernel,
-  global: CanonicalValue,
+  global: Digest,
   chunks: ChunkIndex<ChunkEntry>,
 ): DigestCache {
-  const cache = { globalDigest: globalDigest(global), chunkSum: sumTerms(chunks) };
+  const cache = { globalDigest: global, chunkSum: sumTerms(chunks) };
   const root = composeRoot(kernelDigest(kernel), cache.globalDigest, cache.chunkSum, chunks.size);
   return { ...cache, stateRoot: root };
 }

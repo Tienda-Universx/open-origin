@@ -21,8 +21,10 @@ const ACCESSOR = "the property is an accessor: only data properties are read";
 const NOT_ENUMERABLE = "the property is not enumerable: only enumerable data properties are read";
 
 /**
- * What readMember returns for a member it already reported, an accessor or one that threw, so
- * that callers do not report it a second time.
+ * What readMember returns for a member it already reported: an accessor, a property that is not
+ * enumerable, or a read that threw. Every caller checks for it before anything else, so that the
+ * member is reported once, never a second time as a missing or invalid value. A host cannot
+ * forge it: it is a fresh symbol, and index.ts does not export it.
  */
 export const UNREAD: unique symbol = Symbol("unread");
 

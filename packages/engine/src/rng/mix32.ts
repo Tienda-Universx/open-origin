@@ -7,7 +7,7 @@
 import { utf8Encode } from "../canonical/utf8.ts";
 import { finish32, mixWord32, murmur3x86_32 } from "../digest/murmur3.ts";
 import { describeValue, EngineError, type Issue } from "../errors.ts";
-import { int64Words, isU32 } from "../int.ts";
+import { int64Words, isU32, MAX_U32 } from "../int.ts";
 import { tickProblem } from "../time/tick.ts";
 
 /** The world seed: two u32 words, [s0, s1]. */
@@ -29,9 +29,12 @@ export type DrawSource = {
   readonly key: readonly number[];
 };
 
-/** The message for `value` where a u32 belongs. */
+/**
+ * The message for `value` where a u32 belongs. A value that is not a number is described by its
+ * type alone (describeValue), so a hostile word's valueOf or toString never runs.
+ */
 function notU32(value: unknown): string {
-  return `${describeValue(value)} is not an integer in [0, 4294967295]`;
+  return `${describeValue(value)} is not an integer in [0, ${MAX_U32}]`;
 }
 
 /** `value` if it is a u32; otherwise an issue at `path`, and 0 in its place. */

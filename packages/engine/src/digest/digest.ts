@@ -15,7 +15,12 @@ function hex8(word: number): string {
   return word.toString(16).padStart(8, "0");
 }
 
-/** The digest that writes the u32 words `words`, h1 first. */
+/**
+ * The digest that writes the 128-bit integer [h1, h2, h3, h4], four u32 words, most significant
+ * first: each word in 8 lowercase hexadecimal digits, padded with zeros. The words must be u32
+ * values, as murmur3x86_128 and the lane arithmetic return them; an int32 word below 0 would
+ * write a minus sign.
+ */
 export function hexOf([h1, h2, h3, h4]: Hash128): Digest {
   return `${hex8(h1)}${hex8(h2)}${hex8(h3)}${hex8(h4)}`;
 }

@@ -41,14 +41,17 @@ function readCoordinate(coord: object, axis: "x" | "y", issues: IssueList): numb
 }
 
 /**
- * The key of `coord`. Throws EngineError("invalid_value") with every coordinate that is not a
- * safe integer, or that is -0, which is not canonical. The coordinates are read as every host
- * object is (world/members.ts): own data properties only, and a throw is an issue.
+ * The key of `coord`, any object that is not an array; only its `x` and `y` are read, each once,
+ * through its own descriptor, as every host object is (world/members.ts). Throws
+ * EngineError("invalid_value") with every problem: a coordinate that is not a safe integer, or
+ * is -0, which is not canonical; one that is inherited, which is read as missing (undefined); an
+ * accessor, which never runs; or a property that is not enumerable. An object that throws while
+ * read is one issue at the path "", with the thrown value as the cause.
  */
 export function chunkKey(coord: ChunkCoord): ChunkKey {
   const issues = new IssueList();
   if (!expectRecord(coord, "", "the chunk coordinates must be a record { x, y }", issues)) {
-    throw issues.error("invalid_value");
+    throw issues.toError("invalid_value");
   }
   const x = readCoordinate(coord, "x", issues);
   const y = readCoordinate(coord, "y", issues);
