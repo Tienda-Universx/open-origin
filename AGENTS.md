@@ -187,8 +187,8 @@ outcome.
 `bun run check` enforces what tools can verify; everything else stays a review item. A tool
 counts as a control only for the rules it actually checks, and a control is listed as enforced only
 when a test shows that it rejects bad input, including the boundary case of every documented
-threshold: `tests/repo/lint.test.ts` does it for strict types and each lint rule below. Those tests pin properties
-and invariants, not verbatim copies of configuration, which only add friction.
+threshold: `tests/repo/lint.test.ts` does it for strict types and each lint rule below. Those tests
+pin properties and invariants, not verbatim copies of configuration, which only add friction.
 
 | Control | Tool | Status |
 |---|---|---|
