@@ -1,31 +1,32 @@
+let repositoryVariables: ReadonlySet<string> | undefined;
+
 /**
- * Variables that point git at a specific repository (`git rev-parse --local-env-vars`).
- * Git hooks set them, so a check started from a hook would otherwise read, or write, the wrong
- * repository.
+ * Variables that point git at a specific repository, as the installed git reports them
+ * (`git rev-parse --local-env-vars`). Git hooks set them, so a check started from a hook would
+ * otherwise read, or write, the wrong repository.
  */
-const REPOSITORY_VARIABLES = new Set([
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_CONFIG",
-  "GIT_CONFIG_PARAMETERS",
-  "GIT_CONFIG_COUNT",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_IMPLICIT_WORK_TREE",
-  "GIT_GRAFT_FILE",
-  "GIT_INDEX_FILE",
-  "GIT_NO_REPLACE_OBJECTS",
-  "GIT_REPLACE_REF_BASE",
-  "GIT_PREFIX",
-  "GIT_SHALLOW_FILE",
-  "GIT_COMMON_DIR",
-]);
+function localEnvVars(): ReadonlySet<string> {
+  if (repositoryVariables === undefined) {
+    const result = Bun.spawnSync(["git", "rev-parse", "--local-env-vars"]);
+    if (!result.success) {
+      throw new Error(`git rev-parse --local-env-vars failed: ${result.stderr.toString()}`);
+    }
+    repositoryVariables = new Set(
+      result.stdout
+        .toString()
+        .split("\n")
+        .filter((name) => name !== ""),
+    );
+  }
+  return repositoryVariables;
+}
 
 /** The current environment without the variables that redirect git to another repository. */
 export function gitEnvironment(): Record<string, string> {
+  const local = localEnvVars();
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !REPOSITORY_VARIABLES.has(key)) env[key] = value;
+    if (value !== undefined && !local.has(key)) env[key] = value;
   }
   return env;
 }

@@ -13,11 +13,13 @@ function git(...args: string[]): void {
 }
 
 beforeAll(() => {
-  git("init", "-q");
+  // An empty template, as with a custom init.templateDir, creates no .git/info directory.
+  git("init", "-q", "--template=");
   writeFileSync(join(scratch, "tracked.md"), "a");
   writeFileSync(join(scratch, "untracked.md"), "b");
   writeFileSync(join(scratch, "ignored.md"), "c");
   writeFileSync(join(scratch, "excluded.md"), "d");
+  mkdirSync(join(scratch, ".git", "info"), { recursive: true });
   writeFileSync(join(scratch, ".git", "info", "exclude"), "excluded.md\n");
   mkdirSync(join(scratch, "node_modules", "pkg"), { recursive: true });
   writeFileSync(join(scratch, "node_modules", "pkg", "index.md"), "e");
@@ -25,6 +27,26 @@ beforeAll(() => {
   git("add", "tracked.md");
 });
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+describe("gitEnvironment", () => {
+  test("drops every variable git reports as repository-local and keeps the rest", () => {
+    const listed = Bun.spawnSync(["git", "rev-parse", "--local-env-vars"]).stdout.toString();
+    const names = listed.split("\n").filter((name) => name !== "");
+    expect(names).toContain("GIT_DIR");
+    const saved = names.map((name) => [name, process.env[name]] as const);
+    for (const name of names) process.env[name] = "/nowhere";
+    try {
+      const env = gitEnvironment();
+      expect(names.filter((name) => name in env)).toEqual([]);
+      expect(env.PATH).toBe(process.env.PATH);
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+});
 
 describe("repoFiles", () => {
   test("lists tracked and untracked files but skips ignored and locally excluded ones", () => {
