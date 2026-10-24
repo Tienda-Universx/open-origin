@@ -173,7 +173,7 @@ each lint rule below still fires.
 | Strict types | `tsc` (`bun run typecheck`) | Enforced |
 | Cognitive complexity above 15, functions over 50 lines (outside tests), more than 4 parameters, `else` after `return`, nested ternaries, non-null assertions, parameter reassignment, import cycles, explicit `any`, `@ts-ignore`, unused variables, imports, and parameters | Biome | Enforced |
 | Cyclomatic complexity above 10, nesting deeper than 4 | oxlint (only these rules) | Enforced |
-| ADR format, invisible characters, CI and package invariants, links, verbatim documents | `tests/repo/` | Enforced |
+| ADR format, invisible characters, CI and package invariants, Bun telemetry off, links, verbatim documents | `tests/repo/` | Enforced |
 | Hexagonal boundaries | Biome `noRestrictedImports` per package | Added with the first package (T2) |
 | Duplicated code, dead exports | None yet | Review checklist |
 | Race conditions, performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T6, T7, and T10 |
@@ -196,6 +196,8 @@ See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choi
 - Never deploy, activate paid services, or create cloud resources without explicit maintainer
   authorization.
 - This repository is public: everything pushed is public.
+- Telemetry stays off: `bunfig.toml` turns off Bun's crash reports, and a new tool that sends usage
+  data is adopted only with its telemetry turned off in a versioned file (ADR 0018).
 - Write invisible or bidirectional control characters only as escapes; `tests/repo/hygiene.test.ts`
   rejects them in text files.
 

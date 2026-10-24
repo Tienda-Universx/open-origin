@@ -1,0 +1,3 @@
+# Bun sends anonymous crash reports unless this is off; it is equivalent to DO_NOT_TRACK=1.
+# Telemetry stays off for every tool the repository runs (ADR 0018).
+telemetry = false
