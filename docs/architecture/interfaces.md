@@ -58,14 +58,17 @@ packages/ui ── shared by apps/web and apps/admin (presentational)
 
 ## API key handling
 
-Adopted default (2026-10-24), configurable (O-25;
+Adopted default (2026-10-24) under the maintainer's delegation of technical decisions
+([tracker](../roadmap/v0.1-tracker.md) L11, L12), configurable (plan O-25, §E.6;
 [0009](../decisions/0009-public-and-private-admin-interfaces.md)):
 
-- Stored encrypted in the database with AES-GCM via WebCrypto; the master key lives in an
-  environment variable.
+- Provider API keys entered in the panel are stored encrypted in the database with AES-GCM via
+  WebCrypto; the master key lives in an environment variable.
+- Infrastructure secrets (database credentials, tokens, the master key) live in host environment
+  variables or a secret manager ([data classification](data-classification.md), C4).
 - The panel is write-only: it can create, rotate, and delete keys, but only shows a fingerprint
   (last 4 characters).
-- Keys never return to the client, logs, or snapshots; the admin API never returns a key value.
+- Keys never reach clients, logs, prompts, snapshots, or admin API responses.
 - An environment variable takes precedence over a stored key.
 
 ## Design system: `packages/ui`

@@ -3,7 +3,7 @@
 Every piece of information in Open Origin belongs to one of five classes, C0 to C4. A client never
 receives raw state: it receives explicit, allowlisted DTOs projected for its audience (P10). This
 page lists the classes, who may receive each one, how the rule is enforced, and which tests guard
-it. Source: plan §E.4, §E.6, §I.1.2, §K.6, §K.8, §N; decision in
+it. Source: plan §E.4, §E.6, §I.1.2, §K.6, §K.8, §N, O-25; decision in
 [0008](../decisions/0008-data-classification-and-audience-projections.md).
 
 ## Classes
@@ -14,7 +14,7 @@ it. Source: plan §E.4, §E.6, §I.1.2, §K.6, §K.8, §N; decision in
 | **C1 Inhabitant-internal** | Memory, beliefs, thoughts, goals, relationships, prompts, raw LLM outputs, context manifests | Research role; the inhabitant itself (through its perception) | Public clients, other inhabitants |
 | **C2 Player-private** (future) | Account, email, IP, sessions, payments, private messages | The player; minimum necessary operation | Other clients, inhabitants, LLM providers (only in-world text travels, moderated and without personal data) |
 | **C3 Operations and research** | World seed, law parameters, reference truth, observation metrics, logs, admin tools | Server; authenticated and audited research/admin role | Any public client |
-| **C4 Secrets** | Provider keys, database credentials, tokens | Host environment variables or secret manager. The admin panel can only **write** them (create, rotate, delete); it shows a fingerprint, never the value | Logs, client bundles, prompts, snapshots, admin API responses |
+| **C4 Secrets** | Provider API keys, database credentials, tokens, the master key | Infrastructure secrets (database credentials, tokens, the master key): host environment variables or secret manager. Provider API keys entered in the admin panel: encrypted in the database (see [Enforcement mechanisms](#enforcement-mechanisms)). The admin panel can only **write** keys (create, rotate, delete); it shows a fingerprint, never the value | Clients and client bundles, logs, prompts, snapshots, admin API responses |
 
 Other C3 items named elsewhere in the plan:
 - Observation exposure telemetry: a C3 table the simulation cannot read (§K.6, control 3).
@@ -38,7 +38,7 @@ Details of both interfaces: [Interfaces](interfaces.md).
 | CI scans the client `dist/` for secret patterns; only `VITE_PUBLIC_*` variables reach the bundle | C4 in client bundles |
 | A test scans the public `dist/` for admin routes and modules | Admin code and DTOs in the public bundle |
 | Separate admin/research plane. v0.1: binds to `127.0.0.1` and requires a local token, behind a flag (O-21). Before any public exposure: authentication, authorization (RBAC), and an audit log (DF-4) | C1 and C3 access |
-| API keys encrypted with AES-GCM via WebCrypto, master key in an environment variable; write-only from the panel; fingerprint only (last 4 characters) | C4 in admin API responses, logs, snapshots |
+| Provider API keys entered in the panel are stored encrypted in the database with AES-GCM via WebCrypto, master key in an environment variable; an environment variable takes precedence over a stored key; write-only from the panel; fingerprint only (last 4 characters) (plan O-25, §E.6) | C4 in clients, admin API responses, logs, prompts, snapshots |
 | Read-only clients in v0.1; every input schema-validated with size and rate limits | Untrusted input |
 | No inhabitant has tools with network, file, or infrastructure access | Inhabitants reaching infrastructure |
 | The prompt is built only from the inhabitant's own perception and memory (§K.4) | Other inhabitants' C1 entering a prompt |

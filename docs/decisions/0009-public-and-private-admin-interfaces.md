@@ -37,11 +37,16 @@ Admin security rules:
 - **World-affecting actions** (pause, change AI mode, create world, adjust budget) are commands
   with `admin` provenance, recorded in the log and in an append-only audit log. An experimental
   configuration change opens a new epoch. Watching from the panel affects nothing (P9).
-- **API keys: adopted default (2026-10-24), configurable** (O-25; §E.6 marked the precedence rule
-  [D]). Keys are stored encrypted in the database with AES-GCM via WebCrypto, with the master key in
-  an environment variable. The panel is write-only: it can create, rotate, and delete keys but only
-  shows a fingerprint (last 4 characters). Keys never return to the client, logs, or snapshots. An
-  environment variable takes precedence over a stored key.
+- **API keys: adopted default (2026-10-24), configurable** (plan O-25; §E.6 marked the precedence
+  rule [D]; adopted under the maintainer's delegation of technical decisions,
+  [tracker](../roadmap/v0.1-tracker.md) L11, L12). Provider API keys entered in the panel are stored
+  encrypted in the database with AES-GCM via WebCrypto, with the master key in an environment
+  variable. Infrastructure secrets (database credentials, tokens, the master key) live in host
+  environment variables or a secret manager
+  ([0008](0008-data-classification-and-audience-projections.md)). The panel is write-only: it can
+  create, rotate, and delete keys but only shows a fingerprint (last 4 characters). An environment
+  variable takes precedence over a stored key. Keys never reach clients, logs, prompts, snapshots,
+  or admin API responses.
 - **Double key for paid spend.** The panel cannot enable `paid` unless the server started with
   `AI_ALLOW_PAID=true` ([0004](0004-ai-proposes-engine-decides.md)).
 - **Codespaces.** A forwarded port can become public, so the panel requires the token even locally
@@ -74,4 +79,5 @@ endpoints, write-only encrypted API keys, double-key modes, budgets, and usage).
 ## References
 
 - Plan: DF-1, DF-4, P11 (§E.1), §E.4, §E.5, §E.6, §L, §M, O-21, O-23, O-25, O-26, §N.
+- Tracker `docs/roadmap/v0.1-tracker.md`: L11, L12.
 - [Interfaces architecture](../architecture/interfaces.md).
