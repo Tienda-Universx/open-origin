@@ -77,7 +77,9 @@ evidence.
 2. Inventory existing tests (unit, integration, functional, end-to-end).
 3. Run them **before** modifying anything and record which pass, fail, or cannot run.
 4. Investigate every pre-existing failure, so pre-existing problems are not confused with new ones.
-5. Check that the tests assert real outcomes, not only that code runs without throwing.
+5. Check that the tests assert real outcomes, not only that code runs without throwing: the exact
+   result when it is known, and never a vacuous pass (a scan that finds nothing, a document that
+   ends inside an open block).
 
 ### Phase B: check that the tests can fail
 
@@ -158,22 +160,42 @@ Evaluate every significant change for:
 - high coupling between modules and violations of the hexagonal boundaries (dependency rule in
   `docs/architecture/overview.md`: the core never imports adapters);
 - dead and duplicated code;
-- incorrect error handling: swallowed errors, empty `catch`, lost causes, unhandled promises;
+- incorrect error handling: swallowed errors, empty `catch`, lost causes, unhandled promises,
+  errors that do not name the file, entity, tick, or command at fault, and checkers that stop at the
+  first problem;
 - race conditions and concurrency: shared state across `await`, ordering, idempotency;
 - performance regressions: measure before and after when a change can affect a hot path.
+
+### Code audits
+
+Audit code before a batch builds on it and whenever a change grows a module. Size and metrics show
+where to look; they never decide a change on their own, and keeping the current design is a valid
+outcome.
+
+- **Size triggers a review, never a split.** Above about 300 lines, check a module's
+  responsibilities; above 500, assess its structure; above 800, record why it stays whole or split
+  it; above 1,500, audit it first. Tests made of explicit cases and verbatim documents are not split
+  for size, and generated files (`bun.lock`) are never edited by hand.
+- **Decide each finding on evidence:** the concrete problem a change solves, the risk of leaving it
+  and of changing it, whether extracting a function or module beats keeping the design, and whether
+  the gain is worth the cost. Choose the simplest change that solves it.
+- **Cost per tick.** Work done each tick scales with the active entities and chunks, never with the
+  size of the world or with all pairs of inhabitants.
 
 ### Automated controls
 
 `bun run check` enforces what tools can verify; everything else stays a review item. A tool
-counts as a control only for the rules it actually checks, and `tests/repo/lint.test.ts` proves
-each lint rule below still fires.
+counts as a control only for the rules it actually checks, and a control is listed as enforced only
+when a test shows that it rejects bad input, including the boundary case of every documented
+threshold: `tests/repo/lint.test.ts` does it for each lint rule below. Those tests pin properties
+and invariants, not verbatim copies of configuration, which only add friction.
 
 | Control | Tool | Status |
 |---|---|---|
 | Strict types | `tsc` (`bun run typecheck`) | Enforced |
 | Cognitive complexity above 15, functions over 50 lines (outside tests), more than 4 parameters, `else` after `return`, nested ternaries, non-null assertions, parameter reassignment, import cycles, explicit `any`, `@ts-ignore`, unused variables, imports, and parameters | Biome | Enforced |
 | Cyclomatic complexity above 10, nesting deeper than 4 | oxlint (only these rules) | Enforced |
-| ADR format, invisible characters, CI and package invariants, Bun telemetry off, links, verbatim documents | `tests/repo/` | Enforced |
+| ADR format; invisible characters in file names and contents; UTF-8 text files; package scripts; workflow permissions, triggers and pinned actions; Dependabot cooldown; Bun telemetry off; links; verbatim documents | `tests/repo/` | Enforced |
 | Hexagonal boundaries | Biome `noRestrictedImports` per package | Added with the first package (T2) |
 | Duplicated code, dead exports | None yet | Review checklist |
 | Race conditions, performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T6, T7, and T10 |
