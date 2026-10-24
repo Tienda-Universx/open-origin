@@ -2,6 +2,7 @@ import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { ENGINE_SRC } from "./engine-purity.ts";
 import { REPO_ROOT } from "./files.ts";
 
 /**
@@ -312,7 +313,6 @@ describe("TypeScript strict mode", () => {
   });
 });
 
-const ENGINE_SRC = "packages/engine/src";
 const ENGINE_TEST = "packages/engine/test";
 
 /** One Biome diagnostic: the scratch-relative fixture, its rule (or `plugin`), and its text. */

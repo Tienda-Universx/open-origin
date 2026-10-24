@@ -151,18 +151,17 @@ const GATE_COMMENTS = [
   },
 ];
 
-/** Every gate-switching directive written in a comment; string literals are not comments. */
+/**
+ * Every gate-switching directive anywhere in the source, strings included. A comment inside a
+ * template substitution reads as template text to this lexical scan, so restricting the search to
+ * comments would miss it; engine code has no reason to spell these tokens in a string.
+ */
 function gateCommentFindings(source: string): Finding[] {
-  const comments = [...source.matchAll(LITERAL_OR_COMMENT)].filter(
-    ([, literal]) => literal === undefined,
-  );
-  return comments.flatMap((comment) =>
-    GATE_COMMENTS.flatMap(({ pattern, reason }) =>
-      [...comment[0].matchAll(pattern)].map((match) => ({
-        index: comment.index + match.index,
-        message: `\`${match[0]}\` ${reason}`,
-      })),
-    ),
+  return GATE_COMMENTS.flatMap(({ pattern, reason }) =>
+    [...source.matchAll(pattern)].map((match) => ({
+      index: match.index,
+      message: `\`${match[0]}\` ${reason}`,
+    })),
   );
 }
 
