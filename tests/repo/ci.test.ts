@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-type Step = { uses?: string; with?: Record<string, unknown> };
+type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
 type Workflow = {
   permissions: unknown;
   concurrency: { group: string; "cancel-in-progress": string };
@@ -37,6 +37,16 @@ describe("CI workflow", () => {
     const actions = steps.flatMap((step) => (step.uses === undefined ? [] : [step.uses]));
     expect(actions.length).toBeGreaterThan(0);
     expect(actions.filter((uses) => !/@[0-9a-f]{40}$/.test(uses))).toEqual([]);
+  });
+
+  test("installs from the frozen lockfile and runs the same check as local development", () => {
+    const commands = steps.flatMap((step) => (step.run === undefined ? [] : [step.run.trim()]));
+    expect(commands).toEqual(["bun install --frozen-lockfile", "bun run check"]);
+  });
+
+  test("takes the Bun version from package.json", () => {
+    const setup = steps.find((step) => step.uses?.startsWith("oven-sh/setup-bun@"));
+    expect(setup?.with?.["bun-version-file"]).toBe("package.json");
   });
 
   test("does not persist the checkout credentials", () => {
