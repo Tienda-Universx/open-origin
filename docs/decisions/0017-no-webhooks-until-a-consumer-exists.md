@@ -37,8 +37,9 @@ When a consumer exists, the webhooks will be:
 
 Both use `content_type: json`, SSL verification, and their own random secret stored only on the
 receiver. The receiver verifies `X-Hub-Signature-256` in constant time, ignores repeated
-`X-GitHub-Delivery` identifiers, answers within 10 seconds and queues the work, and redelivers
-failed deliveries within 3 days.
+`X-GitHub-Delivery` identifiers, and answers within 10 seconds before doing the work. GitHub does not
+retry, so an operator or a scheduled job lists the failed deliveries and asks GitHub to redeliver
+them within 3 days (REST: list deliveries, then redeliver).
 
 ## Consequences
 

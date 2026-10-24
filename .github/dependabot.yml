@@ -1,5 +1,8 @@
 # Version updates for the Bun dependencies and the SHA-pinned workflow actions.
-# A release must be two weeks old before Dependabot proposes it (ADR 0015).
+# A release must be two weeks old before Dependabot proposes it
+# (the rule is in ADR 0015, these settings in ADR 0016).
+# Minor and patch updates are grouped; each major update gets its own pull request, so one breaking
+# release does not hold back the others.
 version: 2
 updates:
   - package-ecosystem: bun
@@ -11,6 +14,7 @@ updates:
     groups:
       dev-dependencies:
         patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: build
 
@@ -23,5 +27,6 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: build

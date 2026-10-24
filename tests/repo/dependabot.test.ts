@@ -24,17 +24,13 @@ describe("Dependabot version updates", () => {
   });
 
   test.each(["bun", "github-actions"])(
-    "%s updates wait at least two weeks after a release (ADR 0015)",
+    "%s: weekly updates at the root, two weeks after a release, as build commits (ADRs 0015, 0016)",
     (ecosystem) => {
       const update = config.updates.find((entry) => entry["package-ecosystem"] === ecosystem);
+      expect(update?.directory).toBe("/");
+      expect(update?.schedule.interval).toBe("weekly");
       expect(update?.cooldown?.["default-days"]).toBeGreaterThanOrEqual(14);
+      expect(update?.["commit-message"]?.prefix).toBe("build");
     },
   );
-
-  test("update commits follow Conventional Commits", () => {
-    expect(config.updates.map((update) => update["commit-message"]?.prefix)).toEqual([
-      "build",
-      "build",
-    ]);
-  });
 });
