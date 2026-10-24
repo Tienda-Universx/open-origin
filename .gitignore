@@ -150,6 +150,3 @@ vite.config.ts.timestamp-*
 
 # Local agent tooling (not part of the project)
 .atl/
-
-# Keep the documented environment template versioned
-!.env.example
