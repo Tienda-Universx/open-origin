@@ -158,11 +158,11 @@ n]` with seed s0, where `[s0, s1]` is the world seed. Code: `packages/engine/src
 
 | Function | Contract |
 |---|---|
-| `mix32(seed, stream, key, n)` | One draw. Every input must be u32 words; all problems are reported at once, with the paths `/seed/i`, `/stream`, `/key/i`, and `/n`, as `invalid_value` |
+| `mix32(seed, stream, key, n)` | One draw. Every input must be u32 words; all problems are reported at once, with the paths `/seed/i`, `/stream`, `/key/i`, and `/n`, as `invalid_value`. Each word is read once, by index, into a copy that is validated and hashed, so a getter or a custom iterator cannot show the hash other words than validation saw |
 | `streamId(name)` | MurmurHash3 x86_32 of the UTF-8 of `name` with seed 0 |
 | `tickKey(tick, entity)` | `[tickLo, tickHi, entityLo, entityHi]`: each integer as the two u32 words of its 64-bit two's complement, low first. `tick` must be a tick; `entity` may be any safe integer |
-| `new DrawSequence(seed, stream, key, next = 0)` | The draws of one stream for one key, from the counter `next`. It validates its inputs once and copies the key |
-| `sequence.u32()` | The draw at the counter, which then advances. A sequence has 2^32 counters; one more draw throws `invalid_value` |
+| `new DrawSequence(seed, stream, key, next = 0)` | The draws of one stream for one key, from the counter `next`. It reads its inputs once, as `mix32` does, and keeps the copies |
+| `sequence.u32()` | The draw at the counter, which then advances. A sequence has 2^32 counters; one more draw throws `invalid_value` at `/n`: the draw counter is exhausted |
 | `sequence.int(bound)` | An integer in [0, bound) for an integer bound in [1, 2^32], without modulo bias: a draw at or above `2^32 - (2^32 mod bound)` is rejected, and each retry uses the next counter |
 | `sequence.permutation(count)` | 0 to count - 1 in random order: a Fisher-Yates shuffle that draws `int(i + 1)` for i from count - 1 down to 1 |
 
@@ -174,6 +174,8 @@ What the tests check:
   equal to MurmurHash3 x86_32 over the documented words on random inputs;
 - with the bound 2^31 + 1, about half of the draws are rejected, and each result and the final
   counter equal a replay through `mix32`; the bounds 1 and 2^32 use one counter per draw;
+- the exact limit, on draws of 0x80000000, 0x80000001, and 0xffffffff: a draw equal to the limit is
+  rejected and one below it is accepted;
 - on fixed inputs, 100,000 draws fill 16 buckets with a chi-square below 37.697 (p = 0.001 for 15
   degrees of freedom), by their low bits (`int(16)`) and by their high bits; flipping any one of
   192 input bits flips between 15 and 17 output bits on average over 256 samples; permutations of 3 and 4
@@ -195,7 +197,7 @@ What the generator does not do:
 The engine knows only ticks (ADR 0020). Code: `packages/engine/src/time/tick.ts`. Tests:
 `packages/engine/test/tick.test.ts`.
 
-- A tick is a safe integer from 0.
+- A tick is a safe integer from 0; `-0` is not a tick, since it is not canonical.
 - `nextTick(tick)` is `tick + 1`; at `Number.MAX_SAFE_INTEGER`, whose successor is not a safe
   integer, it throws `tick_overflow`.
 - `simSeconds(tick, simSecondsPerTick)` is `tick * simSecondsPerTick`, for a positive safe integer

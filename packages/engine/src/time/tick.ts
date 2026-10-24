@@ -5,12 +5,13 @@
  */
 import { describeValue, EngineError, type Issue } from "../errors.ts";
 
-/** A simulation tick: a safe integer from 0. */
+/** A simulation tick: a safe integer from 0; not -0, which is not canonical. */
 export type Tick = number;
 
 /** Why `value` is not a tick, as a message; undefined when it is one. */
 export function tickProblem(value: unknown): string | undefined {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return undefined;
+  const isTick = typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  if (isTick && !Object.is(value, -0)) return undefined;
   return `${describeValue(value)} is not a tick: ticks are safe integers from 0`;
 }
 

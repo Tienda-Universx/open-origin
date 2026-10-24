@@ -67,13 +67,26 @@ describe("DrawSequence.u32", () => {
     expect(draws.u32()).toBe(0x3dee2cac);
   });
 
+  test("reads each key word once, so a getter cannot pass validation and then change", () => {
+    let reads = 0;
+    const key = Object.defineProperty([37, 0, 0, 0], 2, {
+      get: () => (reads++ === 0 ? 5 : "five"),
+      enumerable: true,
+    });
+    expect(new DrawSequence(SEED, CONFLICTS, key).u32()).toBe(0x3dee2cac);
+    expect(reads).toBe(1);
+  });
+
   test("starts at a given n, and has no draw after n = 2^32 - 1", () => {
     const draws = new DrawSequence(SEED, CONFLICTS, KEY, 0xffffffff);
     expect(draws.u32()).toBe(mix32(SEED, CONFLICTS, KEY, 0xffffffff));
     const error = engineErrorOf(() => draws.u32());
     expect(error.code).toBe("invalid_value");
     expect(error.issues).toEqual([
-      { path: "/n", message: "4294967296 is not an integer in [0, 4294967295]" },
+      {
+        path: "/n",
+        message: "the draw counter is exhausted: a sequence has 2^32 draws, n 0 to 4294967295",
+      },
     ]);
   });
 
@@ -123,6 +136,18 @@ describe("DrawSequence.int", () => {
     expect(draws.next).toBe(0);
   });
 
+  test.each([
+    ["a symbol", Symbol("bound"), "symbol"],
+    ["a bigint", 2n, "bigint"],
+    ["a string", "2", "string"],
+  ])("rejects %s as a bound by its type", (_name, bound, type) => {
+    // Deliberately ill-typed, as a JavaScript caller can be.
+    const error = engineErrorOf(() => sequence().int(bound as unknown as number));
+    expect(error.issues).toEqual([
+      { path: "/bound", message: `a value of type ${type} is not an integer in [1, 4294967296]` },
+    ]);
+  });
+
   test("fills 16 buckets evenly over 100,000 fixed draws (chi-square below 37.697)", () => {
     const draws = sequence();
     const low = Array.from({ length: 16 }, () => 0);
@@ -135,6 +160,47 @@ describe("DrawSequence.int", () => {
     }
     expect(chiSquare(low)).toBeLessThan(37.697);
     expect(chiSquare(high)).toBeLessThan(37.697);
+  });
+});
+
+describe("DrawSequence.int at the exact rejection limit, 2^32 - (2^32 mod bound)", () => {
+  // The first draw (n = 0) for seed [0, 0] and the empty key, on streams found by search; each
+  // value was also computed by SMHasher's C reference over the words [0, stream, 0, 0], seed 0.
+  const ALL_ONES = 1_316_206_573; // draws 0xffffffff
+  const TOP_PLUS_ONE = 1_017_681_598; // draws 0x80000001
+  const TOP = 302_028_550; // draws 0x80000000
+  const first = (stream: number) => new DrawSequence([0, 0], stream, []);
+
+  test("the three streams draw the values the limits need", () => {
+    expect([ALL_ONES, TOP_PLUS_ONE, TOP].map((stream) => mix32([0, 0], stream, [], 0))).toEqual([
+      0xffffffff, 0x80000001, 0x80000000,
+    ]);
+  });
+
+  test("at the bound 2^31 + 1, the limit itself, 0x80000001, is rejected and 0x80000000 is not", () => {
+    const bound = 2 ** 31 + 1;
+    const accepted = first(TOP);
+    expect(accepted.int(bound)).toBe(0x80000000);
+    expect(accepted.next).toBe(1);
+    const rejected = first(TOP_PLUS_ONE);
+    const value = rejected.int(bound);
+    // The retry starts at n = 1, and the first draw below the limit decides.
+    let n = 1;
+    while (mix32([0, 0], TOP_PLUS_ONE, [], n) >= bound) n += 1;
+    expect(value).toBe(mix32([0, 0], TOP_PLUS_ONE, [], n));
+    expect(rejected.next).toBe(n + 1);
+  });
+
+  test.each([1, 2, 2 ** 31, U32_COUNT])("0xffffffff is accepted at the bound %d", (bound) => {
+    const draws = first(ALL_ONES);
+    expect(draws.int(bound)).toBe(0xffffffff % bound);
+    expect(draws.next).toBe(1);
+  });
+
+  test.each([3, 2 ** 31 + 1, U32_COUNT - 1])("0xffffffff is rejected at the bound %d", (bound) => {
+    const draws = first(ALL_ONES);
+    draws.int(bound);
+    expect(draws.next).toBeGreaterThan(1);
   });
 });
 

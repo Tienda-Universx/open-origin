@@ -82,9 +82,21 @@ describe("int64Words", () => {
     ["2^53", MAX_SAFE + 1],
     ["-(2^53)", -(MAX_SAFE + 1)],
     ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
   ])("rejects %s with invalid_value", (_name, value) => {
     const error = engineErrorOf(() => int64Words(value));
     expect(error.code).toBe("invalid_value");
     expect(error.issues).toEqual([{ path: "", message: `${String(value)} is not a safe integer` }]);
+  });
+
+  test.each([
+    ["a symbol", Symbol("n"), "symbol"],
+    ["a bigint", 2n, "bigint"],
+    ["a string", "2", "string"],
+  ])("rejects %s by its type", (_name, value, type) => {
+    // Deliberately ill-typed, as a JavaScript caller can be.
+    expect(engineErrorOf(() => int64Words(value as unknown as number)).issues).toEqual([
+      { path: "", message: `a value of type ${type} is not a safe integer` },
+    ]);
   });
 });

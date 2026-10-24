@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { murmur3x86_32, murmur3x86_32Words } from "../src/digest/murmur3.ts";
-import { mix32, type Seed, streamId, tickKey } from "../src/index.ts";
+import { DrawSequence, mix32, type Seed, streamId, tickKey } from "../src/index.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 
@@ -52,6 +52,40 @@ describe("mix32", () => {
       { path: "/seed", message: "the seed must be an array of two words" },
       { path: "/key", message: "the key must be an array of words" },
     ]);
+  });
+});
+
+describe("mix32 reads each input once", () => {
+  test("a key word behind a getter is read once, so validation and the hash see the same word", () => {
+    let reads = 0;
+    const key = Object.defineProperty([4, 0], 1, {
+      get: () => (reads++ === 0 ? 5 : 6),
+      enumerable: true,
+    });
+    expect(mix32([1, 2], 3, key, 6)).toBe(0x4ec93050);
+    expect(reads).toBe(1);
+  });
+
+  test("a key with its own iterator is hashed by index, as it was validated", () => {
+    const key = Object.assign([4, 5], {
+      *[Symbol.iterator]() {
+        yield 7;
+        yield 8;
+        yield 9;
+      },
+    });
+    expect(mix32([1, 2], 3, key, 6)).toBe(0x4ec93050);
+    expect(new DrawSequence([1, 2], 3, key, 6).u32()).toBe(0x4ec93050);
+  });
+
+  test("a seed with its own iterator is hashed by index too", () => {
+    const seed = Object.assign([1, 2], {
+      *[Symbol.iterator]() {
+        yield 9;
+        yield 9;
+      },
+    }) as unknown as Seed;
+    expect(mix32(seed, 3, [4, 5], 6)).toBe(0x4ec93050);
   });
 });
 

@@ -13,81 +13,95 @@ import { tickProblem } from "../time/tick.ts";
 /** The world seed: two u32 words, [s0, s1]. */
 export type Seed = readonly [number, number];
 
+/** What a draw hashes besides its counter: copies that belong to the engine alone. */
+export type DrawSource = {
+  readonly seed: Seed;
+  readonly stream: number;
+  readonly key: readonly number[];
+};
+
 /** The message for `value` where a u32 belongs. */
 export function notU32(value: unknown): string {
   return `${describeValue(value)} is not an integer in [0, 4294967295]`;
 }
 
-function wordIssues(words: readonly unknown[], path: string): Issue[] {
-  const issues: Issue[] = [];
-  for (let index = 0; index < words.length; index += 1) {
-    const word = words[index];
-    if (!isU32(word)) issues.push({ path: `${path}/${index}`, message: notU32(word) });
-  }
-  return issues;
+/** `value` if it is a u32; otherwise an issue at `path`, and 0 in its place. */
+function readU32(value: unknown, path: string, issues: Issue[]): number {
+  if (isU32(value)) return value;
+  issues.push({ path, message: notU32(value) });
+  return 0;
 }
 
-function seedIssues(seed: unknown): Issue[] {
+/** The two words of `seed`, each read once by index; issues for anything else. */
+function readSeed(seed: unknown, issues: Issue[]): Seed {
   if (!Array.isArray(seed) || seed.length !== 2) {
-    return [{ path: "/seed", message: "the seed must be an array of two words" }];
+    issues.push({ path: "/seed", message: "the seed must be an array of two words" });
+    return [0, 0];
   }
-  return wordIssues(seed, "/seed");
-}
-
-/** Whether every element of `words`, holes included, is a u32. */
-function allU32(words: readonly unknown[]): boolean {
-  for (let index = 0; index < words.length; index += 1) {
-    if (!isU32(words[index])) return false;
-  }
-  return true;
-}
-
-/** Whether the inputs of a draw are valid, without building drawIssues' list. */
-function isValidDraw(seed: unknown, stream: unknown, key: unknown, n: unknown): boolean {
-  const pair = Array.isArray(seed) && seed.length === 2 && allU32(seed);
-  return pair && isU32(stream) && Array.isArray(key) && allU32(key) && isU32(n);
-}
-
-/** Throws EngineError("invalid_value") with every problem of the inputs of a draw. */
-export function checkDraw(seed: unknown, stream: unknown, key: unknown, n: unknown): void {
-  if (!isValidDraw(seed, stream, key, n)) {
-    throw new EngineError("invalid_value", drawIssues(seed, stream, key, n));
-  }
+  const words: readonly unknown[] = seed;
+  return [readU32(words[0], "/seed/0", issues), readU32(words[1], "/seed/1", issues)];
 }
 
 /**
- * Every problem with the inputs of a draw, each with its path into `{ seed, stream, key, n }`.
- * Holes in `key` are reported as values that are not u32.
+ * The words of `key` in a fresh array: its length and each element are read once, by index, so
+ * neither a getter nor a custom iterator can show the hash other words than validation saw. A
+ * hole reads as undefined, which is not a u32.
  */
-function drawIssues(seed: unknown, stream: unknown, key: unknown, n: unknown): Issue[] {
-  const issues = seedIssues(seed);
-  if (!isU32(stream)) issues.push({ path: "/stream", message: notU32(stream) });
-  if (Array.isArray(key)) issues.push(...wordIssues(key, "/key"));
-  else issues.push({ path: "/key", message: "the key must be an array of words" });
-  if (!isU32(n)) issues.push({ path: "/n", message: notU32(n) });
-  return issues;
+function readKey(key: unknown, issues: Issue[]): number[] {
+  if (!Array.isArray(key)) {
+    issues.push({ path: "/key", message: "the key must be an array of words" });
+    return [];
+  }
+  const words: readonly unknown[] = key;
+  const length = words.length;
+  const copy: number[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const word = words[index];
+    // The path is built only for an issue: draws read keys on the hot path.
+    copy.push(isU32(word) ? word : readU32(word, `/key/${index}`, issues));
+  }
+  return copy;
 }
 
-/** mix32 for inputs that checkDraw already accepted. */
-export function mixValidated(
-  seed: Seed,
-  stream: number,
-  key: readonly number[],
-  n: number,
-): number {
-  const [s0, s1] = seed;
-  let h = mixWord32(mixWord32(mixWord32(s0, s1), stream), key.length);
-  for (const word of key) h = mixWord32(h, word);
+/**
+ * Reads the inputs of a draw once, into fresh values. Throws EngineError("invalid_value") with
+ * every problem, each at its path into `{ seed, stream, key, n }`.
+ */
+export function readDraw(
+  seed: unknown,
+  stream: unknown,
+  key: unknown,
+  n: unknown,
+): DrawSource & { readonly n: number } {
+  const issues: Issue[] = [];
+  // Properties are evaluated in order, so the issues come in the order of the arguments.
+  const draw = {
+    seed: readSeed(seed, issues),
+    stream: readU32(stream, "/stream", issues),
+    key: readKey(key, issues),
+    n: readU32(n, "/n", issues),
+  };
+  if (issues.length > 0) throw new EngineError("invalid_value", issues);
+  return draw;
+}
+
+/** Draw `n` of `source`, which readDraw made: it hashes the copies, by index. */
+export function mixDraw({ seed, stream, key }: DrawSource, n: number): number {
+  let h = mixWord32(mixWord32(mixWord32(seed[0], seed[1]), stream), key.length);
+  for (let index = 0; index < key.length; index += 1) {
+    // index < key.length, and readDraw made the key dense.
+    h = mixWord32(h, key[index] as number);
+  }
   return finish32(mixWord32(h, n), (key.length + 4) * 4);
 }
 
 /**
- * Draw `n` of `stream` for `key` under `seed`, a u32. Throws EngineError("invalid_value") with
- * every input that is not what its type says.
+ * Draw `n` of `stream` for `key` under `seed`, a u32. Each input is read once. Throws
+ * EngineError("invalid_value") with every input that is not what its type says.
  */
 export function mix32(seed: Seed, stream: number, key: readonly number[], n: number): number {
-  checkDraw(seed, stream, key, n);
-  return mixValidated(seed, stream, key, n);
+  const draw = readDraw(seed, stream, key, n);
+  return mixDraw(draw, draw.n);
 }
 
 /**

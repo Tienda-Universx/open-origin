@@ -5,9 +5,10 @@
  *
  * The word operations return int32 values, as JavaScript's bitwise operators do: engines keep
  * those in integer registers, while a u32 above 2^31 - 1 becomes a double, which made MurmurHash3
- * x86_128 over 7 KB about 14 times slower on Bun 1.4.4. `x >>> 0` turns a word into its u32.
+ * several times slower on Bun 1.4.4 (measured 7 to 14 times). `x >>> 0` turns a word into its
+ * u32.
  */
-import { EngineError } from "./errors.ts";
+import { describeValue, EngineError } from "./errors.ts";
 
 /** The largest u32, 2^32 - 1. */
 export const MAX_U32 = 0xffffffff;
@@ -36,7 +37,7 @@ export function rotl32(value: number, bits: number): number {
 export function int64Words(value: number): readonly [number, number] {
   if (!Number.isSafeInteger(value)) {
     throw new EngineError("invalid_value", [
-      { path: "", message: `${value} is not a safe integer` },
+      { path: "", message: `${describeValue(value)} is not a safe integer` },
     ]);
   }
   return [value >>> 0, Math.floor(value / U32_COUNT) >>> 0];

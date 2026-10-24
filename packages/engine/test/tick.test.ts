@@ -25,11 +25,20 @@ describe("nextTick", () => {
     ]);
   });
 
-  test.each([-1, 1.5, MAX + 1, Number.NaN])("rejects %d, which is not a tick", (tick) => {
+  test.each([
+    ["-1", -1],
+    ["-0", -0],
+    ["1.5", 1.5],
+    ["2^53", MAX + 1],
+    ["NaN", Number.NaN],
+  ])("rejects %s, which is not a tick", (_name, tick) => {
     const error = engineErrorOf(() => nextTick(tick));
     expect(error.code).toBe("invalid_value");
     expect(error.issues).toEqual([
-      { path: "", message: `${tick} is not a tick: ticks are safe integers from 0` },
+      {
+        path: "",
+        message: `${Object.is(tick, -0) ? "-0" : tick} is not a tick: ticks are safe integers from 0`,
+      },
     ]);
   });
 });
@@ -70,7 +79,10 @@ describe("simSeconds", () => {
         message: "0 seconds per tick is not a positive safe integer",
       },
     ]);
-    for (const perTick of [1.5, -60, MAX + 1, Number.NaN]) {
+    expect(engineErrorOf(() => simSeconds(-0, 1)).issues).toEqual([
+      { path: "/tick", message: "-0 is not a tick: ticks are safe integers from 0" },
+    ]);
+    for (const perTick of [1.5, -60, -0, MAX + 1, Number.NaN]) {
       expect(engineErrorOf(() => simSeconds(1, perTick)).issues.map(({ path }) => path)).toEqual([
         "/simSecondsPerTick",
       ]);

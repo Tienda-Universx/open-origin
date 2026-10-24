@@ -3,30 +3,29 @@
  * permutations, each draw consuming the next counter n of ctr-mix32@1 from 0. The counter lives
  * in the sequence; keeping it per stream and entity across a tick is the step context's job.
  */
-import { EngineError } from "../errors.ts";
+import { describeValue, EngineError } from "../errors.ts";
 import { isU32, MAX_U32, U32_COUNT } from "../int.ts";
-import { checkDraw, mixValidated, notU32, type Seed } from "./mix32.ts";
+import { type DrawSource, mixDraw, notU32, readDraw, type Seed } from "./mix32.ts";
+
+const EXHAUSTED = "the draw counter is exhausted: a sequence has 2^32 draws, n 0 to 4294967295";
 
 const isBound = (value: number): boolean =>
   Number.isInteger(value) && value >= 1 && value <= U32_COUNT;
 
 /** The draws of one stream for one key under one seed, in counter order. */
 export class DrawSequence {
-  readonly #seed: Seed;
-  readonly #stream: number;
-  readonly #key: readonly number[];
+  readonly #source: DrawSource;
   #next: number;
 
   /**
-   * The draws of `stream` for `key` under `seed`, starting at the counter `next`. It copies `key`.
-   * Throws EngineError("invalid_value") with every input that is not what its type says.
+   * The draws of `stream` for `key` under `seed`, starting at the counter `next`. It reads each
+   * input once, into copies of its own. Throws EngineError("invalid_value") with every input that
+   * is not what its type says.
    */
   constructor(seed: Seed, stream: number, key: readonly number[], next = 0) {
-    checkDraw(seed, stream, key, next);
-    this.#seed = [seed[0], seed[1]];
-    this.#stream = stream;
-    this.#key = key.slice();
-    this.#next = next;
+    const draw = readDraw(seed, stream, key, next);
+    this.#source = { seed: draw.seed, stream: draw.stream, key: draw.key };
+    this.#next = draw.n;
   }
 
   /** The counter n that the next draw uses. */
@@ -40,9 +39,9 @@ export class DrawSequence {
    */
   u32(): number {
     const n = this.#next;
-    if (n > MAX_U32) throw new EngineError("invalid_value", [{ path: "/n", message: notU32(n) }]);
+    if (n > MAX_U32) throw new EngineError("invalid_value", [{ path: "/n", message: EXHAUSTED }]);
     this.#next = n + 1;
-    return mixValidated(this.#seed, this.#stream, this.#key, n);
+    return mixDraw(this.#source, n);
   }
 
   /**
@@ -53,7 +52,7 @@ export class DrawSequence {
   int(bound: number): number {
     if (!isBound(bound)) {
       throw new EngineError("invalid_value", [
-        { path: "/bound", message: `${bound} is not an integer in [1, 4294967296]` },
+        { path: "/bound", message: `${describeValue(bound)} is not an integer in [1, 4294967296]` },
       ]);
     }
     const limit = U32_COUNT - (U32_COUNT % bound);

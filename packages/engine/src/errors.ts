@@ -20,9 +20,13 @@ export type EngineErrorOptions = {
   readonly cause?: unknown;
 };
 
-/** `value` for a message: a number as JavaScript writes it, anything else by its type alone. */
+/**
+ * `value` for a message, without running any of its code: a number as JavaScript writes it, but
+ * -0 as "-0", and anything else by its type alone.
+ */
 export function describeValue(value: unknown): string {
-  return typeof value === "number" ? `${value}` : `a value of type ${typeof value}`;
+  if (typeof value !== "number") return `a value of type ${typeof value}`;
+  return Object.is(value, -0) ? "-0" : `${value}`;
 }
 
 /** `path` for a message: the empty JSON Pointer names the whole value. */
