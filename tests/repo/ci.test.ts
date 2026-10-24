@@ -18,14 +18,13 @@ const ci = Bun.YAML.parse(await Bun.file(WORKFLOW).text()) as Workflow;
 const steps = Object.values(ci.jobs).flatMap((job) => job.steps ?? []);
 
 /** Every workflow file, parsed, keyed by its repository-relative path. */
-const workflows = await Promise.all(
-  repoFiles(REPO_ROOT)
-    .filter((path) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path))
-    .map(async (path) => {
-      const text = await Bun.file(`${REPO_ROOT}${path}`).text();
-      return [path, Bun.YAML.parse(text) as Workflow] as const;
-    }),
-);
+const workflows: Array<readonly [string, Workflow]> = [];
+for (const path of repoFiles(REPO_ROOT)) {
+  if (!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) continue;
+  const file = Bun.file(`${REPO_ROOT}${path}`);
+  // git still lists a tracked file deleted from the working tree; there is nothing to read.
+  if (await file.exists()) workflows.push([path, Bun.YAML.parse(await file.text()) as Workflow]);
+}
 
 /** The events of an `on:` value, which may be one name, a list, or a map. */
 function triggers(on: unknown): string[] {
@@ -111,7 +110,10 @@ describe("every workflow", () => {
   });
 
   test.each(workflows)("%s does not run untrusted code with secrets", (_path, flow) => {
-    expect(triggers(flow.on).filter((event) => PRIVILEGED_EVENTS.includes(event))).toEqual([]);
+    const events = triggers(flow.on);
+    // A missing or unreadable `on:` would leave nothing to check.
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.filter((event) => PRIVILEGED_EVENTS.includes(event))).toEqual([]);
   });
 
   test.each(workflows)("%s pins every action and reusable workflow", (_path, flow) => {

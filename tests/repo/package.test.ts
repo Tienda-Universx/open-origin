@@ -94,9 +94,9 @@ describe("package.json", () => {
       /^bunx --no-install --bun tsc (?=.*--noEmit)(?=.*-p tsconfig\.json)/,
     );
     // Write option values as --option=value: any other argument filters the test files.
-    const test = commands(manifest.scripts.test);
-    expect(test).toEqual([expect.stringMatching(/^bun test(?: |$)/)]);
-    expect(testFilters(test[0] ?? "")).toEqual([]);
+    const testCommands = commands(manifest.scripts.test);
+    expect(testCommands).toEqual([expect.stringMatching(/^bun test(?: |$)/)]);
+    expect(testFilters(testCommands[0] ?? "")).toEqual([]);
   });
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {
