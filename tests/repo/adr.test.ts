@@ -20,9 +20,19 @@ function adr(
   const date = overrides.date ?? "2026-10-24";
   const body =
     overrides.body ??
-    ["## Context", "Why.", "", "## Decision", "What.", "", "## Consequences", "Effects."].join(
-      "\n",
-    );
+    [
+      "## Context",
+      "Why.",
+      "",
+      "## Decision",
+      "What.",
+      "",
+      "## Consequences",
+      "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
+    ].join("\n");
   return {
     name,
     content: [title, "", `- Status: ${status}`, `- Date: ${date}`, "", body, ""].join("\n"),
@@ -83,6 +93,9 @@ describe("validateAdr", () => {
       "",
       "## Consequences",
       "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
     ].join("\n");
     expect(messages(adr({ body }))).toContain("missing section '## Decision'");
   });
@@ -99,6 +112,9 @@ describe("validateAdr", () => {
       "",
       "## Consequences",
       "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
     ].join("\n");
     expect(messages(adr({ body }))).toContain("section '## Decision' appears more than once");
   });
@@ -108,7 +124,16 @@ describe("validateAdr", () => {
   });
 
   test("rejects a missing required section", () => {
-    const body = ["## Context", "Why.", "", "## Consequences", "Effects."].join("\n");
+    const body = [
+      "## Context",
+      "Why.",
+      "",
+      "## Consequences",
+      "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
+    ].join("\n");
     expect(messages(adr({ body }))).toContain("missing section '## Decision'");
   });
 
@@ -122,16 +147,28 @@ describe("validateAdr", () => {
       "",
       "## Consequences",
       "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
     ].join("\n");
     expect(messages(adr({ body }))).toContain(
-      "sections must appear in order: Context, Decision, Consequences",
+      "sections must appear in order: Context, Decision, Consequences, Alternatives considered",
     );
   });
 
   test("rejects an empty required section", () => {
-    const body = ["## Context", "", "## Decision", "What.", "", "## Consequences", "Effects."].join(
-      "\n",
-    );
+    const body = [
+      "## Context",
+      "",
+      "## Decision",
+      "What.",
+      "",
+      "## Consequences",
+      "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
+    ].join("\n");
     expect(messages(adr({ body }))).toContain("section '## Context' must not be empty");
   });
 
@@ -170,6 +207,9 @@ describe("validateAdr", () => {
       "## Consequences",
       "Effects.",
       "",
+      "## Alternatives considered",
+      "Options.",
+      "",
     ].join("\n");
     expect(messages({ name: "0007-use-sample-decision.md", content })).toContain(STATUS_RULE);
   });
@@ -186,6 +226,9 @@ describe("validateAdr", () => {
       "",
       "## Consequences",
       "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
     ].join("\n");
     expect(validateAdr(adr({ body }))).toEqual([]);
   });
@@ -203,8 +246,49 @@ describe("validateAdr", () => {
       "",
       "## Consequences",
       "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
     ].join("\n");
     expect(messages(adr({ body }))).toContain("missing section '## Decision'");
+  });
+});
+
+describe("validateAdr, required alternatives and header boundary", () => {
+  test("rejects an ADR without an Alternatives considered section", () => {
+    const body = [
+      "## Context",
+      "Why.",
+      "",
+      "## Decision",
+      "What.",
+      "",
+      "## Consequences",
+      "Effects.",
+    ].join("\n");
+    expect(messages(adr({ body }))).toContain("missing section '## Alternatives considered'");
+  });
+
+  test("reads metadata after a bare '## ' line, which is not a section heading", () => {
+    const content = [
+      "# 0007. Use sample decision",
+      "## ",
+      "- Status: Accepted",
+      "- Date: 2026-10-24",
+      "",
+      "## Context",
+      "Why.",
+      "",
+      "## Decision",
+      "What.",
+      "",
+      "## Consequences",
+      "Effects.",
+      "",
+      "## Alternatives considered",
+      "Options.",
+    ].join("\n");
+    expect(validateAdr({ name: "0007-use-sample-decision.md", content })).toEqual([]);
   });
 });
 
@@ -236,6 +320,25 @@ describe("validateAdrSet", () => {
     expect(validateAdrSet(files).map((issue) => issue.message)).toContain(
       "numbering must be contiguous from 0000; missing 0001",
     );
+  });
+
+  test("rejects a superseded status that names an ADR that does not exist", () => {
+    const files = [
+      adr({ name: "0000-adr-template.md", title: "# 0000. ADR template" }),
+      adr({ name: "0001-first.md", title: "# 0001. First", status: "Superseded by 0009" }),
+    ];
+    expect(validateAdrSet(files).map((issue) => issue.message)).toContain(
+      "status names ADR 0009, which does not exist",
+    );
+  });
+
+  test("accepts a superseded status that names an existing ADR", () => {
+    const files = [
+      adr({ name: "0000-adr-template.md", title: "# 0000. ADR template" }),
+      adr({ name: "0001-first.md", title: "# 0001. First", status: "Superseded by 0002" }),
+      adr({ name: "0002-second.md", title: "# 0002. Second" }),
+    ];
+    expect(validateAdrSet(files)).toEqual([]);
   });
 });
 

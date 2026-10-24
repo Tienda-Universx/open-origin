@@ -10,7 +10,10 @@ export type AdrIssue = { file: string; message: string };
 
 const FILE_NAME = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
 const STATUS = /^(?:Proposed|Accepted|Rejected|Deprecated|Superseded by \d{4})$/;
-const SECTIONS = ["Context", "Decision", "Consequences"] as const;
+const SECTIONS = ["Context", "Decision", "Consequences", "Alternatives considered"] as const;
+/** A second-level heading with text; a bare "## " line is not a heading. */
+const SECTION_HEADING = /^## (.+?)\s*$/;
+const SUPERSEDED = /^Superseded by (\d{4})$/;
 
 function isCalendarDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -24,11 +27,12 @@ function sectionBodies(lines: readonly string[]): Map<string, Section> {
   const sections = new Map<string, Section>();
   let current: Section | undefined;
   let buffer: string[] = [];
+  // A repeated heading keeps the first non-empty body; the repetition itself is reported.
   const flush = () => {
     if (current && current.body === "") current.body = buffer.join("\n").trim();
   };
   lines.forEach((line, index) => {
-    const heading = /^## (.+?)\s*$/.exec(line)?.[1];
+    const heading = SECTION_HEADING.exec(line)?.[1];
     if (heading === undefined) {
       buffer.push(line);
       return;
@@ -48,14 +52,25 @@ function sectionBodies(lines: readonly string[]): Map<string, Section> {
   return sections;
 }
 
+/** Status and Date belong to the header: every visible line before the first section heading. */
+function headerOf(lines: readonly string[]): readonly string[] {
+  const firstSection = lines.findIndex((line) => SECTION_HEADING.test(line));
+  return firstSection === -1 ? lines : lines.slice(0, firstSection);
+}
+
+function metadata(header: readonly string[], key: "Status" | "Date"): string | undefined {
+  const prefix = `- ${key}: `;
+  return header
+    .find((line) => line.startsWith(prefix))
+    ?.slice(prefix.length)
+    .trim();
+}
+
 export function validateAdr(file: AdrFile): AdrIssue[] {
   const issues: AdrIssue[] = [];
   const report = (message: string) => issues.push({ file: file.name, message });
-  const raw = file.content.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const lines = visibleLines(raw);
-  // Status and Date belong to the header: everything before the first "## " section.
-  const firstSection = lines.findIndex((line) => line.startsWith("## "));
-  const header = firstSection === -1 ? lines : lines.slice(0, firstSection);
+  const lines = visibleLines(file.content.replace(/^\uFEFF/, "").split(/\r?\n/));
+  const header = headerOf(lines);
 
   const number = FILE_NAME.exec(file.name)?.[1];
   if (number === undefined) {
@@ -64,15 +79,15 @@ export function validateAdr(file: AdrFile): AdrIssue[] {
     report(`first line must be '# ${number}. <Title>'`);
   }
 
-  const status = header.find((line) => line.startsWith("- Status: "))?.slice("- Status: ".length);
-  if (status === undefined || !STATUS.test(status.trim())) {
+  const status = metadata(header, "Status");
+  if (status === undefined || !STATUS.test(status)) {
     report(
       "status must be one of: Proposed, Accepted, Rejected, Deprecated, or 'Superseded by NNNN'",
     );
   }
 
-  const date = header.find((line) => line.startsWith("- Date: "))?.slice("- Date: ".length);
-  if (date === undefined || !isCalendarDate(date.trim())) {
+  const date = metadata(header, "Date");
+  if (date === undefined || !isCalendarDate(date)) {
     report("date must be a valid YYYY-MM-DD");
   }
 
@@ -113,6 +128,13 @@ export function validateAdrSet(files: readonly AdrFile[]): AdrIssue[] {
         file: names.join(", "),
         message: `number ${pad(number)} is used by more than one ADR`,
       });
+    }
+  }
+  for (const file of files) {
+    const lines = visibleLines(file.content.replace(/^\uFEFF/, "").split(/\r?\n/));
+    const target = SUPERSEDED.exec(metadata(headerOf(lines), "Status") ?? "")?.[1];
+    if (target !== undefined && !byNumber.has(Number(target))) {
+      issues.push({ file: file.name, message: `status names ADR ${target}, which does not exist` });
     }
   }
   const highest = Math.max(-1, ...byNumber.keys());

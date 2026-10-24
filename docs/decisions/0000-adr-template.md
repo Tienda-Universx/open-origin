@@ -9,8 +9,9 @@ The first line must be "# NNNN. <Title>" with the same number as the file name.
 Status is exactly one of: Proposed, Accepted, Rejected, Deprecated, or
 "Superseded by NNNN" (for example "Superseded by 0012"). Date is the day the status last changed.
 Status and Date must appear in this header, before the first section.
-The three sections below are required, non-empty, and must keep this order.
-"Alternatives considered" and "References" are optional.
+The four sections below up to "Alternatives considered" are required, non-empty, and must keep
+this order (write "No alternatives were evaluated." when none were). "References" is optional.
+A "Superseded by NNNN" status must name an existing ADR.
 tests/repo/adr.test.ts enforces these rules.
 -->
 
@@ -29,7 +30,7 @@ What becomes easier or harder, which risks we accept, and what must be revisited
 
 ## Alternatives considered
 
-Options we rejected and why.
+Options we rejected and why, or "No alternatives were evaluated."
 
 ## References
 
