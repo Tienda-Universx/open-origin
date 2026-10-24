@@ -12,7 +12,7 @@ updates:
     cooldown:
       default-days: 14
     groups:
-      dev-dependencies:
+      bun-dependencies:
         patterns: ["*"]
         update-types: [minor, patch]
     commit-message:

@@ -4,7 +4,7 @@ type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
 type Workflow = {
   permissions: unknown;
   concurrency: { group: string; "cancel-in-progress": string };
-  jobs: Record<string, { steps: Step[] }>;
+  jobs: Record<string, { name: string; steps: Step[] }>;
 };
 
 /** Builds a GitHub Actions expression such as ${{ github.ref }}. */
@@ -15,6 +15,11 @@ const ci = Bun.YAML.parse(await Bun.file(WORKFLOW).text()) as Workflow;
 const steps = Object.values(ci.jobs).flatMap((job) => job.steps);
 
 describe("CI workflow", () => {
+  test("names the job exactly as the required check of the main ruleset (ADR 0016)", () => {
+    // Renaming the job would leave the ruleset waiting for a check that never runs, blocking merges.
+    expect(Object.values(ci.jobs).map((job) => job.name)).toContain("Typecheck, lint and test");
+  });
+
   test("gives every push to main its own concurrency group, so no main run is cancelled", () => {
     // A group keeps one running and one pending run; a third run cancels the pending one even
     // with cancel-in-progress off. A per-run group on pushes avoids that.

@@ -7,6 +7,7 @@ type Update = {
   schedule: { interval: string };
   cooldown?: { "default-days"?: number };
   "commit-message"?: { prefix?: string };
+  groups?: Record<string, { patterns: string[]; "update-types"?: string[] }>;
 };
 
 const config = Bun.YAML.parse(await Bun.file(`${REPO_ROOT}.github/dependabot.yml`).text()) as {
@@ -31,6 +32,10 @@ describe("Dependabot version updates", () => {
       expect(update?.schedule.interval).toBe("weekly");
       expect(update?.cooldown?.["default-days"]).toBeGreaterThanOrEqual(14);
       expect(update?.["commit-message"]?.prefix).toBe("build");
+      // One group for minor and patch updates; each major update gets its own pull request.
+      expect(Object.values(update?.groups ?? {})).toEqual([
+        { patterns: ["*"], "update-types": ["minor", "patch"] },
+      ]);
     },
   );
 });

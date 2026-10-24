@@ -36,6 +36,8 @@ live in GitHub and are recorded here.
 
 - Nobody, administrators included, can push to `main` directly, force-push it, or delete it; every
   change needs a pull request whose CI is green.
+- The required check is matched by name: renaming the CI job "Typecheck, lint and test" would block
+  every merge, so `tests/repo/ci.test.ts` pins the name.
 - A sole maintainer can still merge: no approval is required, because GitHub does not let authors
   approve their own pull requests.
 - "Branch up to date" is not required, so stacked pull requests keep working
