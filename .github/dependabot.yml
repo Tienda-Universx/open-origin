@@ -1,0 +1,27 @@
+# Version updates for the Bun dependencies and the SHA-pinned workflow actions.
+# A release must be two weeks old before Dependabot proposes it (ADR 0015).
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      dev-dependencies:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
