@@ -1,0 +1,4 @@
+# The vision and the approved plan are verbatim records pinned by SHA-256
+# (tests/repo/docs.test.ts): never convert their line endings.
+docs/vision/master-vision.es.md -text
+docs/roadmap/v0.1-plan.es.md -text
