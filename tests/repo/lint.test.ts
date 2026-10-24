@@ -108,6 +108,7 @@ describe("automated quality controls", () => {
   });
 
   test("4 parameters sit exactly at the parameter limit", () => {
+    // Only Biome limits parameters (useMaxParams); .oxlintrc.json has no parameter rule.
     const four =
       "export function q(a: number, b: number, c: number, d: number): number {\n  return a + b + c + d;\n}\n";
     expect(run("biome", { "four-params.ts": four }).exitCode).toBe(0);

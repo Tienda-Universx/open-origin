@@ -24,13 +24,13 @@ We will keep this baseline on the repository and change it only through a new or
 | Secret scanning and push protection | Enabled |
 | Code scanning | CodeQL default setup (Actions and JavaScript/TypeScript) |
 | Private vulnerability reporting | Enabled; `SECURITY.md` explains how to report |
-| Dependabot | Alerts and security updates enabled; weekly version updates for `bun` and `github-actions` with a 14-day cooldown (`.github/dependabot.yml`) |
+| Dependabot | Alerts and security updates enabled; weekly version updates for `bun` and `github-actions`, with a cooldown of at least 14 days as ADR 0015 requires (currently 14; `.github/dependabot.yml`) |
 | Actions | Workflow token read-only by default; Actions cannot approve pull requests; actions must be pinned to a full commit SHA |
 | Wiki and Projects | Disabled: documentation lives in reviewed pull requests |
 
 The two files in the repository (`SECURITY.md`, `.github/dependabot.yml`) are reviewed like code;
-`tests/repo/dependabot.test.ts` pins the cooldown, ecosystems and commit prefix. The other settings
-live in GitHub and are recorded here.
+`tests/repo/dependabot.test.ts` pins the ecosystems, schedule, grouping, commit prefix, and the
+minimum cooldown. The other settings live in GitHub and are recorded here.
 
 ## Consequences
 
