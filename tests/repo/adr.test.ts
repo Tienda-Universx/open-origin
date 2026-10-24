@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { type AdrFile, validateAdr, validateAdrSet } from "./adr.ts";
+import { repoFiles } from "./files.ts";
 
-const DECISIONS_DIR = new URL("../../docs/decisions/", import.meta.url);
+const ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
+const DECISIONS = "docs/decisions/";
 
 function adr(
   overrides: Partial<{
@@ -240,9 +242,13 @@ describe("validateAdrSet", () => {
 describe("repository ADRs", () => {
   test("every file in docs/decisions is a valid ADR and numbering is contiguous", async () => {
     const files: AdrFile[] = [];
-    // Scan every file, not only *.md, so a misnamed ADR (.MD, .markdown) cannot be skipped.
-    for await (const name of new Bun.Glob("*").scan({ cwd: Bun.fileURLToPath(DECISIONS_DIR) })) {
-      files.push({ name, content: await Bun.file(new URL(name, DECISIONS_DIR)).text() });
+    // Every file git tracks or would track there, whatever its name (dotfiles, .MD, .markdown),
+    // so a misnamed ADR cannot be skipped and local-only files cannot fail the check.
+    for (const path of repoFiles(ROOT)) {
+      if (!path.startsWith(DECISIONS)) continue;
+      const file = Bun.file(`${ROOT}${path}`);
+      if (await file.exists())
+        files.push({ name: path.slice(DECISIONS.length), content: await file.text() });
     }
     expect(files.length).toBeGreaterThanOrEqual(2);
     expect(validateAdrSet(files)).toEqual([]);
