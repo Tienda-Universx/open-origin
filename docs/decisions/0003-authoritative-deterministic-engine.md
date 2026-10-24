@@ -40,6 +40,11 @@ We will build an authoritative, deterministic engine with a pure core (plan §E.
 Erratum: plan §I.1.4 writes the bound as "≤ 2^53"; 2^53 is not a safe integer, so the bound is
 2^53 − 1, as corrected here.
 
+Refined by [0020](0020-deterministic-core-design.md): the snapshot keeps `{ algorithm, seed }`
+without per-stream counters, the per-tick hash is a 128-bit digest with an additive per-chunk root
+that also covers events, and `step` owns and advances its world in place with a defined failure
+model.
+
 Reproducibility levels: **N1 core** bit-for-bit replay from snapshot + log, to be guaranteed and
 tested from T2; **N2 model decisions** not reproducible live, reproducible from the log because
 outputs are recorded; **N3 re-run experiments with models** statistical reproducibility over seeds.

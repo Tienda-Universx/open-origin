@@ -160,6 +160,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0017](../decisions/0017-no-webhooks-until-a-consumer-exists.md) | No webhooks until a consumer exists |
 | [0018](../decisions/0018-telemetry-off.md) | Telemetry off for the tools the repository runs |
 | [0019](../decisions/0019-end-to-end-testing-strategy.md) | End-to-end testing strategy: `bun test` for processes, Playwright from T8 |
+| [0020](../decisions/0020-deterministic-core-design.md) | Deterministic core design: state ownership, failure model, 128-bit digests, counter-based randomness |
 
 ## Related
 
