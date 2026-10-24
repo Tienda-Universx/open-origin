@@ -1,8 +1,10 @@
 // Determinism rules for packages/engine/src that Biome has no stable rule for (ADR 0003 P5, plan
 // §I.1). biome.json registers this plugin for that directory only; tests/repo/lint.test.ts proves
-// that each pattern rejects its fixture. Binding `Object` to a name is rejected, but the patterns
-// still see direct references only, so indirection such as `(Object as typeof Object).keys(x)`,
-// `(Object).keys(x)`, or `({ constructor } = f)` is not caught.
+// that each pattern rejects its fixture. Key enumeration lives in key-order.grit, which has one
+// reviewed exception. Binding `Object` to a name is rejected, but the patterns here and in
+// key-order.grit still see direct references only, so indirection such as
+// `(Object as typeof Object).keys(x)`, `(Object).keys(x)`, or `({ constructor } = f)` is not
+// caught.
 language js
 
 or {
@@ -41,16 +43,10 @@ or {
     register_diagnostic(span=$match, message="Locale-sensitive methods depend on the host's locale data: compare and format code units explicitly (determinism, ADR 0003, plan §I.1).")
   },
   or {
-    JsStaticMemberExpression(object=`Object`, member=r"^(?:keys|values|entries|getOwnProperty(?:Names|Symbols|Descriptors))$"),
-    JsComputedMemberExpression(object=`Object`, member=r"^[\x22\x27\x60](?:keys|values|entries|getOwnProperty(?:Names|Symbols|Descriptors))[\x22\x27\x60]$")
-  } as $match where {
-    register_diagnostic(span=$match, message="Key enumeration through `Object` (`keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`, `getOwnPropertyDescriptors`) follows insertion order, which a resumed world may not share: iterate in canonical order (determinism, ADR 0003, plan §I.1).")
-  },
-  or {
     `$binding = Object`,
     JsAssignmentExpression(right=`Object`)
   } as $match where {
-    register_diagnostic(span=$match, message="Binding `Object` to a name hides its key-enumeration members from this check: call `Object` members directly (determinism, ADR 0003, plan §I.1).")
+    register_diagnostic(span=$match, message="Binding `Object` to a name hides its key-enumeration members from key-order.grit: call `Object` members directly (determinism, ADR 0003, plan §I.1).")
   },
   or {
     JsStaticMemberExpression(member=r"^constructor$"),

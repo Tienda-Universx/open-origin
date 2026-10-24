@@ -1,0 +1,13 @@
+// Key enumeration through `Object` in packages/engine/src (ADR 0020, plan §I.1). It is a plugin of
+// its own because Biome adds up the plugins of every override that matches a file and cannot take
+// one away: biome.json registers it for src except canonical/order.ts, the one module that lists
+// own keys and sorts them. tests/repo/lint.test.ts proves that the pattern rejects its fixtures
+// and that the exception covers order.ts alone.
+language js
+
+or {
+  JsStaticMemberExpression(object=`Object`, member=r"^(?:keys|values|entries|getOwnProperty(?:Names|Symbols|Descriptors))$"),
+  JsComputedMemberExpression(object=`Object`, member=r"^[\x22\x27\x60](?:keys|values|entries|getOwnProperty(?:Names|Symbols|Descriptors))[\x22\x27\x60]$")
+} as $match where {
+  register_diagnostic(span=$match, message="Key enumeration through `Object` (`keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`, `getOwnPropertyDescriptors`) follows insertion order, which a resumed world may not share: iterate the sorted keys of canonical/order.ts (determinism, ADR 0003, plan §I.1).")
+}

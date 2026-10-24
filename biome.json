@@ -148,6 +148,45 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/engine/src/**", "!packages/engine/src/canonical/order.ts"],
+      "plugins": ["./packages/engine/lint/key-order.grit"]
+    },
+    {
+      "includes": ["packages/engine/src/canonical/encode.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "Math": "Math is implementation-approximated (sin, exp, pow) or host-seeded (random): use integer arithmetic (ADR 0003).",
+                  "Date": "Date reads the host clock and time zone: simulation time is the tick (ADR 0003).",
+                  "Intl": "Intl depends on the host's locale data (ADR 0003).",
+                  "globalThis": "globalThis reaches host globals that no rule here can see (ADR 0003 P5).",
+                  "WeakRef": "WeakRef observes garbage collection, which differs between runs (ADR 0003).",
+                  "FinalizationRegistry": "FinalizationRegistry observes garbage collection, which differs between runs (ADR 0003).",
+                  "SharedArrayBuffer": "SharedArrayBuffer shares memory between threads; the engine is single-threaded (ADR 0003).",
+                  "Atomics": "Atomics serves shared-memory threads; the engine is single-threaded (ADR 0003).",
+                  "Promise": "The engine is synchronous: asynchronous work belongs to the host (ADR 0003, plan §I.1).",
+                  "Map": "Map iterates in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1).",
+                  "Set": "Set iterates in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1).",
+                  "WeakMap": "WeakMap keeps state outside the canonical, hashed world (plan §I.1).",
+                  "WeakSet": "WeakSet keeps state outside the canonical, hashed world (plan §I.1).",
+                  "Function": "Function compiles strings into code at run time, like eval (ADR 0003 P5).",
+                  "Bun": "Bun is a host API: the engine core is runtime-agnostic (ADR 0003 P5).",
+                  "crypto": "crypto is a host API and an unseeded random source (ADR 0003).",
+                  "performance": "performance reads a host clock (ADR 0003).",
+                  "structuredClone": "structuredClone is a host API, not ECMAScript (ADR 0003 P5).",
+                  "Reflect": "Reflect.ownKeys enumerates keys in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1)."
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }
