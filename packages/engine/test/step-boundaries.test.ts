@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   type Command,
   chunkHashes,
-  type EngineError,
+  EngineError,
   fullChecksum,
   readView,
   stateRoot,
@@ -10,6 +10,7 @@ import {
   type World,
   worldStatus,
 } from "../src/index.ts";
+import { poison, worldState } from "../src/world/world.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import {
   type Ctx,
@@ -115,6 +116,37 @@ describe("a step of a world refuses a second use of that world while it reads th
       }),
     ]);
     expect(inner).toMatchObject({ code: "world_busy", issues: [{ message: busy("stateRoot") }] });
+  });
+
+  /**
+   * Every engine function refuses a world while it steps, so nothing can change one while step
+   * reads its commands. These traps reach the state through the engine's internals, as an engine
+   * function that skipped the busy guard would: step must refuse to advance the changed world.
+   */
+  const CHANGED =
+    "the world changed while step read its commands: an engine function changed it without the busy guard, which is an engine defect";
+
+  test.each([
+    ["moves its tick", 1, (world: World) => (worldState(world).kernel.tick += 1)],
+    [
+      "poisons it",
+      0,
+      (world: World) => {
+        const fault = new EngineError("system_fault", [{ path: "", message: "elsewhere" }]);
+        poison(worldState(world), fault);
+      },
+    ],
+  ])("a defect that %s while the commands are read stops the step", (_, tick, change) => {
+    const world = stepWorld(putting());
+    const state = worldState(world);
+    const error = engineErrorOf(() => step(world, [trapCommand(() => change(world))]));
+    expect({ code: error.code, issues: error.issues }).toEqual({
+      code: "world_busy",
+      issues: [{ path: "", message: CHANGED }],
+    });
+    expect(state.kernel.tick).toBe(tick);
+    expect(state.chunks.get("0,0")?.value).toEqual({ grass: 1 });
+    expect(state.active).toBeUndefined();
   });
 });
 

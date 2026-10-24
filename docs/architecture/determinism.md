@@ -539,10 +539,14 @@ keeps no module state.
 | Fuzz (`step-fuzz`) | 64 seeds of 200 ticks, with random valid command lists from `sfc32`. Each seed runs two worlds on the same lists. The first, under audit, also receives on about one tick in eight a list broken in one of seven ways, before the valid one: step must throw `invalid_input` and leave `stateRoot` and `fullChecksum` unchanged, and audit makes the incremental root equal the full one after every tick. The second, without audit, never receives a broken list. Both must give the same checksum, events, changed chunks, and statistics at every tick |
 | Isolation (`world-isolation`) | Three worlds (two of them replicas) stepped in turn, in a random interleaving, and sharing one ruleset object, give exactly what each gives alone |
 
-The fuzz runs 64 seeds, about 7.5 seconds on the 2-core Codespace: a tally tick costs about 110 µs,
+The fuzz runs 64 seeds, about 8 seconds on the 2-core Codespace: a tally tick costs about 110 µs,
 and about 300 µs with audit, which recomputes every chunk. The plan's estimate of 200 seeds took
-about 22 seconds, and every check runs the whole suite. Its explicit timeout is 30 seconds, and the
-comment at the top of `step-fuzz.test.ts` says how to run a larger sweep once, by hand.
+about 22 seconds, and every check runs the whole suite. The test is synchronous, so Bun cannot
+interrupt it: its timeout only fails a run that took longer, and the CI job's timeout stops a hang.
+The timeout is therefore a budget of 1 second per seed, about eight times the measured cost, so a
+runner that much slower still passes (four runs at once on the Codespace took 32 seconds each). The
+comment at the top of `step-fuzz.test.ts` records the measurements and says how to run a larger
+sweep once, by hand.
 
 Measured observation (indicative: CPU profiles of tally runs, Bun 1.4.4 on the 2-core Codespace,
 2026-10-24): for small chunks, of about 140 bytes of canonical text, the fixed costs of each

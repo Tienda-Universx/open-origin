@@ -191,7 +191,11 @@ export function poison(state: WorldState, fault: EngineError): void {
 /**
  * What `world` is doing, in a fresh record: `{ kind: "ok", tick }`, or, once a tick failed,
  * `{ kind: "faulted", tick, code, issues }`. It is the one function a faulted world answers, and,
- * like every other, it throws EngineError("world_busy") while a step runs on the world.
+ * like every other, it throws EngineError("world_busy") while a step runs on the world: during
+ * the tick the kernel is already at the tick being computed, so any answer would report a partial
+ * state. Only ruleset code that holds its world, which faults the tick, or a host Proxy among the
+ * commands can call it then. step clears the busy mark in a `finally`, so once step returns or
+ * throws, worldStatus answers again.
  */
 export function worldStatus(world: World): WorldStatus {
   const { kernel, status } = idleState(world, "worldStatus");

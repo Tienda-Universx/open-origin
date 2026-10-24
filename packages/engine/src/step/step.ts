@@ -208,12 +208,15 @@ function advance(state: WorldState, commands: readonly Command[]): StepResult {
 }
 
 /**
- * Throws when the world is not where it was before step read the commands. Nothing can change
- * it meanwhile, since every use of the world is refused, so this only guards that rule.
+ * Throws when the world is not where it was before step read the commands, so that step never
+ * applies them at a tick they do not name, or to a poisoned world. Every engine function refuses
+ * a busy world, so neither the host nor ruleset code can cause this: only an engine function
+ * that skipped the busy guard can, and the message says so.
  */
 function expectUnchanged(state: WorldState, tick: number): void {
   if (state.status.kind === "ok" && state.kernel.tick === tick) return;
-  const message = "the world changed while step read its commands: nothing may use it meanwhile";
+  const message =
+    "the world changed while step read its commands: an engine function changed it without the busy guard, which is an engine defect";
   throw new EngineError("world_busy", [{ path: "", message }]);
 }
 

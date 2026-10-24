@@ -20,7 +20,7 @@ import { type CanonicalValue, pointer } from "../canonical/value.ts";
 import { type Digest, Digester, digest, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes, subtractLanes } from "../digest/lanes.ts";
 import { describePath, EngineError, type Issue, IssueList } from "../errors.ts";
-import { composeRoot, kernelDigest, pathInValue, recomputeRoot } from "../world/checksum.ts";
+import { composeRoot, kernelDigest, recomputeRoot, relocatePath } from "../world/checksum.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import { runValidator } from "../world/validators.ts";
 import type { WorldState } from "../world/world.ts";
@@ -47,7 +47,7 @@ function taggedText(tagged: readonly CanonicalValue[], path: string, issues: Iss
   } catch (error) {
     if (!EngineError.isEngineError(error)) throw error;
     for (const issue of error.issues) {
-      issues.report(pathInValue(issue.path, tagged, path), issue.message, error.cause);
+      issues.report(relocatePath(issue.path, tagged, path), issue.message, error.cause);
     }
     return undefined;
   }
@@ -134,7 +134,7 @@ function staleIssue({ path, change, noun, tagged, cached }: Cached): Issue | und
   } catch (error) {
     if (!EngineError.isEngineError(error)) throw error;
     const [first] = error.issues;
-    const at = describePath(pathInValue(first?.path ?? "", tagged, ""));
+    const at = describePath(relocatePath(first?.path ?? "", tagged, ""));
     return { path, message: `${change}, and it is not canonical: at ${at}: ${first?.message}` };
   }
 }
