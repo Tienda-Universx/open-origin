@@ -16,13 +16,14 @@
   "scripts": {
     "check": "bun run typecheck && bun run lint && bun run test",
     "typecheck": "bunx --no-install --bun tsc --noEmit -p tsconfig.json",
-    "lint": "bunx --no-install --bun biome check .",
+    "lint": "bunx --no-install --bun biome check . && bunx --no-install --bun oxlint -c .oxlintrc.json --deny-warnings",
     "format": "bunx --no-install --bun biome check --write .",
     "test": "bun test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2",
     "@types/bun": "1.4.4",
+    "oxlint": "1.87.0",
     "typescript": "7.0.2"
   }
 }
