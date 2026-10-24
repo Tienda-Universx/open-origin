@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,9 @@ import { REPO_ROOT } from "./files.ts";
  * Proves that each automated quality control fires: every fixture breaks one rule and is
  * linted with the repository's own configuration. A control that stops firing fails here.
  */
+
+// Each test spawns up to three linters; a cold CI runner can exceed Bun's 5-second default.
+setDefaultTimeout(60_000);
 
 const scratch = mkdtempSync(join(tmpdir(), "open-origin-lint-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -56,8 +59,8 @@ function nested(depth: number): string {
 }
 
 function longFunction(lines: number): string {
-  const body = Array.from({ length: lines }, (_, i) => `  const v${i} = ${i};`);
-  return `export function h(): number {\n${body.join("\n")}\n  return v0;\n}\n`;
+  const body = Array.from({ length: lines }, (_, i) => `  total += ${i};`);
+  return `export function h(): number {\n  let total = 0;\n${body.join("\n")}\n  return total;\n}\n`;
 }
 
 describe("automated quality controls", () => {
@@ -96,6 +99,11 @@ describe("automated quality controls", () => {
     expect(exitCode).toBe(1);
     expect(output.match(/eslint\(complexity\)/g)).toHaveLength(1);
     expect(output).toContain("eslint(max-depth)");
+  });
+
+  test("the 50-line limit is lifted for test files only", () => {
+    expect(run("biome", { "long.test.ts": longFunction(55) }).exitCode).toBe(0);
+    expect(run("biome", { "long-test-helper.ts": longFunction(55) }).exitCode).toBe(1);
   });
 
   test("oxlint accepts a cyclomatic complexity of exactly 10", () => {
@@ -190,6 +198,9 @@ describe("automated quality controls", () => {
       "lint/correctness/noUnusedFunctionParameters",
     ],
   ] as const)("Biome rejects %s", (_name, files, rule) => {
-    expect(run("biome", files)).toEqual({ exitCode: 1, output: expect.stringContaining(rule) });
+    const { exitCode, output } = run("biome", files);
+    // The fixture breaks exactly this rule, so the failing exit code comes from it alone.
+    expect(exitCode).toBe(1);
+    expect([...new Set(output.match(/lint\/[a-z]+\/[A-Za-z]+/g))]).toEqual([rule]);
   });
 });

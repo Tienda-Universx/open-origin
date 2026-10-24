@@ -2,11 +2,13 @@
  * Invisible, format and bidirectional control characters can hide code from reviewers
  * ("Trojan Source", CVE-2021-42574) or silently change behavior (a literal BOM in a regex).
  * Text files must write them as escapes instead. Covered: soft hyphen, Arabic letter mark,
- * Mongolian vowel separator, zero-width characters and marks, line and paragraph separators,
- * bidi embeddings, overrides and isolates, invisible operators, deprecated format characters, BOM, interlinear annotations,
- * Unicode tags (used to hide text in prompts) and the supplementary variation selectors.
- * The emoji variation selectors U+FE00 to U+FE0F stay allowed: ordinary emoji use them. Zero-width
- * joiners are rejected, so emoji sequences built with them must be written as escapes.
+ * Mongolian vowel separator, zero-width characters and marks, line and paragraph separators, bidi
+ * embeddings, overrides and isolates, invisible operators, deprecated format characters, BOM,
+ * interlinear annotations, Unicode tags (used to hide text in prompts) and the supplementary
+ * variation selectors.
+ * Variation selectors U+FE00 to U+FE0F stay allowed: emoji presentation uses U+FE0F (and text
+ * presentation U+FE0E). Zero-width joiners are rejected, so emoji sequences built with them must be
+ * written as escapes.
  */
 // The combining selectors come first: after a base character a linter reads them as one sequence.
 const INVISIBLE =

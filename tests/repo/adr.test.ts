@@ -384,7 +384,7 @@ describe("repository ADRs", () => {
       if (await file.exists())
         files.push({ name: path.slice(DECISIONS.length), content: await file.text() });
     }
-    // ADRs are superseded, never deleted: the count only grows (0000-0015 so far).
+    // ADRs are superseded, never deleted, so the count only grows: raise this floor with each ADR.
     expect(files.length).toBeGreaterThanOrEqual(16);
     expect(validateAdrSet(files)).toEqual([]);
   });
