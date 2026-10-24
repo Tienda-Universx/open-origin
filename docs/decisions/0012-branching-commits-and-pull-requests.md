@@ -21,7 +21,10 @@ We will deliver every batch through branches and pull requests into `main`.
 | Never commit to `main` | All changes reach `main` through a pull request | Vision §32 |
 | Chained PRs | A batch with separable deliveries uses chained PRs, each based on the previous branch (T1: two PRs, O-27; T8: three PRs, §M) | Plan O-27, §M, §P |
 | Conventional Commits | Small, descriptive commits per work unit | Plan O-19, §P; vision §32 |
-| No AI attribution | No `Co-Authored-By` trailers | Plan O-19, §P |
+| No AI attribution in commits | Commit messages carry no `Co-Authored-By` or similar AI trailers. A PR description may carry a tooling footer; it never enters history (see "Merge commits") | Plan O-19, §P; technical lead, 2026-10-24 |
+| Merge commits | PRs are merged with a merge commit (no squash, no rebase-merge) that keeps the work-unit commits. The merge commit uses GitHub's default merge message, which carries the PR title, never the PR body | Technical lead, 2026-10-24 |
+| Merging chained (stacked) PRs | Merge the parent PR first; then retarget the child PR to `main` and merge it after its CI passes | Technical lead, 2026-10-24 |
+| User-authenticated pushes | Pushes and PRs are made with a user-authenticated token: events created with the Codespace-scoped token do not start GitHub Actions workflows (observed 2026-10-24) | Tracker L10 |
 | Explicit authorization | Push, opening PRs, and any deployment happen only with the maintainer's explicit authorization at that moment | Plan §P criterion 8; vision §32 |
 
 - An architectural change adds or supersedes an ADR in the same pull request
@@ -36,6 +39,9 @@ We will deliver every batch through branches and pull requests into `main`.
 - Branch protection is a maintainer action outside the repository; until it is enabled, the rule
   relies on discipline and review.
 - The ≈400-line size is a reference, not a hard limit.
+- `main` keeps every work-unit commit, plus one merge commit per PR.
+- A push or PR made with the Codespace-scoped token starts no workflow; CI then needs a new push
+  with a user-authenticated token (in T1, an empty commit; tracker L10).
 
 ## Alternatives considered
 
@@ -46,4 +52,4 @@ We will deliver every batch through branches and pull requests into `main`.
 
 - Master vision `docs/vision/master-vision.es.md` §32.
 - Plan: §M, §P, O-19, O-27, O-28, O-29.
-- Tracker `docs/roadmap/v0.1-tracker.md`: S1.
+- Tracker `docs/roadmap/v0.1-tracker.md`: S1, L10.
