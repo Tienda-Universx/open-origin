@@ -1,3 +1,6 @@
+/** Absolute path of the repository root, with a trailing slash. */
+export const REPO_ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
+
 let repositoryVariables: ReadonlySet<string> | undefined;
 
 /**

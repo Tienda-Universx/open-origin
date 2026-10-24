@@ -13,12 +13,9 @@ separated, with experimental controls that detect observation bias (plan §K.6).
 
 ## Decision
 
-**P9 Observer independence.** Nothing outside the world (who watches, which UI is open, who pays)
-enters the engine, the minds, or the cognitive allocator.
-
-**Invariant.** No input of the engine, the minds, or the cognitive allocator depends on external
-observation: who watches, who follows whom, which view is open, which client is connected, who
-pays.
+**P9 Observer independence.** No input of the engine, the minds, or the cognitive allocator
+depends on anything outside the world: who watches, who follows whom, which view is open, which
+client is connected, or who pays.
 
 | Plane | May depend on observation | May not |
 |---|---|---|

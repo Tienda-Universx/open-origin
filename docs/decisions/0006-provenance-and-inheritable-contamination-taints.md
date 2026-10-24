@@ -66,9 +66,8 @@ Controls (§K.7):
   nested simulations are future requirements this design does not block (plan §L).
 - Whether the official world's internal laws are public or private data is an open question
   recorded in [0008](0008-data-classification-and-audience-projections.md) (O-15).
-- **Open question (O-13 before the first batch that encodes internal laws; O-14 before T5):** non-terrestrial internal laws and the
-  tag-without-intervening self-reference policy are research-design choices, not minor technical
-  ones, so they stay recommended defaults until the maintainer confirms them. The accepted decision
+- **Open questions (O-13, O-14):** controls 4 and 5 are research-design choices that stay
+  recommended defaults until the maintainer confirms them (see Decision). The accepted decision
   (provenance, inheritable taints, no lexical blocking) does not depend on the answer.
 
 ## Alternatives considered
@@ -77,8 +76,7 @@ Controls (§K.7):
   creator, simulation, or external reality (plan revision 1): rejected by the maintainer
   (tracker L2 point 3; plan "Qué cambió", point 3).
 - Deleting implementation self-references: rejected; they are tagged and measured (plan §C.2
-  tension 2, §K.7). Whether the default policy is to tag without intervening stays open (O-14, see
-  Consequences).
+  tension 2, §K.7).
 - A predefined catalog of discoveries (plan revision 1): replaced by composable, validatable
   representations (tracker L2 point 8; plan "Qué cambió", point 8; §K.8).
 

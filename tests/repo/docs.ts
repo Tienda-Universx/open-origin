@@ -2,7 +2,7 @@
  * Checks for the Markdown documentation: relative links must point to existing files and anchors.
  */
 
-import { visibleLines } from "./markdown.ts";
+import { visibleText } from "./markdown.ts";
 
 export type LinkIssue = { file: string; target: string; reason: "missing file" | "missing anchor" };
 
@@ -24,7 +24,7 @@ export function githubSlug(heading: string): string {
 export function headingAnchors(markdown: string): Set<string> {
   const anchors = new Set<string>();
   const seen = new Map<string, number>();
-  for (const line of visibleLines(markdown.split(/\r?\n/))) {
+  for (const line of visibleText(markdown)) {
     const text = HEADING.exec(line)?.[1];
     if (text === undefined) continue;
     const slug = githubSlug(text);
@@ -35,9 +35,43 @@ export function headingAnchors(markdown: string): Set<string> {
   return anchors;
 }
 
-/** Repository-relative path of `target` as seen from `file` (both POSIX, no leading slash). */
-function resolve(file: string, target: string): string {
-  return decodeURIComponent(new URL(target, `file:///${file}`).pathname.slice(1));
+/** Relative link targets of a Markdown document, ignoring code blocks, code spans and URLs. */
+function relativeTargets(markdown: string): string[] {
+  return visibleText(markdown).flatMap((line) =>
+    [...line.replace(INLINE_CODE, "").matchAll(LINK)]
+      .map(([, target = ""]) => target)
+      .filter((target) => !SCHEME.test(target)),
+  );
+}
+
+/** A path exists when it is a listed file or a directory that holds one. */
+function exists(files: ReadonlySet<string>, path: string): boolean {
+  const dir = `${path.replace(/\/$/, "")}/`;
+  return files.has(path) || [...files].some((candidate) => candidate.startsWith(dir));
+}
+
+type LinkContext = {
+  docs: ReadonlyMap<string, string>;
+  files: ReadonlySet<string>;
+  anchors: Map<string, Set<string>>;
+};
+
+function anchorsOf(context: LinkContext, path: string, markdown: string): Set<string> {
+  const anchors = context.anchors.get(path) ?? headingAnchors(markdown);
+  context.anchors.set(path, anchors);
+  return anchors;
+}
+
+function checkLink(context: LinkContext, file: string, target: string): LinkIssue | undefined {
+  // Resolving against the linking file also handles "../", "./" and same-file "#anchor" links.
+  const url = new URL(target, `file:///${file}`);
+  const resolved = decodeURIComponent(url.pathname.slice(1));
+  if (!exists(context.files, resolved)) return { file, target, reason: "missing file" };
+  const linked = context.docs.get(resolved);
+  const fragment = decodeURIComponent(url.hash.slice(1));
+  if (fragment === "" || linked === undefined) return undefined;
+  if (anchorsOf(context, resolved, linked).has(fragment)) return undefined;
+  return { file, target, reason: "missing anchor" };
 }
 
 /**
@@ -50,36 +84,11 @@ export function checkLinks(
   docs: ReadonlyMap<string, string>,
   files: ReadonlySet<string>,
 ): LinkIssue[] {
-  const issues: LinkIssue[] = [];
-  const anchorCache = new Map<string, Set<string>>();
-  const exists = (path: string): boolean => {
-    const dir = `${path.replace(/\/$/, "")}/`;
-    return files.has(path) || [...files].some((candidate) => candidate.startsWith(dir));
-  };
-  for (const [file, content] of docs) {
-    for (const line of visibleLines(content.split(/\r?\n/))) {
-      for (const [, target = ""] of line.replace(INLINE_CODE, "").matchAll(LINK)) {
-        if (SCHEME.test(target)) continue;
-        const hash = target.indexOf("#");
-        const pathPart = hash === -1 ? target : target.slice(0, hash);
-        const fragment = hash === -1 ? "" : target.slice(hash + 1);
-        const resolved = pathPart === "" ? file : resolve(file, pathPart);
-        if (!exists(resolved)) {
-          issues.push({ file, target, reason: "missing file" });
-          continue;
-        }
-        const linked = docs.get(resolved);
-        if (fragment === "" || linked === undefined) continue;
-        let anchors = anchorCache.get(resolved);
-        if (anchors === undefined) {
-          anchors = headingAnchors(linked);
-          anchorCache.set(resolved, anchors);
-        }
-        if (!anchors.has(decodeURIComponent(fragment))) {
-          issues.push({ file, target, reason: "missing anchor" });
-        }
-      }
-    }
-  }
-  return issues;
+  const context: LinkContext = { docs, files, anchors: new Map() };
+  return [...docs].flatMap(([file, content]) =>
+    relativeTargets(content).flatMap((target) => {
+      const issue = checkLink(context, file, target);
+      return issue === undefined ? [] : [issue];
+    }),
+  );
 }

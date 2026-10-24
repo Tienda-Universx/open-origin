@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { repoFiles } from "./files.ts";
+import { REPO_ROOT, repoFiles } from "./files.ts";
 import { decodeKeepingBom, findInvisibleChars, isProbablyText } from "./hygiene.ts";
-
-const ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
 
 describe("findInvisibleChars", () => {
   test("accepts ordinary text, including accents and emoji", () => {
@@ -75,13 +73,13 @@ describe("isProbablyText", () => {
 
 describe("repository hygiene", () => {
   test("text files contain no invisible or bidirectional control characters", async () => {
-    const files = repoFiles(ROOT);
-    // Guard against a vacuous pass: the scan must see this very file.
+    const files = repoFiles(REPO_ROOT);
+    // Guard against a vacuous pass: the scan must see this file.
     expect(files).toContain("tests/repo/hygiene.test.ts");
     const scanned: string[] = [];
     const offenders: string[] = [];
     for (const path of files) {
-      const file = Bun.file(`${ROOT}${path}`);
+      const file = Bun.file(`${REPO_ROOT}${path}`);
       // git still lists a tracked file deleted from the working tree; there is nothing to read.
       if (!(await file.exists())) continue;
       const bytes = await file.bytes();

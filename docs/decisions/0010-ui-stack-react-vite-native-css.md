@@ -19,7 +19,7 @@ properties, through an in-house design system in `packages/ui` (plan §E.6).
 | Component | Version (plan §D) | Notes |
 |---|---|---|
 | React | 19 | Both interfaces |
-| Vite | 8.3.5 | Preferred; run with `bunx --bun vite`. Bun's full-stack dev server is still "work in progress" |
+| Vite | 8.3.5 | Preferred; run with `bunx --no-install --bun vite` |
 | PixiJS | 8.22.0 | Universe only; `pixi-viewport` 6.0.3 supports v8; `@pixi/react` is not needed |
 | Tailwind, shadcn/ui, CSS frameworks | — | Not used |
 
@@ -34,7 +34,6 @@ Design system `packages/ui`:
 - **Accessibility**: WCAG 2.2 AA target, visible focus, full keyboard operation,
   `prefers-reduced-motion`, verified contrast.
 - **Responsive**: mobile-first, with container queries where they help.
-- Shared by both apps, so the visual identity is consistent.
 
 PixiJS and React (DF-3):
 - Pixi draws only the universe: terrain, entities, day/night, camera.

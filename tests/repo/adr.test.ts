@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { type AdrFile, validateAdr, validateAdrSet } from "./adr.ts";
-import { repoFiles } from "./files.ts";
+import { REPO_ROOT, repoFiles } from "./files.ts";
 
-const ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
 const DECISIONS = "docs/decisions/";
 
 function adr(
@@ -292,6 +291,15 @@ describe("validateAdr, required alternatives and header boundary", () => {
   });
 });
 
+describe("validateAdr, metadata written once", () => {
+  test.each(["Status", "Date"])("rejects a header with two %s lines", (key) => {
+    const file = adr();
+    const line = key === "Status" ? "- Status: Accepted" : "- Date: 2026-10-24";
+    const content = file.content.replace(line, `${line}\n${line}`);
+    expect(messages({ ...file, content })).toContain(`metadata '${key}' must appear once`);
+  });
+});
+
 describe("validateAdrSet", () => {
   test("accepts contiguous numbering starting at 0000", () => {
     const files = [
@@ -332,6 +340,29 @@ describe("validateAdrSet", () => {
     );
   });
 
+  test.each([
+    ["itself", "0001"],
+    ["the template", "0000"],
+  ])("rejects an ADR superseded by %s", (_name, target) => {
+    const files = [
+      adr({ name: "0000-adr-template.md", title: "# 0000. ADR template" }),
+      adr({ name: "0001-first.md", title: "# 0001. First", status: `Superseded by ${target}` }),
+    ];
+    expect(validateAdrSet(files).map((issue) => issue.message)).toContain(
+      `an ADR cannot be superseded by itself or by the template (${target})`,
+    );
+  });
+
+  test("reports a run of missing numbers as one range", () => {
+    const files = [
+      adr({ name: "0000-adr-template.md", title: "# 0000. ADR template" }),
+      adr({ name: "0005-fifth.md", title: "# 0005. Fifth" }),
+    ];
+    expect(validateAdrSet(files).map((issue) => issue.message)).toEqual([
+      "numbering must be contiguous from 0000; missing 0001 to 0004",
+    ]);
+  });
+
   test("accepts a superseded status that names an existing ADR", () => {
     const files = [
       adr({ name: "0000-adr-template.md", title: "# 0000. ADR template" }),
@@ -347,14 +378,14 @@ describe("repository ADRs", () => {
     const files: AdrFile[] = [];
     // Every file git tracks or would track there, whatever its name (dotfiles, .MD, .markdown),
     // so a misnamed ADR cannot be skipped and local-only files cannot fail the check.
-    for (const path of repoFiles(ROOT)) {
+    for (const path of repoFiles(REPO_ROOT)) {
       if (!path.startsWith(DECISIONS)) continue;
-      const file = Bun.file(`${ROOT}${path}`);
+      const file = Bun.file(`${REPO_ROOT}${path}`);
       if (await file.exists())
         files.push({ name: path.slice(DECISIONS.length), content: await file.text() });
     }
-    // ADRs are superseded, never deleted: the count only grows (0000-0013 at the end of T1).
-    expect(files.length).toBeGreaterThanOrEqual(14);
+    // ADRs are superseded, never deleted, so the count only grows: raise this floor with each ADR.
+    expect(files.length).toBeGreaterThanOrEqual(16);
     expect(validateAdrSet(files)).toEqual([]);
   });
 });

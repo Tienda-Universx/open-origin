@@ -3,7 +3,7 @@
  * See docs/decisions/0000-adr-template.md for the canonical shape.
  */
 
-import { visibleLines } from "./markdown.ts";
+import { visibleText } from "./markdown.ts";
 
 export type AdrFile = { name: string; content: string };
 export type AdrIssue = { file: string; message: string };
@@ -58,39 +58,50 @@ function headerOf(lines: readonly string[]): readonly string[] {
   return firstSection === -1 ? lines : lines.slice(0, firstSection);
 }
 
-function metadata(header: readonly string[], key: "Status" | "Date"): string | undefined {
+type MetadataKey = "Status" | "Date";
+
+function metadataValues(header: readonly string[], key: MetadataKey): string[] {
   const prefix = `- ${key}: `;
   return header
-    .find((line) => line.startsWith(prefix))
-    ?.slice(prefix.length)
-    .trim();
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).trim());
 }
 
-export function validateAdr(file: AdrFile): AdrIssue[] {
-  const issues: AdrIssue[] = [];
-  const report = (message: string) => issues.push({ file: file.name, message });
-  const lines = visibleLines(file.content.replace(/^\uFEFF/, "").split(/\r?\n/));
-  const header = headerOf(lines);
+/** An ADR read once: visible lines (no BOM, comments or fenced code) and its header. */
+type ParsedAdr = { file: AdrFile; lines: readonly string[]; header: readonly string[] };
 
+function parseAdr(file: AdrFile): ParsedAdr {
+  const lines = visibleText(file.content);
+  return { file, lines, header: headerOf(lines) };
+}
+
+type Report = (message: string) => void;
+
+function checkNameAndTitle({ file, lines }: ParsedAdr, report: Report): void {
   const number = FILE_NAME.exec(file.name)?.[1];
   if (number === undefined) {
     report("file name must match NNNN-kebab-case-title.md");
-  } else if (!new RegExp(`^# ${number}\\. \\S`).test(lines[0] ?? "")) {
-    report(`first line must be '# ${number}. <Title>'`);
+    return;
   }
+  if (!new RegExp(`^# ${number}\\. \\S`).test(lines[0] ?? ""))
+    report(`first line must be '# ${number}. <Title>'`);
+}
 
-  const status = metadata(header, "Status");
+function checkMetadata(header: readonly string[], report: Report): void {
+  for (const key of ["Status", "Date"] as const) {
+    if (metadataValues(header, key).length > 1) report(`metadata '${key}' must appear once`);
+  }
+  const [status] = metadataValues(header, "Status");
   if (status === undefined || !STATUS.test(status)) {
     report(
       "status must be one of: Proposed, Accepted, Rejected, Deprecated, or 'Superseded by NNNN'",
     );
   }
+  const [date] = metadataValues(header, "Date");
+  if (date === undefined || !isCalendarDate(date)) report("date must be a valid YYYY-MM-DD");
+}
 
-  const date = metadata(header, "Date");
-  if (date === undefined || !isCalendarDate(date)) {
-    report("date must be a valid YYYY-MM-DD");
-  }
-
+function checkSections(lines: readonly string[], report: Report): void {
   const sections = sectionBodies(lines);
   const positions: number[] = [];
   for (const name of SECTIONS) {
@@ -106,45 +117,91 @@ export function validateAdr(file: AdrFile): AdrIssue[] {
   if (positions.some((position, i) => i > 0 && position < (positions[i - 1] ?? 0))) {
     report(`sections must appear in order: ${SECTIONS.join(", ")}`);
   }
+}
 
+function issuesOf(adr: ParsedAdr): AdrIssue[] {
+  const issues: AdrIssue[] = [];
+  const report: Report = (message) => issues.push({ file: adr.file.name, message });
+  checkNameAndTitle(adr, report);
+  checkMetadata(adr.header, report);
+  checkSections(adr.lines, report);
   return issues;
 }
 
-export function validateAdrSet(files: readonly AdrFile[]): AdrIssue[] {
-  const issues = files.flatMap(validateAdr);
+export function validateAdr(file: AdrFile): AdrIssue[] {
+  return issuesOf(parseAdr(file));
+}
+
+const pad = (n: number): string => String(n).padStart(4, "0");
+
+/** ADR numbers mapped to the file names that use them. */
+function numberIndex(files: readonly AdrFile[]): Map<number, string[]> {
   const byNumber = new Map<number, string[]>();
   for (const file of files) {
     const number = FILE_NAME.exec(file.name)?.[1];
     if (number === undefined) continue;
-    const names = byNumber.get(Number(number)) ?? [];
-    names.push(file.name);
-    byNumber.set(Number(number), names);
+    byNumber.set(Number(number), [...(byNumber.get(Number(number)) ?? []), file.name]);
   }
+  return byNumber;
+}
 
-  const pad = (n: number) => String(n).padStart(4, "0");
-  for (const [number, names] of byNumber) {
-    if (names.length > 1) {
-      issues.push({
-        file: names.join(", "),
-        message: `number ${pad(number)} is used by more than one ADR`,
-      });
+function duplicateNumbers(byNumber: ReadonlyMap<number, string[]>): AdrIssue[] {
+  return [...byNumber]
+    .filter(([, names]) => names.length > 1)
+    .map(([number, names]) => ({
+      file: names.join(", "),
+      message: `number ${pad(number)} is used by more than one ADR`,
+    }));
+}
+
+/** A "Superseded by NNNN" status must name another existing ADR, never itself or the template. */
+function supersessionIssues(
+  adrs: readonly ParsedAdr[],
+  byNumber: ReadonlyMap<number, string[]>,
+): AdrIssue[] {
+  return adrs.flatMap(({ file, header }) => {
+    const [status = ""] = metadataValues(header, "Status");
+    const target = SUPERSEDED.exec(status)?.[1];
+    if (target === undefined) return [];
+    if (target === FILE_NAME.exec(file.name)?.[1] || Number(target) === 0) {
+      return [
+        {
+          file: file.name,
+          message: `an ADR cannot be superseded by itself or by the template (${target})`,
+        },
+      ];
     }
-  }
-  for (const file of files) {
-    const lines = visibleLines(file.content.replace(/^\uFEFF/, "").split(/\r?\n/));
-    const target = SUPERSEDED.exec(metadata(headerOf(lines), "Status") ?? "")?.[1];
-    if (target !== undefined && !byNumber.has(Number(target))) {
-      issues.push({ file: file.name, message: `status names ADR ${target}, which does not exist` });
-    }
-  }
-  const highest = Math.max(-1, ...byNumber.keys());
+    if (byNumber.has(Number(target))) return [];
+    return [{ file: file.name, message: `status names ADR ${target}, which does not exist` }];
+  });
+}
+
+/** Runs of missing numbers from 0000 to the highest one, so one typo yields one issue. */
+function missingRanges(present: ReadonlySet<number>): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const highest = Math.max(-1, ...present);
   for (let n = 0; n <= highest; n++) {
-    if (!byNumber.has(n)) {
-      issues.push({
-        file: "docs/decisions",
-        message: `numbering must be contiguous from 0000; missing ${pad(n)}`,
-      });
-    }
+    if (present.has(n)) continue;
+    const last = ranges.at(-1);
+    if (last !== undefined && last[1] === n - 1) last[1] = n;
+    else ranges.push([n, n]);
   }
-  return issues;
+  return ranges;
+}
+
+export function validateAdrSet(files: readonly AdrFile[]): AdrIssue[] {
+  const adrs = files.map(parseAdr);
+  const byNumber = numberIndex(files);
+  const gaps = missingRanges(new Set(byNumber.keys())).map(([start, end]) => ({
+    file: "docs/decisions",
+    message: `numbering must be contiguous from 0000; missing ${
+      start === end ? pad(start) : `${pad(start)} to ${pad(end)}`
+    }`,
+  }));
+  return [
+    ...adrs.flatMap(issuesOf),
+    ...duplicateNumbers(byNumber),
+    ...supersessionIssues(adrs, byNumber),
+    ...gaps,
+  ];
 }

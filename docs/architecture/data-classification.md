@@ -1,22 +1,17 @@
 # Data classification
 
-Every piece of information in Open Origin belongs to one of five classes, C0 to C4. A client never
-receives raw state: it receives explicit, allowlisted DTOs projected for its audience (P10). This
-page lists the classes, who may receive each one, how the rule is enforced, and which tests guard
-it. Source: plan §E.4, §E.6, §I.1.2, §K.6, §K.8, §N, O-25; decision in
-[0008](../decisions/0008-data-classification-and-audience-projections.md).
+Every piece of information in Open Origin belongs to one of five classes, C0 to C4, and a client
+receives only explicit, allowlisted DTOs projected for its audience (P10). The classes are decided
+in [0008](../decisions/0008-data-classification-and-audience-projections.md); this page adds which
+interface sees which class, what each mechanism guards, which tests will check it, and why the
+world seed is C3. Source: plan §E.4, §E.6, §I.1.2, §K.6, §K.8, §N, O-25.
 
 ## Classes
 
-| Class | Examples | Who may receive it | Never |
-|---|---|---|---|
-| **C0 World-public** | What an observer inside the world could see: terrain of subscribed chunks, positions, visible actions, public speech, public happenings, clock | Spectators | — |
-| **C1 Inhabitant-internal** | Memory, beliefs, thoughts, goals, relationships, prompts, raw LLM outputs, context manifests | Research role; the inhabitant itself (through its perception) | Public clients, other inhabitants |
-| **C2 Player-private** (future) | Account, email, IP, sessions, payments, private messages | The player; minimum necessary operation | Other clients, inhabitants, LLM providers (only in-world text travels, moderated and without personal data) |
-| **C3 Operations and research** | World seed, law parameters, reference truth, observation metrics, logs, admin tools | Server; authenticated and audited research/admin role | Any public client |
-| **C4 Secrets** | Provider API keys, database credentials, tokens, the master key | Infrastructure secrets (database credentials, tokens, the master key): host environment variables or secret manager. Provider API keys entered in the admin panel: encrypted in the database (see [Enforcement mechanisms](#enforcement-mechanisms)). The admin panel can only **write** keys (create, rotate, delete); it shows a fingerprint, never the value | Clients and client bundles, logs, prompts, snapshots, admin API responses |
+What each class holds, who may receive it, and who never may:
+[0008, Decision](../decisions/0008-data-classification-and-audience-projections.md#decision).
 
-Other C3 items named elsewhere in the plan:
+C3 items detailed elsewhere in the plan:
 - Observation exposure telemetry: a C3 table the simulation cannot read (§K.6, control 3).
 - Reference truth for hypotheses: used only for research metrics (§K.8).
 
@@ -31,14 +26,19 @@ Details of both interfaces: [Interfaces](interfaces.md).
 
 ## Enforcement mechanisms
 
+Each mechanism and the leak it guards against. The mechanisms are decided in
+[0008](../decisions/0008-data-classification-and-audience-projections.md),
+[0009](../decisions/0009-public-and-private-admin-interfaces.md), and, for prompt input,
+[0006](../decisions/0006-provenance-and-inheritable-contamination-taints.md).
+
 | Mechanism (plan §E.4, §E.6) | Guards |
 |---|---|
 | Explicit projection functions (`toPublicView`, `toResearchView`) with allowlisted DTOs in `protocol`; an entity is never serialized whole | C1, C2, C3 leaking to public clients |
 | A test checks that every key of each public message belongs to the allowlist | C0-only public messages |
 | CI scans the client `dist/` for secret patterns; only `VITE_PUBLIC_*` variables reach the bundle | C4 in client bundles |
 | A test scans the public `dist/` for admin routes and modules | Admin code and DTOs in the public bundle |
-| Separate admin/research plane. v0.1: binds to `127.0.0.1` and requires a local token, behind a flag (O-21). Before any public exposure: authentication, authorization (RBAC), and an audit log (DF-4) | C1 and C3 access |
-| Provider API keys entered in the panel are stored encrypted in the database with AES-GCM via WebCrypto, master key in an environment variable; an environment variable takes precedence over a stored key; write-only from the panel; fingerprint only (last 4 characters) (plan O-25, §E.6) | C4 in clients, admin API responses, logs, prompts, snapshots |
+| Separate admin/research plane, local-only behind a token in v0.1 ([0009](../decisions/0009-public-and-private-admin-interfaces.md#decision); DF-4, O-21) | C1 and C3 access |
+| Provider API key storage, write-only panel, and fingerprint display ([0009](../decisions/0009-public-and-private-admin-interfaces.md#decision); plan O-25) | C4 in clients, admin API responses, logs, prompts, snapshots |
 | Read-only clients in v0.1; every input schema-validated with size and rate limits | Untrusted input |
 | No inhabitant has tools with network, file, or infrastructure access | Inhabitants reaching infrastructure |
 | The prompt is built only from the inhabitant's own perception and memory (§K.4) | Other inhabitants' C1 entering a prompt |

@@ -20,7 +20,8 @@ We will build an authoritative, deterministic engine with a pure core (plan §E.
 - **P2 Fixed-step engine.** `step(state, inputs) → { state', events, checksum }`. The engine owns
   all state, body and mind (§E.3).
 - **P5 Runtime-agnostic core.** `engine` and `agents` use no Bun, `node:*`, DOM, `Math.random`,
-  `Date`, `crypto.randomUUID`, or transcendental functions. Lint and a test enforce it.
+  `Date`, `crypto.randomUUID`, or transcendental functions. Lint and a test will enforce it from
+  T2.
 - **P6 Chunked state** from day one, with a hash per chunk.
 - **P7 Everything versioned** (see below).
 
@@ -39,9 +40,9 @@ We will build an authoritative, deterministic engine with a pure core (plan §E.
 Erratum: plan §I.1.4 writes the bound as "≤ 2^53"; 2^53 is not a safe integer, so the bound is
 2^53 − 1, as corrected here.
 
-Reproducibility levels: **N1 core** bit-for-bit replay from snapshot + log, guaranteed and
-tested; **N2 model decisions** not reproducible live, reproducible from the log because outputs are
-recorded; **N3 re-run experiments with models** statistical reproducibility over seeds.
+Reproducibility levels: **N1 core** bit-for-bit replay from snapshot + log, to be guaranteed and
+tested from T2; **N2 model decisions** not reproducible live, reproducible from the log because
+outputs are recorded; **N3 re-run experiments with models** statistical reproducibility over seeds.
 
 Tests (§I.1.8): golden replay, snapshot round trip, replay across restarts, command fuzz, observer
 invariance ([0005](0005-observer-independence.md)), purity lint and import test, and, in the
