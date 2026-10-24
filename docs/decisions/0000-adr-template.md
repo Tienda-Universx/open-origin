@@ -6,8 +6,9 @@
 <!--
 Copy this file to docs/decisions/NNNN-kebab-case-title.md using the next free number.
 The first line must be "# NNNN. <Title>" with the same number as the file name.
-Status starts with one of: Proposed, Accepted, Rejected, Deprecated, Superseded
-(for example "Superseded by 0012"). Date is the day the status last changed.
+Status is exactly one of: Proposed, Accepted, Rejected, Deprecated, or
+"Superseded by NNNN" (for example "Superseded by 0012"). Date is the day the status last changed.
+Status and Date must appear in this header, before the first section.
 The three sections below are required, non-empty, and must keep this order.
 "Alternatives considered" and "References" are optional.
 tests/repo/adr.test.ts enforces these rules.
