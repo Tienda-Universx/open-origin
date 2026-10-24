@@ -22,12 +22,20 @@ describe("findInvisibleChars", () => {
     ["line separator", 0x2028],
     ["paragraph separator", 0x2029],
     ["interlinear annotation terminator", 0xfffb],
+    ["tag latin small letter a", 0xe0061],
+    ["variation selector-17", 0xe0100],
   ])("detects a %s and reports its line and code point", (_name, codePoint) => {
     const hidden = String.fromCodePoint(codePoint);
     const hex = codePoint.toString(16).toUpperCase().padStart(4, "0");
     expect(findInvisibleChars(`clean\nbad${hidden}line`)).toEqual([
       { line: 2, codePoint: `U+${hex}` },
     ]);
+  });
+});
+
+describe("findInvisibleChars exceptions", () => {
+  test("accepts the emoji variation selectors U+FE00 to U+FE0F, which ordinary emoji use", () => {
+    expect(findInvisibleChars(`warning ${String.fromCodePoint(0x26a0, 0xfe0f)}`)).toEqual([]);
   });
 });
 

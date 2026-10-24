@@ -3,10 +3,13 @@
  * ("Trojan Source", CVE-2021-42574) or silently change behavior (a literal BOM in a regex).
  * Text files must write them as escapes instead. Covered: soft hyphen, Arabic letter mark,
  * Mongolian vowel separator, zero-width characters and marks, line and paragraph separators,
- * bidi embeddings, overrides and isolates, invisible operators, BOM, interlinear annotations.
+ * bidi embeddings, overrides and isolates, invisible operators, BOM, interlinear annotations,
+ * Unicode tags (used to hide text in prompts) and the supplementary variation selectors.
+ * The emoji variation selectors U+FE00 to U+FE0F stay allowed: ordinary emoji use them.
  */
+// The combining selectors come first: after a base character a linter reads them as one sequence.
 const INVISIBLE =
-  /[\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB]/u;
+  /[\u{E0100}-\u{E01EF}\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB\u{E0000}-\u{E007F}]/u;
 
 export type InvisibleChar = { line: number; codePoint: string };
 
