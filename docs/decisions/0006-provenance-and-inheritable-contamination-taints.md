@@ -38,12 +38,13 @@ Controls (§K.7):
 1. Context ablation, offline, on the research budget.
 2. Control worlds without the phenomena in question, for base rates.
 3. Semantic similarity to human inputs received by the inhabitant or its social network.
-4. Non-terrestrial internal laws: adopted default (2026-10-24), configurable (O-13). Predicting
-   Earth behavior where the world differs is evidence of prior knowledge; converging to the internal
-   law is evidence of internal learning.
-5. Self-reference policy: tag, do not intervene. Adopted default (2026-10-24), configurable
-   (O-14). A research world may declare another policy as part of its recorded experimental
-   configuration.
+4. Non-terrestrial internal laws: recommended default (plan O-13), to be confirmed by the
+   maintainer before the first batch that encodes internal laws in the ruleset (plan §K.8).
+   Predicting Earth behavior where the world differs is evidence of prior knowledge; converging to
+   the internal law is evidence of internal learning.
+5. Self-reference policy: tag, do not intervene. Recommended default (plan O-14), to be confirmed
+   by the maintainer before T5 implements it. A research world may declare another policy as part
+   of its recorded experimental configuration.
 
 **Composable scientific representations (§K.8).** The action space is finite but composable:
 - Open ontology: concepts are registered IDs (not enums) defined compositionally over primitive
@@ -65,14 +66,19 @@ Controls (§K.7):
   nested simulations are future requirements this design does not block (plan §L).
 - Whether the official world's internal laws are public or private data is an open question
   recorded in [0008](0008-data-classification-and-audience-projections.md) (O-15).
+- **Open question (O-13 before the first batch that encodes internal laws; O-14 before T5):** non-terrestrial internal laws and the
+  tag-without-intervening self-reference policy are research-design choices, not minor technical
+  ones, so they stay recommended defaults until the maintainer confirms them. The accepted decision
+  (provenance, inheritable taints, no lexical blocking) does not depend on the answer.
 
 ## Alternatives considered
 
 - Lexical blocking: an output filter that rejected external concepts such as consciousness,
   creator, simulation, or external reality (plan revision 1): rejected by the maintainer
   (tracker L2 point 3; plan "Qué cambió", point 3).
-- Deleting implementation self-references: rejected; they are tagged and measured (plan §K.7,
-  O-14).
+- Deleting implementation self-references: rejected; they are tagged and measured (plan §C.2
+  tension 2, §K.7). Whether the default policy is to tag without intervening stays open (O-14, see
+  Consequences).
 - A predefined catalog of discoveries (plan revision 1): replaced by composable, validatable
   representations (tracker L2 point 8; plan "Qué cambió", point 8; §K.8).
 
