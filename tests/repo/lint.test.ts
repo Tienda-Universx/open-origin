@@ -27,7 +27,8 @@ type Tool = "biome" | "oxlint";
 /** How long a linter may run before it is killed and reported as timed out. */
 const TOOL_TIMEOUT_MS = 30_000;
 
-type LintResult = { exitCode: number; output: string };
+/** `exitCode` is null when the tool was killed (a timeout), whatever the Bun types say. */
+type LintResult = { exitCode: number | null; output: string };
 
 function run(tool: Tool, files: Record<string, string>): LintResult {
   for (const [name, source] of Object.entries(files)) writeFileSync(join(scratch, name), source);
@@ -134,21 +135,23 @@ describe("automated quality controls", () => {
     expect(run("biome", { "long-test-helper.ts": longFunction(55) }).exitCode).toBe(1);
   });
 
-  test("oxlint accepts a cyclomatic complexity of exactly 10", () => {
+  test("oxlint accepts a cyclomatic complexity of exactly 10 and a nesting depth of exactly 4", () => {
     expect(run("oxlint", { "ten.ts": branches(9) }).exitCode).toBe(0);
+    expect(run("oxlint", { "depth-four.ts": nested(4) }).exitCode).toBe(0);
+  });
+
+  test("a cognitive complexity of exactly 15 passes, and 16 fails on that rule alone", () => {
+    // Each nested `if` adds 1 plus its depth: 1 + 2 + 3 + 4 + 5 = 15; one more top-level `if` is 16.
+    expect(run("biome", { "cognitive-15.ts": nested(5) }).exitCode).toBe(0);
+    const sixteen = nested(5).replace("  return 0;\n}", "  if (x < 0) return 1;\n  return 0;\n}");
+    const { exitCode, output } = run("biome", { "cognitive-16.ts": sixteen });
+    expect(exitCode).toBe(1);
+    expect([...new Set(output.match(/lint\/[a-z]+\/[A-Za-z]+/g))]).toEqual([
+      "lint/complexity/noExcessiveCognitiveComplexity",
+    ]);
   });
 
   test.each([
-    [
-      "cognitive complexity above 15",
-      {
-        "cognitive.ts": nested(6).replace(
-          "return x;",
-          "for (const y of [x]) { if (y) { return y; } }",
-        ),
-      },
-      "lint/complexity/noExcessiveCognitiveComplexity",
-    ],
     [
       "functions longer than 50 lines",
       { "long.ts": longFunction(55) },
