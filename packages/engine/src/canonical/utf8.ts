@@ -30,8 +30,11 @@ function loneSurrogateOffset(text: string): number {
   return text.length;
 }
 
-/** How many bytes the UTF-8 form of the well-formed `text` takes. */
-function encodedLength(text: string): number {
+/**
+ * How many bytes the UTF-8 form of `text` takes, without encoding it. `text` must be well formed,
+ * as canonical strings are: a lone surrogate has no UTF-8 form, and its count means nothing.
+ */
+export function utf8Length(text: string): number {
   let length = 0;
   for (let offset = 0; offset < text.length; offset += 1) {
     const unit = text.charCodeAt(offset);
@@ -76,7 +79,7 @@ export function utf8Encode(text: string): Uint8Array {
     const message = `the text has a lone surrogate at UTF-16 offset ${offset}: strings must be well-formed UTF-16`;
     throw new EngineError("invalid_value", [{ path: "", message }]);
   }
-  const bytes = new Uint8Array(encodedLength(text));
+  const bytes = new Uint8Array(utf8Length(text));
   let at = 0;
   for (let offset = 0; offset < text.length; offset += 1) {
     const unit = text.charCodeAt(offset);

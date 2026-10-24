@@ -2,8 +2,9 @@
 // a noRestrictedGlobals entry, so that one file can be excepted without repeating the engine's
 // list of denied globals: an override replaces a rule's options instead of merging them, while
 // Biome adds up the plugins of every override that matches a file and cannot take one away.
-// biome.json registers it for src except canonical/value.ts, which looks objects up in a Map
-// and never iterates it.
+// biome.json registers it for src except canonical/value.ts, which looks up the objects a walk
+// entered, and step/context.ts, which looks up the draw sequences of a tick; neither iterates a
+// Map.
 // It reports every reference to the name outside a type (member access, calls, `new`, aliasing,
 // arguments, shorthand properties, and `typeof`), even where a local declaration shadows the
 // global. Property names, keys, and type positions are not references to the global, and
@@ -17,5 +18,5 @@ JsReferenceIdentifier() as $reference where {
     TsReferenceType(),
     TsTypeofType()
   },
-  register_diagnostic(span=$reference, message="The global `Map` is denied outside canonical/value.ts: a Map iterates in insertion order, which a resumed world may not share; iterate records in canonical order (plan §I.1).")
+  register_diagnostic(span=$reference, message="The global `Map` is denied outside canonical/value.ts and step/context.ts: a Map iterates in insertion order, which a resumed world may not share; iterate records in canonical order (plan §I.1).")
 }

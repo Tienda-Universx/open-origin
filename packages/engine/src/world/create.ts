@@ -2,8 +2,7 @@
  * Creating a world (ADR 0020, ownership and failures). createWorld validates the definition the
  * host gives and copies it once, so changing that definition afterwards never changes the world.
  */
-import { copyCanonicalReported } from "../canonical/copy.ts";
-import { type CanonicalValue, describeThrown, pointer } from "../canonical/value.ts";
+import { type CanonicalValue, pointer } from "../canonical/value.ts";
 import type { Digest } from "../digest/digest.ts";
 import { type Issue, IssueList } from "../errors.ts";
 import { readSeed, type Seed } from "../rng/mix32.ts";
@@ -13,19 +12,10 @@ import { chunkTerm, digestCache, globalDigest } from "./checksum.ts";
 import { type ChunkKey, readChunkKey } from "./chunk.ts";
 import { ChunkIndex } from "./chunk-index.ts";
 import type { WorldInit, WorldOptions } from "./contracts.ts";
-import { expectRecord, isRecord, readMember, readRecordKeys, UNREAD, under } from "./members.ts";
+import { copyAt, expectRecord, readMember, readRecordKeys, UNREAD } from "./members.ts";
 import { type CapturedRuleset, captureRuleset } from "./ruleset.ts";
+import { runValidator } from "./validators.ts";
 import { type ChunkEntry, type Kernel, newWorld, type World, type WorldState } from "./world.ts";
-
-const MALFORMED = "must return a list of issues, each a record { path, message } of strings";
-
-/** A copy of `value`, which readMember read, with its issues at `path`; undefined after any. */
-function copyAt(value: unknown, path: string, issues: IssueList): CanonicalValue | undefined {
-  if (value === UNREAD) return undefined;
-  const before = issues.count;
-  const copy = copyCanonicalReported(value, under(issues, path));
-  return issues.count === before ? copy : undefined;
-}
 
 /** A copy of the canonical member `key` of `init`, with its issues at `/init/<key>`. */
 function copyMember(init: object, key: string, issues: IssueList): CanonicalValue | undefined {
@@ -55,40 +45,6 @@ function readSecondsPerTick(init: object, issues: IssueList): number | undefined
   }
   // secondsPerTickProblem found no problem, so the value is a positive safe integer.
   return value as number;
-}
-
-/** Whether `issue`, part of a canonical copy, is a record { path, message } with a JSON Pointer. */
-function isIssue(issue: unknown): issue is Issue {
-  if (!isRecord(issue) || !("path" in issue) || !("message" in issue)) return false;
-  const { path, message } = issue;
-  const pointerLike = typeof path === "string" && (path === "" || path.startsWith("/"));
-  return pointerLike && typeof message === "string";
-}
-
-/**
- * Runs the validator `name` of the ruleset and reports what it returns at `path`: each issue under
- * that path, or one issue when it throws or returns anything but a list of issues.
- */
-function runValidator(
-  name: string,
-  path: string,
-  validate: () => unknown,
-  issues: IssueList,
-): void {
-  let result: unknown;
-  try {
-    result = validate();
-  } catch (error) {
-    issues.report(path, `${name} threw: ${describeThrown(error)}`, error);
-    return;
-  }
-  const problems = new IssueList();
-  const found = copyCanonicalReported(result, problems);
-  if (problems.count > 0 || !Array.isArray(found) || !found.every(isIssue)) {
-    issues.report(path, `${name} ${MALFORMED}`);
-    return;
-  }
-  for (const issue of found) issues.report(`${path}${issue.path}`, issue.message);
 }
 
 /** A global value as createWorld keeps it: the copy, and its digest. */
@@ -250,6 +206,7 @@ export function createWorld<G extends CanonicalValue, C extends CanonicalValue>(
     digests: digestCache(kernel, global.digest, chunks),
     audit,
     status: { kind: "ok" },
+    active: undefined,
   };
   // The ruleset's validators accepted the global value as a G and every chunk as a C.
   return newWorld(state as WorldState<G, C>);

@@ -159,7 +159,11 @@
       "plugins": ["./packages/engine/lint/global-math.grit"]
     },
     {
-      "includes": ["packages/engine/src/**", "!packages/engine/src/canonical/value.ts"],
+      "includes": [
+        "packages/engine/src/**",
+        "!packages/engine/src/canonical/value.ts",
+        "!packages/engine/src/step/context.ts"
+      ],
       "plugins": ["./packages/engine/lint/global-map.grit"]
     }
   ]

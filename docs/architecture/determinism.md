@@ -4,8 +4,8 @@ The engine must turn the same inputs into the same results on every run and ever
 ([ADR 0003](../decisions/0003-authoritative-deterministic-engine.md)). This document specifies the
 rules that make it so, as the code implements them;
 [ADR 0020](../decisions/0020-deterministic-core-design.md) records why they were chosen. Each
-section names its code and its tests, and the later T2 pull requests add one section per
-subsystem still to come: `step` and snapshots.
+section names its code and its tests, and the next T2 pull request adds the section still to
+come: snapshots.
 
 ## Canonical values
 
@@ -85,9 +85,10 @@ cannot disagree about what is canonical.
 
 ### Errors
 
-Every failure is an `EngineError` with a `code` (`invalid_value` here, and `tick_overflow` for
-[time](#time), `invalid_input` and `invalid_ruleset` for [the world](#world); later batches add
-codes) and `issues`. An issue has a `path`, a JSON Pointer
+Every failure is an `EngineError` with a `code` (`invalid_value` here, `tick_overflow` for
+[time](#time), `invalid_input` and `invalid_ruleset` for [the world](#world), and
+`system_fault`, `integrity_violation`, `world_faulted`, `context_expired`, and `id_exhausted` for
+[step](#step); later batches add codes) and `issues`. An issue has a `path`, a JSON Pointer
 ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) into the value (`""` is the whole value, and
 `~` and `/` in keys become `~0` and `~1`), and a `message`.
 
@@ -219,7 +220,7 @@ for the batch that defines the length of a day.
 
 A world is the state the engine owns: the kernel's counters, a global value, and chunks keyed by
 their grid position (ADR 0020, ownership and digests). This section covers creating a world,
-reading it, and its state root; `step` arrives in the next pull request. Code:
+reading it, and its state root; [step](#step) advances it. Code:
 `packages/engine/src/world/`. Tests: `packages/engine/test/` (`chunk`, `chunk-index`,
 `ruleset`, `world`, and `checksum`).
 
@@ -361,19 +362,144 @@ The world keeps its chunks in a lazy, sorted index, so creating a chunk never co
 - `fullChecksum` sees a change made behind the engine's back, and `stateRoot` does not;
 - `chunkHashes` is sorted, fresh, and a changed chunk changes only its own term.
 
-### What arrives with `step`
+## Step
 
-These parts of ADR 0020 are not implemented yet; the types for the first two ship now in
-`world/contracts.ts`:
+`step(world, commands)` advances a world by one tick, in place, and returns what the tick did. A
+step ends in one of three ways: the tick completes; the world is left exactly as it was, because
+the input was invalid; or the world is poisoned, because the tick failed after it began. Code:
+`packages/engine/src/step/`. Tests: `packages/engine/test/` (`step`, `step-commands`,
+`step-faults`, `step-random`, and `step-cost`); the lint exception for `step/context.ts` is proven
+in `tests/repo/engine-lint.test.ts`.
 
-- **The tick context and commands.** `TickContext`, `Command`, `EngineEvent`, `Rejection`, and the
-  handlers' signatures are types only: no command is applied and no system runs.
-- **Faults.** `worldStatus` always reports `{ kind: "ok", tick }`. Its `faulted` form, and
-  poisoning a world whose tick failed after a change, arrive with `step`.
-- **Incremental digests.** The cache is computed once, at creation. Updating the sum and the root
-  for the dirty chunks of a tick, and validating dirty data at commit, arrive with `step`.
-- **Audit.** `options.audit` is validated and stored; recomputing every digest after each tick
-  arrives with `step`, and the check before encoding a snapshot with snapshots.
+### Pipeline
+
+| Phase | What happens | If it fails |
+|---|---|---|
+| 1. Guards | The brand check, then the world's health, then a step already running on the same world, which only ruleset code that holds the world can start | `invalid_input` or `world_faulted`, and nothing changes; a nested step is a fault of the running tick |
+| 2. Commands | Every command is validated and copied (below) | `invalid_input` with every problem, and nothing changes |
+| 3. Tick | The kernel's tick advances | `tick_overflow` at `Number.MAX_SAFE_INTEGER`, and the world is poisoned |
+| 4. Commands | In seq order. A type without a handler, looked up with `Object.hasOwn`, or a `check(view, command)` that returns a rejection, is rejected; otherwise `apply(ctx, command)` runs | Poisoned |
+| 5. Systems | `run(ctx)` for each system, in the ruleset's order | Poisoned |
+| 6. Commit | The changed chunks, in key order, then the global value if it was written: canonical text, term, validator. Then the kernel digest, the state root, the events digest, and the tick checksum | Poisoned, with every problem of the data |
+| 7. Audit | With `options.audit`, the root recomputed from the state alone must equal the incremental one | `integrity_violation`, and the world is poisoned |
+
+Systems and handlers must return `undefined`; a value, such as the `Promise` of an `async`
+function, is a fault. They are called without a receiver.
+
+### Commands
+
+A command is a plain record with exactly these members, each read once through its own
+descriptor, as `createWorld` reads its definition. Issue paths point into `{ commands }`, as in
+`/commands/2/seq`.
+
+| Member | Rule |
+|---|---|
+| `applyTick` | The tick this step computes: the world's tick plus one |
+| `seq` | A safe integer from 0. The seqs strictly increase along the list, which is the order the commands run in |
+| `type` | A non-empty canonical string |
+| `origin` | `{ kind: "admin" }`, or `{ kind: "inhabitant", actor }` with `actor` a safe integer from 1 |
+| `payload` | A canonical value whose canonical text takes at most 8 KiB of UTF-8 (`MAX_PAYLOAD_BYTES`, 8192 bytes) |
+
+A rejected command emits `engine.command_rejected`, whose payload is `{ seq, type, reason,
+origin }`, plus `details` when the rejection has them. A type without a handler has the reason
+`unknown_type`. `check` must return `undefined` or a rejection `{ reason, details? }` with a
+non-empty `reason`; anything else is a fault.
+
+### The tick context
+
+There is one context per step, and one view of it for `check`, which has only the reads. Both are
+revoked when the step returns: every method then throws `context_expired`. Every misuse of a
+method is a fault at the system or command that made it.
+
+| Method | Behavior |
+|---|---|
+| `tick`, `readChunk`, `readGlobal` | The tick being computed, and the live values. Their `DeepReadonly` types are a compiler aid only |
+| `chunkKeys()` | A fresh array of the committed keys, sorted |
+| `writeChunk(key)`, `writeGlobal()` | The live value, marked as changed, so that the commit hashes it |
+| `createChunk(key, initial)` | Validates the key and copies `initial`. The chunk can be read and written at once, and `chunkKeys` lists it from the next tick on. A key that exists is a fault |
+| `newEntityId()` | The next id from `nextEntityId`. When `nextEntityId` is `Number.MAX_SAFE_INTEGER` it throws `id_exhausted`, so `nextEntityId` stays a safe integer |
+| `random.u32`, `random.int`, `random.permutation` | A `DrawSequence` of a stream the running system or handler declared, keyed by `tickKey(tick, id)`, where `id` is the entity, or the resource of a permutation. The counter of each (stream, id) continues across calls and restarts every tick, so an entity and a resource with the same id share one sequence in a stream. Another stream is a fault |
+| `rejectedCommands()` | A fresh array of this tick's rejections |
+| `emit(type, payload)` | `type` is a non-empty canonical string not prefixed `engine.`, and `payload` is copied. Events are numbered from 0 in each tick, in emission order, with the cause `{ kind: "command", seq }` or `{ kind: "system", name }` |
+
+The draw sequences of a tick live in a `Map` keyed by stream id and then by id, which the context
+looks up and never iterates: this is the reviewed lint exception of `step/context.ts`.
+
+### Failures and poisoning
+
+| Class | When | Result |
+|---|---|---|
+| Invalid input | Before the tick begins | `invalid_input` with every problem. The world is unchanged: its status, `stateRoot`, `fullChecksum`, and `chunkHashes` are equal, and the next valid step gives what it gives a control world |
+| Fault | After the tick began | The world is poisoned: `system_fault`, or the specific `id_exhausted`, `tick_overflow`, or `integrity_violation` |
+| Use of a poisoned world | Any later call | `world_faulted`, except `worldStatus` |
+
+- A fault's issues name what failed: `/commands/<index>` for the command given at that index,
+  with its seq and type in the message; `/systems/<index>` for the ruleset's system, with its
+  name; `/chunks/<key>/...` and `/global/...` for data at the commit. Its `cause` is what the
+  ruleset threw.
+- Poisoning sets the status to `{ kind: "faulted", tick, code, issues }`, where `tick` is the tick
+  being computed (for `tick_overflow`, the last tick). The tick's events are discarded and `step`
+  throws the fault. `step`, `readView` and every method of a view read before, `chunkHashes`,
+  `fullChecksum`, and `stateRoot` throw `world_faulted`. Recovery starts from the last snapshot.
+- Faults are recorded, not only thrown: ruleset code that catches one still poisons the world, and
+  every later use of the context throws the same fault again. The first fault of a tick is the one
+  reported.
+
+### What is detected, and when
+
+Inside the tick, isolation is checked, not prevented (ADR 0020, ownership):
+
+| Change | Detected |
+|---|---|
+| A write through `writeChunk`, `writeGlobal`, or `createChunk` | Valid: the commit hashes it |
+| A value that is not canonical (`NaN`, `1.5`, `undefined`, a `Map`, `-0`), written through the barrier | At the commit of that tick: `system_fault` at its path |
+| Data that the ruleset's validators reject | At the commit of that tick: `system_fault` with the validator's issues |
+| A write through `readChunk` or `readGlobal`, a reference kept from an earlier tick, or a validator that changes the value it checks | With audit: after the commit of that tick, `integrity_violation` naming each stale chunk and the global value. Without audit: not in this pull request; snapshot encoding (next pull request) recomputes every digest and refuses a state that disagrees with them |
+
+The commit takes each chunk's term, and the global digest, before its validator runs, so a
+validator that changes its value is found like any other write that bypasses the barrier.
+
+### Cost per tick
+
+The kernel's work is O(K + E + D log D + B + C), as ADR 0020 sets it: the commands with their
+payloads, the events, the changed chunks (sorted), the canonical bytes of what changed, and the
+created chunks. Nothing depends on the number of chunks N: the sum is updated per changed chunk,
+the kernel digest has a fixed size, the global value is hashed only when written, the draw
+sequences are dropped with the context, and created chunks join the lazy index without sorting
+it.
+
+`stats.hashedBytes` is exact and deterministic: the UTF-8 bytes of the canonical text of
+`["chunk", key, value]` for each changed chunk, of `["global", value]` when the global value was
+written, and of the kernel, state, events, and tick arrays. Audit's full recomputation is O(N),
+for tests, and is not counted, so a step returns the same result with or without audit.
+
+### What the tests check
+
+- the order: commands in seq order, each checked then applied, then systems in declared order;
+  events numbered in emission order with their causes; the checksum composition, and that it
+  covers the events;
+- rejections of unknown types and by `check`, with their events and `rejectedCommands`;
+- every rule of the context: live reads, marking, created chunks, ids, copies in `emit` and
+  `createChunk`, and each misuse as a fault;
+- input atomicity: an invalid command first or last, a wrong `applyTick`, seqs out of order or
+  repeated, a payload over 8 KiB (and one of exactly 8 KiB, counted in bytes), and malformed
+  types, origins, and members, each leaving the world unchanged;
+- the fault matrix, at tick 1 and at tick 4: `check`, `apply` (first and last command), a system
+  (first, middle, and last), a validator at the commit, five non-canonical writes, a `Promise`
+  from `run` and from `apply`, an undeclared stream, and exhausted ids; and exhausted ticks. Each
+  checks the code and issues, that only `worldStatus` answers, and its diagnosis;
+- barrier violations, each found by audit at the exact tick, and missed without it;
+- revocation, a fault caught by the ruleset, a nested step, and host isolation of the commands
+  and of everything a step returns;
+- randomness: counters per (stream, id) that continue within a tick and restart the next, and
+  independence from other entities and streams;
+- cost: the exact `hashedBytes`, a world of 10,000 chunks with one changed, and a lazy index.
+
+### What arrives with snapshots
+
+The next pull request encodes and decodes snapshots. Encoding recomputes every digest and refuses
+a state that disagrees with its incremental ones, which detects in production the writes that
+only audit detects now; decoding a snapshot is how a poisoned world is recovered.
 
 ## Lint exceptions
 
@@ -388,6 +514,7 @@ it. The list therefore stays one list, in one override.
 | `canonical/order.ts` | Key enumeration through `Object`: it lists own keys with `getOwnPropertyNames` and `getOwnPropertySymbols`, and sorts them | `key-order.grit` |
 | `canonical/encode.ts` | The global `JSON` | `global-json.grit` |
 | `canonical/value.ts` | The global `Map`, to look up the objects a walk has entered; it never iterates one | `global-map.grit` |
+| `step/context.ts` | The global `Map`, to look up the draw sequences of a tick by stream and id; it never iterates one | `global-map.grit` |
 | `int.ts` | The global `Math`, for `Math.imul` and `Math.floor`, which ECMA-262 defines exactly | `global-math.grit` |
 
 A global's plugin reports every reference to the name outside a type: member access, calls, `new`, aliasing,

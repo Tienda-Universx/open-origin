@@ -11,19 +11,31 @@
  *
  * The sum does not depend on the order of the chunks, can be updated by subtracting a chunk's old
  * term and adding its new one, and composes by region. A world caches the terms, the sum, the
- * global digest, and the root; the kernel digest has a fixed size and is recomputed.
+ * global digest, and the root; the kernel digest has a fixed size and is recomputed. A step
+ * updates them for what it changed (step/commit.ts); fullChecksum recomputes them all.
  */
 import type { CanonicalValue } from "../canonical/value.ts";
-import { type Digest, digest, digestWords, hexOf } from "../digest/digest.ts";
+import { type Digest, Digester, digest, digestWords, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes } from "../digest/lanes.ts";
 import type { ChunkKey } from "./chunk.ts";
 import type { ChunkIndex } from "./chunk-index.ts";
-import { type ChunkEntry, type DigestCache, type Kernel, type World, worldState } from "./world.ts";
+import {
+  type ChunkEntry,
+  type DigestCache,
+  healthyState,
+  type Kernel,
+  type World,
+  type WorldState,
+} from "./world.ts";
 
 /** The chunk sum of a world without chunks. */
 const ZERO: Lanes = [0, 0, 0, 0];
 
-function kernelDigest({ epoch, tick, nextEntityId, rng, config }: Kernel): Digest {
+/** The kernel digest, digest(["kernel", { epoch, tick, nextEntityId, rng, config }]). */
+export function kernelDigest(
+  { epoch, tick, nextEntityId, rng, config }: Kernel,
+  digester: Digester,
+): Digest {
   const { algorithm, seed } = rng;
   const kernel = {
     epoch,
@@ -32,7 +44,7 @@ function kernelDigest({ epoch, tick, nextEntityId, rng, config }: Kernel): Diges
     rng: { algorithm, seed: [seed[0], seed[1]] },
     config: { simSecondsPerTick: config.simSecondsPerTick },
   };
-  return digest(["kernel", kernel]);
+  return digester.digest(["kernel", kernel]);
 }
 
 /** The global digest, digest(["global", global]). */
@@ -45,9 +57,18 @@ export function chunkTerm(key: ChunkKey, chunk: CanonicalValue): Lanes {
   return digestWords(["chunk", key, chunk]);
 }
 
-/** The state root of a world with these digests, chunk sum, and number of chunks. */
-function composeRoot(kernel: Digest, global: Digest, chunkSum: Lanes, chunkCount: number): Digest {
-  return digest(["state", kernel, global, hexOf(chunkSum), chunkCount]);
+/** What the state root composes. */
+export type RootParts = {
+  readonly kernel: Digest;
+  readonly global: Digest;
+  readonly chunkSum: Lanes;
+  readonly chunkCount: number;
+};
+
+/** The state root of these parts, digest(["state", kernel, global, chunkSum, chunkCount]). */
+export function composeRoot(parts: RootParts, digester: Digester): Digest {
+  const { kernel, global, chunkSum, chunkCount } = parts;
+  return digester.digest(["state", kernel, global, hexOf(chunkSum), chunkCount]);
 }
 
 /** The sum of the cached terms of `chunks`. */
@@ -63,39 +84,57 @@ export function digestCache(
   global: Digest,
   chunks: ChunkIndex<ChunkEntry>,
 ): DigestCache {
-  const cache = { globalDigest: global, chunkSum: sumTerms(chunks) };
-  const root = composeRoot(kernelDigest(kernel), cache.globalDigest, cache.chunkSum, chunks.size);
-  return { ...cache, stateRoot: root };
+  const digester = new Digester();
+  const chunkSum = sumTerms(chunks);
+  const parts = {
+    kernel: kernelDigest(kernel, digester),
+    global,
+    chunkSum,
+    chunkCount: chunks.size,
+  };
+  return { globalDigest: global, chunkSum, stateRoot: composeRoot(parts, digester) };
+}
+
+/**
+ * The state root of `state` recomputed from its values alone, never from a cached digest: O(N)
+ * for N chunks. Throws EngineError("invalid_value") when a value is not canonical, which only a
+ * write that bypassed the barrier can cause.
+ */
+export function recomputeRoot({ kernel, global, chunks }: WorldState): Digest {
+  const digester = new Digester();
+  let chunkSum = ZERO;
+  for (const [key, entry] of chunks.sortedEntries()) {
+    chunkSum = addLanes(chunkSum, chunkTerm(key, entry.value));
+  }
+  const parts = { kernel: kernelDigest(kernel, digester), global: globalDigest(global), chunkSum };
+  return composeRoot({ ...parts, chunkCount: chunks.size }, digester);
 }
 
 /**
  * The state root of `world`, as the world keeps it: O(1). Throws EngineError("invalid_input")
- * when `world` is not a world.
+ * when `world` is not a world, and EngineError("world_faulted") when its tick failed.
  */
 export function stateRoot(world: World): Digest {
-  return worldState(world).digests.stateRoot;
+  return healthyState(world).digests.stateRoot;
 }
 
 /**
  * The state root of `world` recomputed from its state alone, never from a cached digest: O(N)
  * for N chunks, for audits and checkpoints. It equals stateRoot unless something changed the
  * state without the engine knowing. Throws EngineError("invalid_input") when `world` is not a
- * world.
+ * world, and EngineError("world_faulted") when its tick failed.
  */
 export function fullChecksum(world: World): Digest {
-  const { kernel, global, chunks } = worldState(world);
-  let sum = ZERO;
-  for (const [key, entry] of chunks.sortedEntries())
-    sum = addLanes(sum, chunkTerm(key, entry.value));
-  return composeRoot(kernelDigest(kernel), globalDigest(global), sum, chunks.size);
+  return recomputeRoot(healthyState(world));
 }
 
 /**
  * Each chunk's cached term, written as a digest, in a fresh record whose keys are in canonical
  * order: O(N), to find which chunks differ between two worlds. Throws
- * EngineError("invalid_input") when `world` is not a world.
+ * EngineError("invalid_input") when `world` is not a world, and EngineError("world_faulted") when
+ * its tick failed.
  */
 export function chunkHashes(world: World): Record<ChunkKey, Digest> {
-  const { chunks } = worldState(world);
+  const { chunks } = healthyState(world);
   return Object.fromEntries(chunks.sortedEntries().map(([key, entry]) => [key, hexOf(entry.term)]));
 }

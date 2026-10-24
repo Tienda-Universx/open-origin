@@ -42,3 +42,28 @@ export function digestWords(value: CanonicalValue): Hash128 {
 export function digest(value: CanonicalValue): Digest {
   return hexOf(digestWords(value));
 }
+
+/**
+ * Digests, as digestWords and digest compute them, that count the UTF-8 bytes they hash: a tick
+ * reports the count as `stats.hashedBytes` (ADR 0020, cost). One digester serves one count.
+ */
+export class Digester {
+  #hashedBytes = 0;
+
+  /** How many UTF-8 bytes of canonical text this digester has hashed. */
+  get hashedBytes(): number {
+    return this.#hashedBytes;
+  }
+
+  /** The words of the digest of `text`, which must be the canonical text of a value. */
+  textWords(text: string): Hash128 {
+    const bytes = utf8Encode(text);
+    this.#hashedBytes += bytes.length;
+    return murmur3x86_128(bytes, 0);
+  }
+
+  /** digest(value), counted. */
+  digest(value: CanonicalValue): Digest {
+    return hexOf(this.textWords(canonicalize(value)));
+  }
+}

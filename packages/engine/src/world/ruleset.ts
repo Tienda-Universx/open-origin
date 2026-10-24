@@ -5,17 +5,24 @@
  * Command types are enumerated in canonical order, never in insertion order.
  */
 import type { CanonicalValue, IssueSink } from "../canonical/value.ts";
-import { pointer, validateCanonical } from "../canonical/value.ts";
+import { pointer } from "../canonical/value.ts";
 import { IssueList } from "../errors.ts";
 import { streamId } from "../rng/mix32.ts";
 import type { ChunkKey } from "./chunk.ts";
 import type { Command, DeepReadonly, ReadView, RulesetVersions, TickContext } from "./contracts.ts";
-import { expectRecord, readElements, readMember, readRecordKeys, UNREAD } from "./members.ts";
+import {
+  expectRecord,
+  readElements,
+  readMember,
+  readRecordKeys,
+  readText,
+  UNREAD,
+} from "./members.ts";
 
 type Value = CanonicalValue;
 
 /** Stream ids by declared name, in a record without a prototype. */
-type StreamIds = { readonly [name: string]: number };
+export type StreamIds = { readonly [name: string]: number };
 
 /** A system as the kernel keeps it. Its results are checked where it is called. */
 type CapturedSystem = {
@@ -63,25 +70,6 @@ type Owner = { readonly label: string; readonly ids: { [name: string]: number } 
  * of a record's keys do.
  */
 const VERSION_NAMES: readonly (keyof RulesetVersions)[] = ["brain", "generator", "ruleset"];
-
-/**
- * `value` if it is a non-empty canonical string; otherwise undefined, after an issue at `path`
- * unless readMember already reported it.
- */
-function readText(value: unknown, path: string, what: string, sink: IssueSink): string | undefined {
-  if (value === UNREAD) return undefined;
-  if (typeof value !== "string") {
-    sink.report(path, `${what} must be a string, not ${typeof value}`);
-    return undefined;
-  }
-  if (value === "") {
-    sink.report(path, `${what} must not be empty`);
-    return undefined;
-  }
-  const problems = validateCanonical(value);
-  for (const problem of problems) sink.report(`${path}${problem.path}`, problem.message);
-  return problems.length === 0 ? value : undefined;
-}
 
 /** `name` unless it starts with the prefix the kernel keeps for itself (ADR 0020). */
 function unreserved(name: string, path: string, what: string, sink: IssueSink): string | undefined {

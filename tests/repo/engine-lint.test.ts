@@ -371,13 +371,14 @@ describe("engine purity controls (packages/engine/src)", () => {
  * one lives in a GritQL plugin of its own, registered for src minus its exception file, because
  * Biome adds up the plugins of every override that matches a file and cannot take one away:
  * canonical/order.ts may enumerate keys through `Object` (key-order.grit), canonical/encode.ts may
- * use the global `JSON` (global-json.grit), canonical/value.ts the global `Map` (global-map.grit),
- * and int.ts the global `Math` (global-math.grit). Each exception covers its exact file, and every
- * other purity rule still applies to it.
+ * use the global `JSON` (global-json.grit), canonical/value.ts and step/context.ts the global `Map`
+ * (global-map.grit), and int.ts the global `Math` (global-math.grit). Each exception covers its
+ * exact file, and every other purity rule still applies to it.
  */
 const ORDER_TS = `${ENGINE_SRC}/canonical/order.ts`;
 const ENCODE_TS = `${ENGINE_SRC}/canonical/encode.ts`;
 const VALUE_TS = `${ENGINE_SRC}/canonical/value.ts`;
+const CONTEXT_TS = `${ENGINE_SRC}/step/context.ts`;
 const INT_TS = `${ENGINE_SRC}/int.ts`;
 
 /** The overrides that configure noRestrictedGlobals: biome.json keeps one list, in one override. */
@@ -424,6 +425,7 @@ const EXCEPTIONS: { file: string; probe: Probe }[] = [
   { file: ORDER_TS, probe: KEY_ENUMERATION_PROBE },
   { file: ENCODE_TS, probe: pluginProbe("JSON") },
   { file: VALUE_TS, probe: pluginProbe("Map") },
+  { file: CONTEXT_TS, probe: pluginProbe("Map") },
   { file: INT_TS, probe: pluginProbe("Math") },
 ];
 
@@ -500,6 +502,11 @@ const NEAR_MISSES = [
   `${ENGINE_SRC}/canonical/order/order.ts`,
   `${ENGINE_SRC}/canonical/encode/encode.ts`,
   `${ENGINE_SRC}/canonical/value/value.ts`,
+  `${ENGINE_SRC}/context.ts`,
+  `${ENGINE_SRC}/world/context.ts`,
+  `${ENGINE_SRC}/step/contexts.ts`,
+  `${ENGINE_SRC}/step/step.ts`,
+  `${ENGINE_SRC}/step/context/context.ts`,
 ];
 
 describe("reviewed exceptions in packages/engine/src", () => {
