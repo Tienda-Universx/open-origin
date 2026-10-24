@@ -31,7 +31,12 @@ function run(tool: Tool, files: Record<string, string>): LintResult {
       ? ["biome", "lint", `--config-path=${scratch}`, ...paths]
       : ["oxlint", "-c", `${REPO_ROOT}.oxlintrc.json`, "--format", "unix", ...paths];
   // Run from the repository root so bunx finds the locally installed tools.
-  const result = Bun.spawnSync(["bunx", "--no-install", "--bun", ...args], { cwd: REPO_ROOT });
+  // A hung tool fails the test with a diagnosis instead of blocking the run (Bun's per-test
+  // timeout cannot fire while spawnSync blocks the event loop).
+  const result = Bun.spawnSync(["bunx", "--no-install", "--bun", ...args], {
+    cwd: REPO_ROOT,
+    timeout: 30_000,
+  });
   return {
     exitCode: result.exitCode,
     output: `${result.stdout.toString()}${result.stderr.toString()}`,
@@ -77,6 +82,20 @@ describe("automated quality controls", () => {
   ] as const)("oxlint rejects %s", (_name, files, rule) => {
     // A non-zero exit proves the rule is an error that fails CI, not only a warning.
     expect(run("oxlint", files)).toEqual({ exitCode: 1, output: expect.stringContaining(rule) });
+  });
+
+  test("a reviewed disable comment lifts only the complexity limit, on the next line only", () => {
+    const disable = "// oxlint-disable-next-line eslint/complexity -- lookup table, reviewed\n";
+    expect(run("oxlint", { "justified.ts": disable + branches(10) }).exitCode).toBe(0);
+    // The comment covers the first function only: a second complex function and a deep one still fail.
+    const second = branches(10).replace("function f", "function f2");
+    const deep = nested(5).replace("function g", "function k");
+    const { exitCode, output } = run("oxlint", {
+      "partly-justified.ts": `${disable}${branches(10)}${second}${deep}`,
+    });
+    expect(exitCode).toBe(1);
+    expect(output.match(/eslint\(complexity\)/g)).toHaveLength(1);
+    expect(output).toContain("eslint(max-depth)");
   });
 
   test("oxlint accepts a cyclomatic complexity of exactly 10", () => {
