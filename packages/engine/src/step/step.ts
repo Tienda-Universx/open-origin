@@ -168,6 +168,9 @@ function computeTick(session: TickSession, commands: readonly Command[]): StepRe
   session.owner = undefined;
   const { checksum, changedChunks, hashedBytes } = commit(session);
   if (session.state.audit) audit(session);
+  // The last check before the result: a Proxy's trap may have caught a fault during the commit or
+  // the audit, where no validator ran after it.
+  session.throwIfFaulted();
   const { tick, events, rejected, dirtyKeys, createdKeys } = session;
   const stats = {
     commands: commands.length,

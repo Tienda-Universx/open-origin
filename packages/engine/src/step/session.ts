@@ -71,9 +71,18 @@ export class TickSession implements ActiveStep {
    */
   ensureLive(): Owner {
     if (this.#expired) throw new EngineError("context_expired", [{ path: "", message: EXPIRED }]);
-    if (this.#fault !== undefined) throw this.#fault;
+    this.throwIfFaulted();
     if (this.owner === undefined) throw this.fail(OUTSIDE);
     return this.owner;
+  }
+
+  /**
+   * Throws the tick's fault, once there is one. Ruleset code that runs outside invoke (the
+   * validators at the commit, and the traps of a Proxy in the state) may catch the fault it
+   * caused, so the step checks after it runs: a recorded fault always poisons the world.
+   */
+  throwIfFaulted(): void {
+    if (this.#fault !== undefined) throw this.#fault;
   }
 
   /** Revokes the context: every later use throws context_expired. */

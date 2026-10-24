@@ -67,6 +67,8 @@ function commitChunk(session: TickSession, key: ChunkKey, sum: Lanes, tools: Too
   // Called without a receiver, so ruleset code cannot reach the captured ruleset through `this`.
   const { validateChunk } = state.ruleset;
   runValidator("validateChunk", path, () => validateChunk(key, value), tools.issues);
+  // A validator that used a kept context and caught the fault stops the commit here.
+  session.throwIfFaulted();
   if (entry === undefined) {
     state.chunks.add(key, { value, term });
     return addLanes(sum, term);
@@ -86,6 +88,7 @@ function commitGlobal(session: TickSession, { digester, issues }: Tools): Digest
   const fresh = hexOf(digester.textWords(text));
   const { validateGlobal } = state.ruleset;
   runValidator("validateGlobal", "/global", () => validateGlobal(state.global), issues);
+  session.throwIfFaulted();
   return fresh;
 }
 

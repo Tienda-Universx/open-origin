@@ -446,6 +446,12 @@ looks up and never iterates: this is the reviewed lint exception of `step/contex
 - Faults are recorded, not only thrown: ruleset code that catches one still poisons the world, and
   every later use of the context throws the same fault again. The first fault of a tick is the one
   reported.
+- This holds for ruleset code that runs outside the systems and handlers too. A validator at the
+  commit, or the trap of a Proxy in the state, may use a context it kept; every method then faults
+  before it acts, so it marks nothing and emits nothing. Step checks the recorded fault after each
+  validator at the commit, which stops the commit there, and once more after the audit, before it
+  returns a result. `createWorld`'s validators run outside every tick: a context kept from a step
+  is expired there, throws `context_expired`, and changes nothing.
 
 ### A world is busy while it steps
 
@@ -510,6 +516,9 @@ for tests, and is not counted, so a step returns the same result with or without
 - randomness: counters per (stream, id) that continue within a tick and restart the next, and
   independence from other entities and streams;
 - cost: the exact `hashedBytes`, a world of 10,000 chunks with one changed, and a lazy index;
+- a fault swallowed outside the systems and handlers: each context method used by a validator at
+  the commit, chunk and global, a Proxy trap at the commit and at the audit, and a commit that
+  stops at the validator that faulted;
 - a busy world: each read and `step`, from a system and from a command handler, and from a host
   Proxy while the commands are read, including one whose own step would fault;
 - not yet: that the commit's work does not grow with the number of chunks, which the complexity

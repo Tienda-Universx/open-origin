@@ -12,6 +12,7 @@ import {
 } from "../src/index.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import {
+  type Ctx,
   command,
   type Data,
   handler,
@@ -247,5 +248,171 @@ describe("a Proxy in the state is detected only when its answers change", () => 
       ],
     });
     expect(worldStatus(world)).toMatchObject({ kind: "faulted", tick: 2 });
+  });
+});
+
+describe("a fault recorded outside every system and handler still poisons the world", () => {
+  const OUTSIDE =
+    "the tick context was used outside every system and command handler: only they may use it";
+  const outside = [{ path: "", message: OUTSIDE }];
+
+  /** Uses of a context that a validator keeps from the tick's system, each of which must fault. */
+  const KEPT_USES: [string, (ctx: Ctx) => unknown][] = [
+    ["writeGlobal", (ctx) => ctx.writeGlobal()],
+    ["emit", (ctx) => ctx.emit("x", 1)],
+    ["readChunk", (ctx) => ctx.readChunk("0,0")],
+    ["random.u32", (ctx) => ctx.random.u32("keep", 1)],
+    ["newEntityId", (ctx) => ctx.newEntityId()],
+    ["createChunk", (ctx) => ctx.createChunk("7,7", 1)],
+  ];
+  const VALIDATORS = ["validateChunk", "validateGlobal"] as const;
+  const CASES = VALIDATORS.flatMap((validator) =>
+    KEPT_USES.map(([name, use]) => [validator, name, use] as const),
+  );
+
+  /**
+   * A world whose system keeps its context and writes chunk 0,0 and the global value, and whose
+   * `validator` uses the kept context at the commit and swallows what it throws.
+   */
+  function swallowing(validator: (typeof VALIDATORS)[number], use: (ctx: Ctx) => unknown) {
+    let kept: Ctx | undefined;
+    const keeper = system(
+      "keeper",
+      (ctx) => {
+        kept = ctx;
+        writable(ctx, "0,0").n = ctx.tick;
+        (ctx.writeGlobal() as Data).n = ctx.tick;
+      },
+      ["keep"],
+    );
+    const ruleset: StepRuleset = {
+      ...stepRuleset([keeper]),
+      [validator]: () => {
+        try {
+          if (kept !== undefined) use(kept);
+        } catch {
+          // Swallowed on purpose: the session recorded the fault all the same.
+        }
+        return [];
+      },
+    };
+    return stepWorld(ruleset);
+  }
+
+  test.each(CASES)(
+    "%s swallowing %s: no result, and only worldStatus answers",
+    (validator, _, use) => {
+      const world = swallowing(validator, use);
+      const error = engineErrorOf(() => step(world, []));
+      expect({ code: error.code, issues: error.issues }).toEqual({
+        code: "system_fault",
+        issues: outside,
+      });
+      expect(worldStatus(world)).toEqual({
+        kind: "faulted",
+        tick: 1,
+        code: "system_fault",
+        issues: outside,
+      });
+      for (const read of [readView, fullChecksum, stateRoot, chunkHashes] as ((
+        w: World,
+      ) => unknown)[]) {
+        expect(engineErrorOf(() => read(world)).code).toBe("world_faulted");
+      }
+    },
+  );
+
+  test("the commit stops at the validator that recorded the fault", () => {
+    let kept: Ctx | undefined;
+    const validated: string[] = [];
+    const ruleset: StepRuleset = {
+      ...stepRuleset([
+        system("keeper", (ctx) => {
+          kept = ctx;
+          writable(ctx, "0,0").n = 1;
+          writable(ctx, "1,0").n = 1;
+        }),
+      ]),
+      validateChunk: (key) => {
+        if (kept === undefined) return [];
+        validated.push(key);
+        try {
+          kept.emit("x", 1);
+        } catch {
+          // Swallowed on purpose.
+        }
+        return [];
+      },
+    };
+    const world = stepWorld(ruleset);
+    expect(engineErrorOf(() => step(world, [])).issues).toEqual(outside);
+    expect(validated).toEqual(["0,0"]);
+  });
+
+  /** A Proxy whose trap, from its `from`-th call on, uses `kept()` and swallows what it throws. */
+  function trapUsing(kept: () => Ctx | undefined, from: number): Data {
+    let calls = 0;
+    return new Proxy({ a: 1 } as Data, {
+      getOwnPropertyDescriptor(target, key) {
+        calls += 1;
+        try {
+          if (calls >= from) kept()?.readGlobal();
+        } catch {
+          // Swallowed on purpose.
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+  }
+
+  test("a Proxy in the state whose trap swallows a fault at the commit or the audit", () => {
+    for (const [from, audit] of [
+      [1, false],
+      [2, true],
+    ] as const) {
+      let kept: Ctx | undefined;
+      const world = stepWorld(
+        stepRuleset([
+          system("smuggle", (ctx) => {
+            kept = ctx;
+            writable(ctx, "0,0").inner = trapUsing(() => kept, from);
+          }),
+        ]),
+        {},
+        audit,
+      );
+      expect(engineErrorOf(() => step(world, [])).issues).toEqual(outside);
+      expect(worldStatus(world)).toMatchObject({ kind: "faulted", tick: 1 });
+    }
+  });
+
+  test("createWorld's validators run outside every tick: a kept context throws, records nothing", () => {
+    let kept: Ctx | undefined;
+    const first = stepWorld(
+      stepRuleset([
+        system("keeper", (ctx) => {
+          kept = ctx;
+        }),
+      ]),
+    );
+    step(first, []);
+    const before = stateRoot(first);
+    let thrown: unknown;
+    const ruleset: StepRuleset = {
+      ...stepRuleset(),
+      validateGlobal: () => {
+        try {
+          kept?.writeGlobal();
+        } catch (error) {
+          thrown = error;
+        }
+        return [];
+      },
+    };
+    const second = stepWorld(ruleset);
+    expect((thrown as EngineError).code).toBe("context_expired");
+    expect(worldStatus(second)).toEqual({ kind: "ok", tick: 0 });
+    expect(worldStatus(first)).toEqual({ kind: "ok", tick: 1 });
+    expect(stateRoot(first)).toBe(before);
   });
 });
