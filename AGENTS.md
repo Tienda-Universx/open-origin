@@ -3,7 +3,9 @@
 Instructions for humans and AI agents working in this repository. They apply to every batch
 ("tanda"), not only to the current one.
 The approved plan (`docs/roadmap/v0.1-plan.es.md`) and the ADRs (`docs/decisions/`) are the source
-of truth. If this file and an ADR disagree, the ADR wins and this file must be fixed.
+of truth. If this file and an ADR disagree, the ADR wins and this file must be fixed. The plan is a
+verbatim record: its known errata are corrected in the ADRs and listed in the tracker log, and when
+the plan and an ADR disagree, the ADR wins.
 
 ## Project in one paragraph
 
@@ -26,9 +28,11 @@ Bun are allowed when they add value.
 | Apply formatting and safe fixes | `bun run format` |
 | Tests | `bun test` |
 
-CLIs whose launcher targets Node (for example `tsc`, `biome`) must run with `bunx --bun`.
-Before relying on a tool, check that it exists and which version it is (`bun --version`,
-`bunx --bun tsc --version`); do not assume.
+CLIs whose launcher targets Node (for example `tsc`, `biome`) run with `bunx --no-install --bun`:
+`--bun` keeps them on Bun, and `--no-install` stops bunx from downloading a registry package when
+the tool is not installed locally (the npm package named `tsc` is not TypeScript). Run `bun install`
+first, then check that a tool exists and which version it is (`bun --version`,
+`bunx --no-install --bun tsc --version`); do not assume.
 
 ## Architecture rules (do not break)
 
@@ -56,8 +60,9 @@ Before relying on a tool, check that it exists and which version it is (`bun --v
 9. **AI is off by default.** `AI_MODE=off`. Paid usage requires an explicit server flag plus spend
    caps, and is never enabled by an agent.
 10. **No empty packages.** Create a workspace package only in the batch that needs it.
-11. **Scientific integrity.** Never claim that inhabitants are conscious, never inject the concepts
-    we want to observe into prompts, and keep provenance for every belief (plan §C, §K).
+11. **Scientific integrity.** Never present a metric or a behavior as proof that inhabitants are
+    conscious (no accepted test exists, plan §C), never inject the concepts we want to observe into
+    prompts, and keep provenance for every belief (plan §C, §K).
 
 ## Change protocol (mandatory for every significant change)
 
@@ -89,7 +94,9 @@ evidence.
 2. Choose the simplest maintainable solution; avoid duplication, coupling, and over-engineering.
 3. Make small, reviewable changes; keep public interfaces and behavior unless a functional change
    is explicitly justified.
-4. Never weaken or edit tests just to make them pass. When behavior changes on purpose, document it
+4. Write the failing test first when a deterministic test is possible (RED), then the change
+   (GREEN).
+5. Never weaken or edit tests just to make them pass. When behavior changes on purpose, document it
    and update the tests to the new requirement.
 
 ### Phase D: validate
@@ -100,7 +107,8 @@ evidence.
    input, race conditions, and recovery paths where they apply.
 4. Measure performance or resource use when the change can affect them; do not assume.
 5. Repeat Phase B for new tests: they must detect real defects.
-6. Get an independent review of the final result for high-risk changes.
+6. Get an independent review of the final result: a reviewer or agent that did not write the
+   change.
 
 If a check fails, find and fix the cause. Never hide, skip, or disable a failure without a
 documented justification.
@@ -141,8 +149,8 @@ dependency control; critical review of every change.
   descriptive. Commit messages carry no AI attribution trailers (such as `Co-Authored-By`).
 - Pull requests are merged with a merge commit (no squash, no rebase-merge), parent first in stacked
   PRs, using GitHub's default merge message (never the PR body).
-- Push and open pull requests with a user-authenticated token: events created with a Codespace's
-  built-in token do not start GitHub Actions workflows.
+- Push and open pull requests with a user-authenticated token. In T1, pushes and pull requests made
+  with a Codespace's built-in credentials did not start GitHub Actions workflows.
 - Tests and docs ship with the behavior they cover.
 
 ## Documentation map
