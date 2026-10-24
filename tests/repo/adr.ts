@@ -16,22 +16,36 @@ function isCalendarDate(value: string): boolean {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
-/** Blanks out HTML comments and fenced code blocks so they never count as structure. */
+/** Stands in for fenced code: counts as section content, never as a heading or metadata. */
+const FENCED_LINE = "[fenced code]";
+const FENCE = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * Removes HTML comments and neutralizes fenced code blocks so they never count as structure.
+ * A fence closes only with a marker of the same character that is at least as long (CommonMark).
+ */
 function visibleLines(lines: readonly string[]): string[] {
   let inComment = false;
-  let inFence = false;
+  let fence: string | undefined;
   return lines.map((line) => {
-    if (inFence) {
-      if (/^\s*(```|~~~)/.test(line)) inFence = false;
-      return "";
+    if (fence !== undefined) {
+      const closing = FENCE.exec(line)?.[1];
+      const closes =
+        closing !== undefined &&
+        closing[0] === fence[0] &&
+        closing.length >= fence.length &&
+        line.trim() === closing;
+      if (closes) fence = undefined;
+      return FENCED_LINE;
     }
     if (inComment) {
       if (line.includes("-->")) inComment = false;
       return "";
     }
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = true;
-      return "";
+    const opening = FENCE.exec(line)?.[1];
+    if (opening !== undefined) {
+      fence = opening;
+      return FENCED_LINE;
     }
     if (line.includes("<!--") && !line.includes("-->")) {
       inComment = true;
@@ -74,8 +88,11 @@ function sectionBodies(lines: readonly string[]): Map<string, Section> {
 export function validateAdr(file: AdrFile): AdrIssue[] {
   const issues: AdrIssue[] = [];
   const report = (message: string) => issues.push({ file: file.name, message });
-  const raw = file.content.replace(/^﻿/, "").split(/\r?\n/);
+  const raw = file.content.replace(/^\uFEFF/, "").split(/\r?\n/);
   const lines = visibleLines(raw);
+  // Status and Date belong to the header: everything before the first "## " section.
+  const firstSection = lines.findIndex((line) => line.startsWith("## "));
+  const header = firstSection === -1 ? lines : lines.slice(0, firstSection);
 
   const number = FILE_NAME.exec(file.name)?.[1];
   if (number === undefined) {
@@ -84,14 +101,14 @@ export function validateAdr(file: AdrFile): AdrIssue[] {
     report(`first line must be '# ${number}. <Title>'`);
   }
 
-  const status = lines.find((line) => line.startsWith("- Status: "))?.slice("- Status: ".length);
+  const status = header.find((line) => line.startsWith("- Status: "))?.slice("- Status: ".length);
   if (status === undefined || !STATUS.test(status.trim())) {
     report(
       "status must be one of: Proposed, Accepted, Rejected, Deprecated, or 'Superseded by NNNN'",
     );
   }
 
-  const date = lines.find((line) => line.startsWith("- Date: "))?.slice("- Date: ".length);
+  const date = header.find((line) => line.startsWith("- Date: "))?.slice("- Date: ".length);
   if (date === undefined || !isCalendarDate(date.trim())) {
     report("date must be a valid YYYY-MM-DD");
   }

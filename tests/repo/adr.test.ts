@@ -132,6 +132,78 @@ describe("validateAdr", () => {
     );
     expect(messages(adr({ body }))).toContain("section '## Context' must not be empty");
   });
+
+  test("rejects a kebab-case slug with uppercase letters", () => {
+    expect(messages(adr({ name: "0007-Use-Sample-Decision.md" }))).toContain(
+      "file name must match NNNN-kebab-case-title.md",
+    );
+  });
+
+  test("accepts an ADR saved with a UTF-8 byte order mark", () => {
+    const file = adr();
+    expect(validateAdr({ ...file, content: `\uFEFF${file.content}` })).toEqual([]);
+  });
+
+  test("accepts an ADR with CRLF line endings", () => {
+    const file = adr();
+    expect(validateAdr({ ...file, content: file.content.replaceAll("\n", "\r\n") })).toEqual([]);
+  });
+
+  test("strips inline HTML comments from metadata lines", () => {
+    expect(validateAdr(adr({ status: "Accepted <!-- confirmed in review -->" }))).toEqual([]);
+  });
+
+  test("reads Status and Date only from the header, before the first section", () => {
+    const content = [
+      "# 0007. Use sample decision",
+      "",
+      "- Date: 2026-10-24",
+      "",
+      "## Context",
+      "- Status: Accepted",
+      "",
+      "## Decision",
+      "What.",
+      "",
+      "## Consequences",
+      "Effects.",
+      "",
+    ].join("\n");
+    expect(messages({ name: "0007-use-sample-decision.md", content })).toContain(STATUS_RULE);
+  });
+
+  test("accepts a required section whose only content is a fenced code block", () => {
+    const body = [
+      "## Context",
+      "Why.",
+      "",
+      "## Decision",
+      "```text",
+      "engine -> commands -> state",
+      "```",
+      "",
+      "## Consequences",
+      "Effects.",
+    ].join("\n");
+    expect(validateAdr(adr({ body }))).toEqual([]);
+  });
+
+  test("keeps a fence open until a closing marker of the same kind", () => {
+    const body = [
+      "## Context",
+      "Why.",
+      "",
+      "## Decisionz",
+      "```md",
+      "~~~",
+      "## Decision",
+      "```",
+      "",
+      "## Consequences",
+      "Effects.",
+    ].join("\n");
+    expect(messages(adr({ body }))).toContain("missing section '## Decision'");
+  });
 });
 
 describe("validateAdrSet", () => {
@@ -166,9 +238,10 @@ describe("validateAdrSet", () => {
 });
 
 describe("repository ADRs", () => {
-  test("every ADR in docs/decisions is valid and numbered contiguously", async () => {
+  test("every file in docs/decisions is a valid ADR and numbering is contiguous", async () => {
     const files: AdrFile[] = [];
-    for await (const name of new Bun.Glob("*.md").scan({ cwd: Bun.fileURLToPath(DECISIONS_DIR) })) {
+    // Scan every file, not only *.md, so a misnamed ADR (.MD, .markdown) cannot be skipped.
+    for await (const name of new Bun.Glob("*").scan({ cwd: Bun.fileURLToPath(DECISIONS_DIR) })) {
       files.push({ name, content: await Bun.file(new URL(name, DECISIONS_DIR)).text() });
     }
     expect(files.length).toBeGreaterThanOrEqual(2);
