@@ -81,6 +81,73 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/engine/src/**"],
+      "plugins": ["./packages/engine/lint/purity.grit"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noNodejsModules": "error",
+            "noProcessGlobal": "error"
+          },
+          "security": {
+            "noGlobalEval": "error"
+          },
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "Math": "Math is implementation-approximated (sin, exp, pow) or host-seeded (random): use integer arithmetic (ADR 0003).",
+                  "Date": "Date reads the host clock and time zone: simulation time is the tick (ADR 0003).",
+                  "Intl": "Intl depends on the host's locale data (ADR 0003).",
+                  "globalThis": "globalThis reaches host globals that no rule here can see (ADR 0003 P5).",
+                  "WeakRef": "WeakRef observes garbage collection, which differs between runs (ADR 0003).",
+                  "FinalizationRegistry": "FinalizationRegistry observes garbage collection, which differs between runs (ADR 0003).",
+                  "SharedArrayBuffer": "SharedArrayBuffer shares memory between threads; the engine is single-threaded (ADR 0003).",
+                  "Atomics": "Atomics serves shared-memory threads; the engine is single-threaded (ADR 0003).",
+                  "Promise": "The engine is synchronous: asynchronous work belongs to the host (ADR 0003, plan §I.1).",
+                  "Map": "Map iterates in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1).",
+                  "Set": "Set iterates in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1).",
+                  "WeakMap": "WeakMap keeps state outside the canonical, hashed world (plan §I.1).",
+                  "WeakSet": "WeakSet keeps state outside the canonical, hashed world (plan §I.1).",
+                  "Function": "Function compiles strings into code at run time, like eval (ADR 0003 P5).",
+                  "Bun": "Bun is a host API: the engine core is runtime-agnostic (ADR 0003 P5).",
+                  "crypto": "crypto is a host API and an unseeded random source (ADR 0003).",
+                  "performance": "performance reads a host clock (ADR 0003).",
+                  "structuredClone": "structuredClone is a host API, not ECMAScript (ADR 0003 P5).",
+                  "Reflect": "Reflect.ownKeys enumerates keys in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1).",
+                  "JSON": "JSON.stringify writes keys in insertion order, which a resumed world may not share: only the canonical serializer may encode state (plan §I.1)."
+                }
+              }
+            },
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["bun", "bun:*"],
+                    "message": "`bun` and `bun:*` are host APIs: the engine core is runtime-agnostic (ADR 0003 P5)."
+                  },
+                  {
+                    "group": ["node:*"],
+                    "message": "`node:*` modules are host APIs: the engine core is runtime-agnostic (ADR 0003 P5)."
+                  },
+                  {
+                    "group": ["**", "!./**", "!../**", "!bun", "!bun:*", "!node:*"],
+                    "message": "The engine depends on nothing: import only relative paths inside packages/engine/src (docs/architecture/overview.md)."
+                  }
+                ]
+              }
+            }
+          },
+          "suspicious": {
+            "noConsole": "error",
+            "noForIn": "error"
+          }
+        }
+      }
     }
   ]
 }

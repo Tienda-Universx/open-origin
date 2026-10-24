@@ -1,0 +1,190 @@
+/**
+ * Source checks that keep packages/engine/src inside its own compiler gate (ADR 0003 P5). The
+ * engine tsconfig declares only ECMAScript (`lib: ["ES2024"]`, `types: []`), and these bring host
+ * APIs back past it: a reference directive, any `declare` declaration (ambient, exported, or a
+ * class field), a declaration file, a comment that turns type checking or a Biome rule off, and
+ * an import that leaves src. Biome's noRestrictedImports also rejects non-relative imports; this
+ * scan adds the cases it misses: paths that leave src through `../` and type-level `import("…")`.
+ *
+ * The scan is lexical. Comments are blanked first; string literals are kept, so a string that
+ * reads like an import is reported too, which errs on the side of rejecting. A regular expression
+ * literal that contains a quote or a comment opener can confuse the comment blanking for the rest
+ * of its line (or, with `/*`, up to the next `*\/`).
+ */
+import { posix } from "node:path";
+
+export type SourceFile = { path: string; content: string };
+export type PurityIssue = { file: string; line: number; message: string };
+
+/** Repository-relative directory of the engine core. */
+export const ENGINE_SRC = "packages/engine/src";
+
+/** TypeScript sources: `.ts`, `.mts`, `.cts`, `.tsx`, and their declaration files. */
+const TYPESCRIPT_FILE = /\.[cm]?tsx?$/;
+
+/** Whether `path` is a TypeScript file under packages/engine/src. */
+export function isEngineSource(path: string): boolean {
+  return path.startsWith(`${ENGINE_SRC}/`) && TYPESCRIPT_FILE.test(path);
+}
+
+/** A string literal (group 1 or 2 holds its text) that stays on one line, like a specifier. */
+const STRING = String.raw`(?:"([^"\n]*)"|'([^'\n]*)')`;
+/** Before a keyword: the previous character is not part of a name or a property access. */
+const KEYWORD = String.raw`(?<![\w$.])`;
+
+/** `import … from "x"` and `export … from "x"`, also across lines; strings may sit in between. */
+const FROM_CLAUSE = new RegExp(
+  String.raw`${KEYWORD}(?:import|export)\b(?:[^;"'\x60]|"[^"\n]*"|'[^'\n]*')*?\bfrom\s*${STRING}`,
+  "g",
+);
+/** `import "x"`: an import for its side effects only. */
+const SIDE_EFFECT_IMPORT = new RegExp(String.raw`${KEYWORD}import\s*${STRING}`, "g");
+/** `import fs = require("x")`, TypeScript's import-equals declaration. */
+const IMPORT_EQUALS = new RegExp(
+  String.raw`${KEYWORD}import\s+(?:type\s+)?[\w$]+\s*=\s*require\s*\(\s*${STRING}`,
+  "g",
+);
+/** `import(…)`: a dynamic import, or a type-level one such as `typeof import("x")`. */
+const DYNAMIC_IMPORT = new RegExp(String.raw`${KEYWORD}import\s*\(`, "g");
+const LITERAL_ARGUMENT = new RegExp(String.raw`^\s*${STRING}\s*[,)]`);
+
+const DIRECTIVE = /^[ \t]*\/\/\/[ \t]*<reference\b/gm;
+/** The `declare` modifier, with the word after it: a declaration keyword or a class field. */
+const DECLARE = new RegExp(String.raw`${KEYWORD}declare\s+([\w$]+)`, "g");
+const DECLARATION_KEYWORDS = new Set([
+  "abstract",
+  "class",
+  "const",
+  "enum",
+  "function",
+  "global",
+  "interface",
+  "let",
+  "module",
+  "namespace",
+  "type",
+  "var",
+]);
+
+/** String and template literals (kept) and comments (replaced). */
+const LITERAL_OR_COMMENT =
+  /("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\[\s\S]|[^`\\])*`)|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+
+/** The source with every comment blanked out, keeping line breaks so line numbers still match. */
+function blankComments(source: string): string {
+  return source.replace(LITERAL_OR_COMMENT, (match, literal: string | undefined) =>
+    literal === undefined ? match.replace(/[^\n]/g, " ") : literal,
+  );
+}
+
+/** The 1-based line of the character at `index`. */
+function lineAt(text: string, index: number): number {
+  return text.slice(0, index).split("\n").length;
+}
+
+type Finding = { index: number; message: string };
+
+/** Why `specifier`, imported from `file`, is not allowed; undefined when it is. */
+function specifierProblem(file: string, specifier: string): string | undefined {
+  if (!/^\.\.?(?:\/|$)/.test(specifier)) {
+    return `"${specifier}" is not a relative import: the engine depends on nothing`;
+  }
+  const resolved = posix.normalize(posix.join(posix.dirname(file), specifier));
+  if (resolved === ENGINE_SRC || resolved.startsWith(`${ENGINE_SRC}/`)) return undefined;
+  return `"${specifier}" resolves outside ${ENGINE_SRC}`;
+}
+
+/** Every literal specifier the patterns capture, checked against the engine's import rule. */
+function specifierFindings(file: string, code: string): Finding[] {
+  return [FROM_CLAUSE, SIDE_EFFECT_IMPORT, IMPORT_EQUALS].flatMap((pattern) =>
+    [...code.matchAll(pattern)].flatMap((match) => {
+      const message = specifierProblem(file, match[1] ?? match[2] ?? "");
+      return message === undefined ? [] : [{ index: match.index, message }];
+    }),
+  );
+}
+
+/** Dynamic imports: a literal specifier follows the import rule; a computed one is rejected. */
+function dynamicImportFindings(file: string, code: string): Finding[] {
+  return [...code.matchAll(DYNAMIC_IMPORT)].flatMap((match) => {
+    const argument = LITERAL_ARGUMENT.exec(code.slice(match.index + match[0].length));
+    const message =
+      argument === null
+        ? "a dynamic import with a computed specifier cannot be checked"
+        : specifierProblem(file, argument[1] ?? argument[2] ?? "");
+    return message === undefined ? [] : [{ index: match.index, message }];
+  });
+}
+
+/**
+ * Declarations that no engine code backs: reference directives (read from the raw source, since
+ * they are comments) and every `declare` declaration, which can give a host global a type even
+ * inside a module.
+ */
+function declarationFindings(source: string, code: string): Finding[] {
+  const directives = [...source.matchAll(DIRECTIVE)].map((match) => ({
+    index: match.index,
+    message: "`/// <reference>` directives add declarations the engine tsconfig excludes",
+  }));
+  const declared = [...code.matchAll(DECLARE)].map((match) => ({
+    index: match.index,
+    message: DECLARATION_KEYWORDS.has(match[1] ?? "")
+      ? `\`declare ${match[1]}\` adds ambient declarations the engine tsconfig excludes`
+      : "a `declare` field declares a value that no engine code provides",
+  }));
+  return [...directives, ...declared];
+}
+
+/**
+ * Comments that switch a gate off: Biome suppressions (an exception belongs in a reviewed
+ * biome.json override) and TypeScript's directives that skip type errors. TypeScript matches its
+ * directives as prefixes, so they need no word boundary.
+ */
+const GATE_COMMENTS = [
+  {
+    pattern: /\bbiome-ignore(?:-all|-start|-end)?\b/g,
+    reason: "can silently disable a purity rule: add a reviewed override in biome.json instead",
+  },
+  {
+    pattern: /@ts-(?:nocheck|expect-error|ignore)/g,
+    reason: "can silently disable the engine's type gate: fix the type error instead",
+  },
+];
+
+/** Every gate-switching directive written in a comment; string literals are not comments. */
+function gateCommentFindings(source: string): Finding[] {
+  const comments = [...source.matchAll(LITERAL_OR_COMMENT)].filter(
+    ([, literal]) => literal === undefined,
+  );
+  return comments.flatMap((comment) =>
+    GATE_COMMENTS.flatMap(({ pattern, reason }) =>
+      [...comment[0].matchAll(pattern)].map((match) => ({
+        index: comment.index + match.index,
+        message: `\`${match[0]}\` ${reason}`,
+      })),
+    ),
+  );
+}
+
+/** Every purity issue in one engine source file, in line order. */
+export function checkEngineSource({ path, content }: SourceFile): PurityIssue[] {
+  // `.d.ts`, `.d.mts`, `.d.cts`, and declaration files for other extensions (`x.d.json.ts`).
+  if (/\.d\.(?:[^./]+\.)?[cm]?ts$/.test(path)) {
+    return [
+      {
+        file: path,
+        line: 1,
+        message: "declaration files can declare globals: write a .ts module instead",
+      },
+    ];
+  }
+  const code = blankComments(content);
+  return [
+    ...declarationFindings(content, code),
+    ...gateCommentFindings(content),
+    ...specifierFindings(path, code),
+    ...dynamicImportFindings(path, code),
+  ]
+    .sort((a, b) => a.index - b.index)
+    .map(({ index, message }) => ({ file: path, line: lineAt(content, index), message }));
+}

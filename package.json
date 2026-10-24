@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "check": "bun run typecheck && bun run lint && bun run test",
-    "typecheck": "bunx --no-install --bun tsc --noEmit -p tsconfig.json",
+    "typecheck": "bunx --no-install --bun tsc --noEmit -p tsconfig.json && bunx --no-install --bun tsc --noEmit -p packages/engine/tsconfig.json",
     "lint": "bunx --no-install --bun biome check . && bunx --no-install --bun oxlint -c .oxlintrc.json --deny-warnings",
     "format": "bunx --no-install --bun biome check --write .",
     "test": "bun test"
