@@ -28,13 +28,8 @@ world.
 We will defer the choice of host (O-1). v0.1 runs locally only: Bun + Postgres in Docker, nothing
 activated, nothing deployed. The frontend compiles to static files but is not deployed (plan §L).
 
-Conclusions recorded from plan §J.3:
+Conclusions recorded from plan §J.3 (the rejected options are under "Alternatives considered"):
 - **Bun + Postgres is the reference** for the engine: zero adaptation and no platform limits.
-- **Durable Objects is viable** for a small world, with adjustments: larger batches, snapshots per
-  chunk, recovery on every deploy, and a V8 test.
-- **Workers** fits a public API, static files, or a proxy, not the engine.
-- **Containers** (GA, paid only, `sleepAfter` of 10 min by default, ephemeral disk) is not
-  recommended for the engine.
 - For the frontend, the existing Pages project would be reused when authorized; its v3 build
   image ships Bun 1.2.15, so `BUN_VERSION=1.4.4` must be set or the build done in Actions.
 
@@ -46,9 +41,20 @@ Conclusions recorded from plan §J.3:
   Docker volume and world data (plan §I.2.6, §J.1).
 - Moving to Durable Objects would make the cross-runtime test (V8 vs. JavaScriptCore) mandatory.
 
-**Open question for a future ADR:** which host runs the 24/7 world, and at what cost. That ADR must
+**Open question for a future ADR:** which host runs the 24/7 world, and at what cost. No v0.1 batch
+(T1–T10) decides it; a future host ADR does (plan §L, point 6; O-1). That ADR must
 revalidate the sources before deciding (plan §L), require configured spend budgets (O-22), and
 require backups before any public world (plan §I.2.6).
+
+## Alternatives considered
+
+- **Cloudflare Workers for the engine:** no in-memory state guarantees and no persistence of its
+  own; it fits a public API, static files, or a proxy, not the engine (plan §J.3).
+- **Durable Objects now:** viable for a small world only with adjustments (larger batches, snapshots
+  per chunk, recovery on every deploy, and a V8 test); deferred, nothing is activated (plan §J.3,
+  O-1).
+- **Cloudflare Containers:** GA, paid only, `sleepAfter` of 10 min by default, ephemeral disk; not
+  recommended for the engine (plan §J.3).
 
 ## References
 

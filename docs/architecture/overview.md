@@ -52,6 +52,11 @@ web         → protocol
 - §E.2 predates the two-interface decision and does not list `apps/admin` or `packages/ui`. What
   §E.6 states: `protocol` has `public` and `admin` audiences; `packages/ui` holds presentational
   components (props, no fetch) shared by both apps, and data containers live in each app.
+- `packages/protocol` exposes two separate entry points, `@open-origin/protocol/public` and
+  `@open-origin/protocol/admin`. `apps/web` may import only the public entry; `apps/admin` may
+  import both. Decided 2026-10-24 and implemented in T6 and T8; T8 enforces it with an
+  import-boundary check and the public `dist/` scan (plan §N criterion 18;
+  [0009](../decisions/0009-public-and-private-admin-interfaces.md)).
 
 ## World plane and presentation plane
 
@@ -67,14 +72,17 @@ Details: [0005. Observer independence](../decisions/0005-observer-independence.m
 1. An **internal** world trigger (sleep, conversation, novelty, repeated failure) raises an L3
    deliberation; L0–L2 run every tick without an LLM (§K.2).
 2. The cognitive allocator, fed only world data, queues the request by trigger tick with a
-   deterministic tie-break, within the world's budget (§J.5; the allocation rules are [D],
-   pending).
+   deterministic tie-break, within the world's budget: an equal daily share C/N per inhabitant plus
+   a common pool for high internal salience (§J.5; adopted default 2026-10-24, configurable,
+   [0004](../decisions/0004-ai-proposes-engine-decides.md)).
 3. `ai-gateway` checks the AI mode (`off` by default), the allowlist, the token and request buckets,
    and the spend reservation (§J.4). In `off`, L3 falls back to L1–L2.
 4. The prompt is built only from the inhabitant's perception and memory (§K.4). The model answers
    JSON validated against `{ thought?, proposals: [...] }` (§K.5).
 5. The proposals become commands with an `idempotency_key` and `(applyTick, seq)`, applied exactly
-   at `t + k`. A response after `t + k + grace` is discarded and logged as a timeout; the inhabitant
+   at `t + k` (adopted default `k` = 25 ticks plus 25 ticks of grace,
+   [0003](../decisions/0003-authoritative-deterministic-engine.md)). A response after
+   `t + k + grace` is discarded and logged as a timeout; the inhabitant
    continues with its deterministic policy (§I.1.7, §I.2.3).
 6. The engine checks preconditions, technical capability, and the ethical action catalog. A
    rejection becomes the inhabitant's experience (§K.5).
@@ -135,6 +143,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 
 | ADR | Decision |
 |---|---|
+| [0000](../decisions/0000-adr-template.md) | ADR template |
 | [0001](../decisions/0001-record-architecture-decisions.md) | Record architecture decisions |
 | [0002](../decisions/0002-bun-and-typescript-as-main-stack.md) | Bun and TypeScript as the main stack; Go only with reproducible benchmarks |
 | [0003](../decisions/0003-authoritative-deterministic-engine.md) | Authoritative deterministic engine with a runtime-agnostic core |

@@ -29,8 +29,9 @@ Mechanisms:
   `protocol`. An entity is never serialized whole.
 - Tests check that every key of each public message belongs to the allowlist.
 - CI scans the client `dist/` for secret patterns. Only `VITE_PUBLIC_*` variables reach the bundle.
-- A separate admin/research plane: local only in v0.1 (bound to `127.0.0.1`) behind a flag
-  (O-21); authentication and an audit log in public phases.
+- A separate admin/research plane. v0.1: binds to `127.0.0.1` and requires a local token, behind a
+  flag (O-21). Before any public exposure: authentication, authorization (RBAC), and an audit log
+  (DF-4, §E.6; [0009](0009-public-and-private-admin-interfaces.md)).
 - Clients are read-only in v0.1; every input is schema-validated with size and rate limits.
 - No inhabitant has tools with network, file, or infrastructure access.
 
@@ -41,8 +42,22 @@ Mechanisms:
   verifies it; T6 builds the projections and T8 the bundle scans.
 - Details, examples, and the test map live in
   [data classification](../architecture/data-classification.md).
+- **Open question (O-15):** whether the official world's internal laws are public or private data.
+  If the laws live in the public AGPL code, players can learn and share them; one option is to keep
+  them as configuration data of the official world. It is decided before any public phase, with
+  legal advice (plan §C.2 tension 4). Until then, law parameters stay C3.
+
+## Alternatives considered
+
+- Implicit privacy without a classification (plan revision 1): replaced by a classification by
+  audience (tracker L2 point 7; plan "Qué cambió", point 7).
+- Serializing whole entities to clients: never; explicit projection functions with allowlisted
+  DTOs instead (plan §E.4).
+- Authoritative clients: replaced by read-only clients in v0.1 (plan §E.5).
+- Broadcasting everything to everyone: replaced by per-chunk subscription (plan §E.5).
 
 ## References
 
-- Plan: P10 (§E.1), §E.4, §I.1.2, §L, O-21, §N.
+- Plan: DF-4, P10 (§E.1), §C.2, §E.4, §E.5, §E.6, §I.1.2, §L, O-15, O-21, §N.
+- Tracker `docs/roadmap/v0.1-tracker.md`: L2 point 7.
 - [0009. Two interfaces](0009-public-and-private-admin-interfaces.md).

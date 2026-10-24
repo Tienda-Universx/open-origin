@@ -39,6 +39,10 @@ We will write each artifact in a fixed language:
 - The tracker quotes the maintainer's instructions verbatim in Spanish, so specs keep their exact
   wording.
 
+## Alternatives considered
+
+No alternatives were evaluated in the plan.
+
 ## References
 
 - Plan: O-17, O-28, §G, §P ("Idioma").

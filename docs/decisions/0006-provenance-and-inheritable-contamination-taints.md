@@ -34,10 +34,16 @@ what **they** may think or say.
 belief inherits the union of its sources' taints, including testimony between inhabitants.
 Analysis can filter whole lineages.
 
-Controls: (1) context ablation, offline, on the research budget; (2) control worlds without the
-phenomena in question, for base rates; (3) semantic similarity to human inputs received by the
-inhabitant or its social network; (4) non-terrestrial laws, [D] (recommendation O-13: non-terrestrial);
-(5) self-reference policy, [D] (recommendation O-14: tag without intervening).
+Controls (§K.7):
+1. Context ablation, offline, on the research budget.
+2. Control worlds without the phenomena in question, for base rates.
+3. Semantic similarity to human inputs received by the inhabitant or its social network.
+4. Non-terrestrial internal laws: adopted default (2026-10-24), configurable (O-13). Predicting
+   Earth behavior where the world differs is evidence of prior knowledge; converging to the internal
+   law is evidence of internal learning.
+5. Self-reference policy: tag, do not intervene. Adopted default (2026-10-24), configurable
+   (O-14). A research world may declare another policy as part of its recorded experimental
+   configuration.
 
 **Composable scientific representations (§K.8).** The action space is finite but composable:
 - Open ontology: concepts are registered IDs (not enums) defined compositionally over primitive
@@ -51,13 +57,27 @@ inhabitant or its social network; (4) non-terrestrial laws, [D] (recommendation 
 
 ## Consequences
 
-- v0.1 ships provenance, inheritable taints, and context manifests (T5), plus the §K.8 essentials:
+- T5 delivers propositions with provenance and inheritable taints (plan §M row T5); context
+  manifests ship with the AI gateway in T9 (plan §M row T9). v0.1 also ships the §K.8 essentials:
   primitive observables and measurement events, an open-concept proposition schema with provenance,
   and laws as versioned ruleset data. Plan §N criterion 13 tests taint inheritance.
 - Context ablation, control worlds, semantic similarity, the experiment language, inventions, and
   nested simulations are future requirements this design does not block (plan §L).
+- Whether the official world's internal laws are public or private data is an open question
+  recorded in [0008](0008-data-classification-and-audience-projections.md) (O-15).
+
+## Alternatives considered
+
+- Lexical blocking: an output filter that rejected external concepts such as consciousness,
+  creator, simulation, or external reality (plan revision 1): rejected by the maintainer
+  (tracker L2 point 3; plan "Qué cambió", point 3).
+- Deleting implementation self-references: rejected; they are tagged and measured (plan §K.7,
+  O-14).
+- A predefined catalog of discoveries (plan revision 1): replaced by composable, validatable
+  representations (tracker L2 point 8; plan "Qué cambió", point 8; §K.8).
 
 ## References
 
-- Plan: §C, §K.3, §K.4, §K.5, §K.7, §K.8, §K.9, §L, O-13, O-14, §N.
+- Plan: §C, §K.3, §K.4, §K.5, §K.7, §K.8, §K.9, §L, §M, O-13, O-14, O-15, §N.
+- Tracker `docs/roadmap/v0.1-tracker.md`: L2 points 3 and 8.
 - [0004. AI proposes, the engine decides](0004-ai-proposes-engine-decides.md).

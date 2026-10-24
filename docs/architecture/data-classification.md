@@ -37,7 +37,7 @@ Details of both interfaces: [Interfaces](interfaces.md).
 | A test checks that every key of each public message belongs to the allowlist | C0-only public messages |
 | CI scans the client `dist/` for secret patterns; only `VITE_PUBLIC_*` variables reach the bundle | C4 in client bundles |
 | A test scans the public `dist/` for admin routes and modules | Admin code and DTOs in the public bundle |
-| Separate admin/research plane: local only in v0.1 (bound to `127.0.0.1`) behind a flag (O-21), with a token; authentication and an audit log in public phases | C1 and C3 access |
+| Separate admin/research plane. v0.1: binds to `127.0.0.1` and requires a local token, behind a flag (O-21). Before any public exposure: authentication, authorization (RBAC), and an audit log (DF-4) | C1 and C3 access |
 | API keys encrypted with AES-GCM via WebCrypto, master key in an environment variable; write-only from the panel; fingerprint only (last 4 characters) | C4 in admin API responses, logs, snapshots |
 | Read-only clients in v0.1; every input schema-validated with size and rate limits | Untrusted input |
 | No inhabitant has tools with network, file, or infrastructure access | Inhabitants reaching infrastructure |

@@ -31,6 +31,8 @@ pays.
   changes for all conversations as a world rule, never as special treatment.
 - Paying for cognition (future) is a declared experimental variable: forbidden in scientific
   worlds or recorded as a treatment.
+- The adopted default allocation rule ([0004](0004-ai-proposes-engine-decides.md): equal daily
+  share, a common pool for internal salience, queue by trigger tick) takes only world data as input.
 - `follow` only affects the presentation plane (§I.3). Watching from the admin panel affects
   nothing ([0009](0009-public-and-private-admin-interfaces.md)).
 
@@ -56,6 +58,17 @@ Experimental controls:
   deliberations" metric feeds the audit (§J.5).
 - Plan §N criterion 9 (identical hashes with 0 and N observers) verifies it; T6 builds the boundary.
 
+## Alternatives considered
+
+- Allocating AI priority by observer salience, that is, by who is watching (plan revision 1):
+  rejected by the maintainer because watching must not change behavior, learning, or cognitive
+  capabilities (tracker L2 point 2; plan "Qué cambió", point 2).
+- A shorter `k` for human players' conversations: rejected; if latency is poor, `k` changes for all
+  conversations as a world rule (plan §K.6).
+- Paid cognition as an unrecorded advantage: rejected; it is a declared experimental variable,
+  forbidden in scientific worlds or recorded as a treatment (plan §C.2 tension 7, §K.6).
+
 ## References
 
-- Plan: P9 (§E.1), §C, §E.2, §F, §I.3, §J.5, §J.6, §K.6, §L, §N.
+- Plan: P9 (§E.1), §C, §C.2, §E.2, §F, §I.3, §J.5, §J.6, §K.6, §L, §N.
+- Tracker `docs/roadmap/v0.1-tracker.md`: L2 point 2.

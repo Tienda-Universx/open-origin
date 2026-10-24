@@ -5,8 +5,8 @@
 
 ## Context
 
-Open Origin needs one runtime, one language, and one toolchain for the engine, the server, the
-interfaces, and the tests. The master vision (§24) asks not to use Node.js as the main runtime and
+Open Origin needs a main runtime, a main language, and one toolchain for the engine, the server,
+the interfaces, and the tests. The master vision (§24) asks not to use Node.js as the main runtime and
 names strict TypeScript, Bun workspaces, and Bun test. The maintainer later confirmed (plan DF-5):
 Bun and TypeScript stay the main stack; Go is optional in the future, only if performance tests
 justify it. Plan §D evaluated the stack with npm `latest` versions and official docs as of
@@ -14,19 +14,23 @@ justify it. Plan §D evaluated the stack with npm `latest` versions and official
 
 ## Decision
 
-We will use Bun as the only runtime and package manager, and strict TypeScript as the only
+We will use Bun as the main runtime and the package manager, and strict TypeScript as the main
 language.
+
+Versions are recorded as of 2026-10-24. `package.json` is the source of truth for versions; this
+table does not override it.
 
 | Tool | Version and rule | Source |
 |---|---|---|
 | Bun | 1.4.4, pinned (`packageManager: bun@1.4.4`) in local and CI | Plan §D, §P |
-| TypeScript | 7.0.2, pinned in `package.json`; `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `verbatimModuleSyntax`, `moduleResolution: "bundler"`, `noEmit` | Plan §D, §P |
+| TypeScript | 7.0.2, pinned in `package.json` (the plan only asks for the stable version current at implementation time); `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `verbatimModuleSyntax`, `moduleResolution: "bundler"`, `noEmit` | Version: `package.json`, tracker L5. Options: plan §D, §P |
 | Biome | 2.6.2, single config at the repository root (nested configs have acknowledged memory issues) | Plan §D |
 | Tests | `bun test` | Plan §D |
 
 - Node 24.21 is present in the Codespace but is not used as a runtime (plan §B).
-- Scripts never depend on Node. CLIs with a Node shebang (for example `tsc`) run with `bun --bun`
-  (plan §P).
+- Scripts never depend on Node. CLIs with a Node shebang (for example `tsc`) run with
+  `bunx --bun`, which runs the locally installed CLI with Bun (`package.json` scripts, `AGENTS.md`,
+  tracker L5; plan §P writes it as `bun --bun`).
 - CI reads the Bun version from `package.json` through `oven-sh/setup-bun` (`bun-version-file`).
 - Go is not adopted. It may be proposed only through a new ADR backed by reproducible benchmarks
   that show a bottleneck Bun/TypeScript cannot solve (plan §D, O-24).

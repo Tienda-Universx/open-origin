@@ -49,8 +49,14 @@ Durability depends on Postgres defaults `fsync=on` and `synchronous_commit=on`. 
 Codespace disk or the Docker volume has **no protection in v0.1**; backups (dump/PITR/R2) are
 required before any public world.
 
-**Pending parameters ([D] in the plan).** F = 5 ticks (≈ 1 s real) and K = 300 ticks (1 simulated
-hour), recommended by O-12, and snapshot retention (last 10 + 1 per hour for 7 days).
+**Adopted defaults (2026-10-24), configurable.** The plan marked these parameters [D] (§I.2.1,
+§I.2.7, O-12); they are now adopted defaults, revisited with measurements in T7 (plan §M).
+
+| Parameter | Adopted default |
+|---|---|
+| Batch size F | 5 ticks (≈ 1 s real) |
+| Checkpoint interval K | 300 ticks (1 simulated hour) |
+| Snapshot retention | Last 10, plus 1 per hour for 7 days |
 
 ## Consequences
 
@@ -60,7 +66,19 @@ hour), recommended by O-12, and snapshot retention (last 10 + 1 per hour for 7 d
   with `postgres-js` as the fallback driver (plan §D).
 - Backups, PITR, and multi-region are future requirements (plan §L).
 
+## Alternatives considered
+
+- One database row update per entity and tick: compromises scalability; replaced by per-tick
+  batches plus checkpoints (plan §E.5).
+- Two processes writing the same world: replaced by a Postgres advisory lock per world (plan §E.5,
+  §I.1.7).
+- Larger batches (F ≥ 25, RPO ≈ 5 s): needed only to fit the Durable Objects free row limit; not
+  adopted while the world runs on Bun + Postgres (plan §J.3,
+  [0013](0013-defer-hosting-v0-1-runs-locally.md)).
+- The `postgres-js` driver: kept as the fallback if the `bun-sql` driver's open jsonb and timestamp
+  bugs affect T7 (plan §D).
+
 ## References
 
-- Plan: §B, §D, §E.5, §I.1.7, §I.2, §L, O-2, O-3, O-12, §N.
+- Plan: §B, §D, §E.5, §I.1.7, §I.2, §J.3, §L, §M, O-2, O-3, O-12, §N.
 - [0003. Authoritative deterministic engine](0003-authoritative-deterministic-engine.md).
