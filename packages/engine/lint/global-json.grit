@@ -1,0 +1,20 @@
+// The global `JSON` in packages/engine/src (ADR 0020, plan §I.1). It is a plugin of its own, not
+// a noRestrictedGlobals entry, so that one file can be excepted without repeating the engine's
+// list of denied globals: an override replaces a rule's options instead of merging them, while
+// Biome adds up the plugins of every override that matches a file and cannot take one away.
+// biome.json registers it for src except canonical/encode.ts, the canonical serializer.
+// It reports every reference to the name outside a type (member access, calls, `new`, aliasing,
+// arguments, shorthand properties, and `typeof`), even where a local declaration shadows the
+// global. Property names, keys, and type positions are not references to the global, and
+// noGlobalAssign rejects assignments to it everywhere. tests/repo/lint.test.ts proves both sides
+// and the exact extent of the exception.
+language js
+
+JsReferenceIdentifier() as $reference where {
+  $reference <: r"^JSON$",
+  not $reference <: within or {
+    TsReferenceType(),
+    TsTypeofType()
+  },
+  register_diagnostic(span=$reference, message="The global `JSON` is denied outside canonical/encode.ts: `JSON.stringify` writes keys in insertion order, which a resumed world may not share, so only the canonical serializer may encode state (plan §I.1).")
+}

@@ -59,6 +59,16 @@ describe("copyCanonical", () => {
     ]);
   });
 
+  test("rejects an object reached twice, so the copy is a tree, as canonical values are", () => {
+    const shared = { a: 1 };
+    expect(engineErrorOf(() => copyCanonical({ x: shared, y: [shared] })).issues).toEqual([
+      {
+        path: "/y/0",
+        message: "the value is the same object as the value at /x: canonical values are trees",
+      },
+    ]);
+  });
+
   test("keeps 50 issues and counts the dropped ones in its message", () => {
     const error = engineErrorOf(() => copyCanonical(new Array(120).fill(Number.NaN)));
     expect(error.issues).toHaveLength(50);
