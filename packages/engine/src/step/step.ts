@@ -1,10 +1,12 @@
 /**
  * step (ADR 0020; plan §2.1, §2.3): advances, in place, the world it owns by one tick.
  *
- * 1. Guards: the world's brand, then its health (world_faulted), then a step already running on
- *    it, which only ruleset code can start (a fault of that tick).
- * 2. Every command is validated and copied (step/commands.ts). An invalid list throws
- *    invalid_input with every problem and changes nothing.
+ * 1. Guards: the world's brand; then a step already running on it (world_busy), which only
+ *    ruleset code or a host Proxy among the commands can start, and which during a tick also
+ *    faults that tick; then its health (world_faulted).
+ * 2. Every command is validated and copied (step/commands.ts), with the world marked busy, so
+ *    that a Proxy among the commands cannot use it. An invalid list throws invalid_input with
+ *    every problem and changes nothing.
  * 3. The tick advances. Commands run in seq order: an unknown type, or a `check` that returns a
  *    rejection, emits engine.command_rejected; otherwise `apply` runs. Then the systems run, in
  *    the ruleset's order. Handlers and systems must return undefined.
@@ -22,7 +24,14 @@ import { nextTick } from "../time/tick.ts";
 import type { Command, CommandOrigin, Rejection, StepResult } from "../world/contracts.ts";
 import { isRecord } from "../world/members.ts";
 import type { StreamIds } from "../world/ruleset.ts";
-import { healthyState, poison, type World, type WorldState } from "../world/world.ts";
+import {
+  type ActiveStep,
+  busyError,
+  healthyState,
+  poison,
+  type World,
+  type WorldState,
+} from "../world/world.ts";
 import { readCommands } from "./commands.ts";
 import { audit, commit } from "./commit.ts";
 import { openTick, type TickHandles } from "./context.ts";
@@ -34,8 +43,8 @@ const REJECTED_EVENT = "engine.command_rejected";
 /** The reason of the rejection of a command whose type has no handler. */
 const UNKNOWN_TYPE = "unknown_type";
 
-const REENTRANT =
-  "step was called during a tick of this world: ruleset code cannot step the world it runs in";
+/** Marks a world whose step is reading its commands: any use of the world meanwhile is refused. */
+const READING: ActiveStep = { refuse: busyError };
 const NOT_REJECTION =
   "returned a value that is not undefined or a rejection { reason, details? }, reason a non-empty string";
 
@@ -192,8 +201,17 @@ function advance(state: WorldState, commands: readonly Command[]): StepResult {
     throw fault;
   } finally {
     session?.expire();
-    state.active = undefined;
   }
+}
+
+/**
+ * Throws when the world is not where it was before step read the commands. Nothing can change
+ * it meanwhile, since every use of the world is refused, so this only guards that rule.
+ */
+function expectUnchanged(state: WorldState, tick: number): void {
+  if (state.status.kind === "ok" && state.kernel.tick === tick) return;
+  const message = "the world changed while step read its commands: nothing may use it meanwhile";
+  throw new EngineError("world_busy", [{ path: "", message }]);
 }
 
 /**
@@ -201,7 +219,8 @@ function advance(state: WorldState, commands: readonly Command[]): StepResult {
  * did, in fresh values the world keeps no reference to.
  *
  * Throws, and changes nothing: EngineError("invalid_input") when `world` is not a world or a
- * command is invalid (step/commands.ts); EngineError("world_faulted") when an earlier tick failed.
+ * command is invalid (step/commands.ts); EngineError("world_busy") when a step already runs on the
+ * world; EngineError("world_faulted") when an earlier tick failed.
  * Throws after poisoning the world: system_fault for ruleset code that throws, returns a value,
  * or misuses the tick context, and for data that is not canonical or that the ruleset's validators
  * reject; id_exhausted and tick_overflow when the ids or the ticks run out; integrity_violation
@@ -213,8 +232,15 @@ export function step<G extends CanonicalValue, C extends CanonicalValue>(
   world: World<G, C>,
   commands: readonly Command[],
 ): StepResult {
-  const state = healthyState(world);
-  if (state.active !== undefined) throw state.active.fail(REENTRANT);
-  const accepted = readCommands(commands, state.kernel.tick + 1);
-  return advance(state, accepted);
+  const state = healthyState(world, "step");
+  const { tick } = state.kernel;
+  // Busy from the first read of a command, so that a host Proxy cannot use the world meanwhile.
+  state.active = READING;
+  try {
+    const accepted = readCommands(commands, tick + 1);
+    expectUnchanged(state, tick);
+    return advance(state, accepted);
+  } finally {
+    state.active = undefined;
+  }
 }

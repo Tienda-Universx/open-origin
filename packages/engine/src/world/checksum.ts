@@ -14,9 +14,10 @@
  * global digest, and the root; the kernel digest has a fixed size and is recomputed. A step
  * updates them for what it changed (step/commit.ts); fullChecksum recomputes them all.
  */
-import type { CanonicalValue } from "../canonical/value.ts";
+import { type CanonicalValue, pointer } from "../canonical/value.ts";
 import { type Digest, Digester, digest, digestWords, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes } from "../digest/lanes.ts";
+import { EngineError } from "../errors.ts";
 import type { ChunkKey } from "./chunk.ts";
 import type { ChunkIndex } from "./chunk-index.ts";
 import {
@@ -96,45 +97,81 @@ export function digestCache(
 }
 
 /**
+ * The path, under `path`, of an issue at `issuePath` in `tagged`, a domain tag and its parts whose
+ * last part is a value: the issue's path into that value, after `path`.
+ */
+export function pathInValue(issuePath: string, tagged: readonly unknown[], path: string): string {
+  return `${path}${issuePath.slice(`/${tagged.length - 1}`.length)}`;
+}
+
+/**
+ * `error` with each issue moved from its path in `tagged` to the same place under `path`, and the
+ * original as its cause; anything that is not an EngineError comes back unchanged.
+ */
+export function relocated(error: unknown, tagged: readonly unknown[], path: string): unknown {
+  if (!EngineError.isEngineError(error)) return error;
+  const issues = error.issues.map(({ path: at, message }) => ({
+    path: pathInValue(at, tagged, path),
+    message,
+  }));
+  return new EngineError(error.code, issues, { cause: error });
+}
+
+/** `hash(tagged)`, where the value is the last part of `tagged` and lives at `path`. */
+function hashAt<T>(tagged: CanonicalValue[], path: string, hash: (value: CanonicalValue) => T): T {
+  try {
+    return hash(tagged);
+  } catch (error) {
+    throw relocated(error, tagged, path);
+  }
+}
+
+/**
  * The state root of `state` recomputed from its values alone, never from a cached digest: O(N)
- * for N chunks. Throws EngineError("invalid_value") when a value is not canonical, which only a
- * write that bypassed the barrier can cause.
+ * for N chunks. Throws EngineError("invalid_value") at the path of the first value that is not
+ * canonical, as `/chunks/<key>/...` or `/global/...`, which only a write that bypassed the barrier
+ * can cause.
  */
 export function recomputeRoot({ kernel, global, chunks }: WorldState): Digest {
   const digester = new Digester();
   let chunkSum = ZERO;
   for (const [key, entry] of chunks.sortedEntries()) {
-    chunkSum = addLanes(chunkSum, chunkTerm(key, entry.value));
+    const term = hashAt(["chunk", key, entry.value], `/chunks${pointer([key])}`, digestWords);
+    chunkSum = addLanes(chunkSum, term);
   }
-  const parts = { kernel: kernelDigest(kernel, digester), global: globalDigest(global), chunkSum };
+  const globalPart = hashAt(["global", global], "/global", digest);
+  const parts = { kernel: kernelDigest(kernel, digester), global: globalPart, chunkSum };
   return composeRoot({ ...parts, chunkCount: chunks.size }, digester);
 }
 
 /**
  * The state root of `world`, as the world keeps it: O(1). Throws EngineError("invalid_input")
- * when `world` is not a world, and EngineError("world_faulted") when its tick failed.
+ * when `world` is not a world, EngineError("world_busy") while a step runs on it, and
+ * EngineError("world_faulted") when its tick failed.
  */
 export function stateRoot(world: World): Digest {
-  return healthyState(world).digests.stateRoot;
+  return healthyState(world, "stateRoot").digests.stateRoot;
 }
 
 /**
  * The state root of `world` recomputed from its state alone, never from a cached digest: O(N)
  * for N chunks, for audits and checkpoints. It equals stateRoot unless something changed the
  * state without the engine knowing. Throws EngineError("invalid_input") when `world` is not a
- * world, and EngineError("world_faulted") when its tick failed.
+ * world, EngineError("world_busy") while a step runs on it, EngineError("world_faulted") when its
+ * tick failed, and EngineError("invalid_value") at `/chunks/<key>/...` or `/global/...` when a
+ * write that bypassed the barrier left a value that is not canonical.
  */
 export function fullChecksum(world: World): Digest {
-  return recomputeRoot(healthyState(world));
+  return recomputeRoot(healthyState(world, "fullChecksum"));
 }
 
 /**
  * Each chunk's cached term, written as a digest, in a fresh record whose keys are in canonical
  * order: O(N), to find which chunks differ between two worlds. Throws
- * EngineError("invalid_input") when `world` is not a world, and EngineError("world_faulted") when
- * its tick failed.
+ * EngineError("invalid_input") when `world` is not a world, EngineError("world_busy") while a step
+ * runs on it, and EngineError("world_faulted") when its tick failed.
  */
 export function chunkHashes(world: World): Record<ChunkKey, Digest> {
-  const { chunks } = healthyState(world);
+  const { chunks } = healthyState(world, "chunkHashes");
   return Object.fromEntries(chunks.sortedEntries().map(([key, entry]) => [key, hexOf(entry.term)]));
 }

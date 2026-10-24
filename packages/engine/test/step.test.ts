@@ -171,6 +171,23 @@ describe("step rejects commands", () => {
     ]);
   });
 
+  test("the event takes the origin before check runs, so check cannot change it", () => {
+    const ruleset = stepRuleset([], {
+      dig: {
+        check: (_view, cmd) => {
+          const origin = cmd.origin as { kind: string; actor?: number };
+          origin.kind = "admin";
+          origin.actor = 99;
+          return { reason: "no" };
+        },
+        apply: () => undefined,
+      },
+    });
+    const sent = { kind: "inhabitant", actor: 5 } as const;
+    const { events } = step(stepWorld(ruleset), [from(sent, command(1, 0, "dig"))]);
+    expect(events[0]?.payload).toEqual({ seq: 0, type: "dig", reason: "no", origin: sent });
+  });
+
   test("rejectedCommands lists this tick's rejections, in a fresh array each call", () => {
     const seen: Rejected[][] = [];
     const lists: (readonly Rejected[])[] = [];
@@ -212,6 +229,42 @@ describe("step rejects commands", () => {
     });
     step(stepWorld(ruleset), [command(1, 0, "grow"), command(1, 1, "look")]);
     expect(seen).toEqual([{ grass: 9 }, false, false, 1]);
+  });
+});
+
+describe("ruleset functions", () => {
+  test("are called without a receiver, so they cannot reach the captured ruleset", () => {
+    const receivers: unknown[] = [];
+    const ruleset = stepRuleset(
+      [
+        {
+          name: "growth",
+          streams: [],
+          run(this: unknown) {
+            receivers.push(["run", this]);
+            return undefined;
+          },
+        },
+      ],
+      {
+        dig: {
+          check(this: unknown) {
+            receivers.push(["check", this]);
+            return undefined;
+          },
+          apply(this: unknown) {
+            receivers.push(["apply", this]);
+            return undefined;
+          },
+        },
+      },
+    );
+    step(stepWorld(ruleset), [command(1, 0, "dig")]);
+    expect(receivers).toEqual([
+      ["check", undefined],
+      ["apply", undefined],
+      ["run", undefined],
+    ]);
   });
 });
 
@@ -302,6 +355,21 @@ describe("the tick context", () => {
     expect(worldState(world).kernel.nextEntityId).toBe(5);
   });
 
+  test("each event has a cause of its own", () => {
+    const world = stepWorld(
+      stepRuleset([
+        system("talk", (ctx) => {
+          ctx.emit("a", 1);
+          ctx.emit("b", 2);
+        }),
+      ]),
+    );
+    const { events } = step(world, []);
+    expect(events[0]?.cause).not.toBe(events[1]?.cause);
+    (events[0]?.cause as { name: string }).name = "changed";
+    expect(events[1]?.cause).toEqual({ kind: "system", name: "talk" });
+  });
+
   test("emit copies its payload", () => {
     const payload = { list: [1] };
     const world = stepWorld(
@@ -317,6 +385,14 @@ describe("the tick context", () => {
 });
 
 describe("step results", () => {
+  test("count every rejection", () => {
+    const ruleset = stepRuleset([], {
+      no: { check: () => ({ reason: "never" }), apply: () => undefined },
+    });
+    const commands = [command(1, 0, "no"), command(1, 1, "nope"), command(1, 2, "no")];
+    expect(step(stepWorld(ruleset), commands).stats).toMatchObject({ rejected: 3, events: 3 });
+  });
+
   test("count commands, rejections, events, and changed chunks", () => {
     const ruleset = stepRuleset([system("talk", (ctx) => ctx.emit("said", 1))], {
       dig: handler((ctx) => {

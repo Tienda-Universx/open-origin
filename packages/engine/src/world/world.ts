@@ -58,12 +58,21 @@ export type FaultedStatus = {
 export type WorldStatus = { readonly kind: "ok"; readonly tick: Tick } | FaultedStatus;
 
 /**
- * The tick that step is running on a world. A step called from inside it, by ruleset code that
- * holds the world, records a fault through it instead of changing the world a second time.
+ * A step in progress on a world: it reads the commands, then runs the tick. While it runs, every
+ * use of the world, read or step, is refused through it, so nothing sees or saves partial state.
  */
-export interface ActiveTick {
-  /** Records a system_fault with `message` at the code that is running, and returns it. */
-  fail(message: string): EngineError;
+export interface ActiveStep {
+  /**
+   * The world_busy error for a call of `api` during the step. During the tick it also records a
+   * fault of the tick at the ruleset code that made the call, so that catching it hides nothing.
+   */
+  refuse(api: string): EngineError;
+}
+
+/** The world_busy error for a call of `api` while a step runs on its world. */
+export function busyError(api: string): EngineError {
+  const message = `${api} was called during a step of this world: no function may use a world while it steps`;
+  return new EngineError("world_busy", [{ path: "", message }]);
 }
 
 /**
@@ -84,8 +93,8 @@ export type WorldState<
   readonly audit: boolean;
   /** Faulted from the moment a tick fails, and for good (poison). */
   status: { readonly kind: "ok" } | FaultedStatus;
-  /** The tick in progress, while step runs. */
-  active: ActiveTick | undefined;
+  /** The step in progress, while step runs, from reading the commands to the end of the tick. */
+  active: ActiveStep | undefined;
 };
 
 /** Lets the constructor tell createWorld from a host that reached it through `.constructor`. */
@@ -145,12 +154,23 @@ export function worldState(value: unknown): WorldState {
 }
 
 /**
- * The state of `value`, if its last tick did not fail. Throws EngineError("invalid_input") when
- * `value` is not a world, and EngineError("world_faulted") when it is poisoned: a world whose tick
- * failed can no longer be read, hashed, or stepped (ADR 0020, failures).
+ * The state of `value`, for a call of `api`, if no step is running on it. Throws
+ * EngineError("invalid_input") when `value` is not a world, and EngineError("world_busy") during a
+ * step, whose partial state nothing may read (ADR 0020, failures).
  */
-export function healthyState(value: unknown): WorldState {
+export function idleState(value: unknown, api: string): WorldState {
   const state = worldState(value);
+  if (state.active !== undefined) throw state.active.refuse(api);
+  return state;
+}
+
+/**
+ * The state of `value`, for a call of `api`, if no step is running on it and its last tick did
+ * not fail. Throws as idleState does, and EngineError("world_faulted") when the world is poisoned:
+ * a world whose tick failed can no longer be read, hashed, or stepped (ADR 0020, failures).
+ */
+export function healthyState(value: unknown, api: string): WorldState {
+  const state = idleState(value, api);
   const { status } = state;
   if (status.kind === "ok") return state;
   const { tick, code } = status;
@@ -170,10 +190,11 @@ export function poison(state: WorldState, fault: EngineError): void {
 
 /**
  * What `world` is doing, in a fresh record: `{ kind: "ok", tick }`, or, once a tick failed,
- * `{ kind: "faulted", tick, code, issues }`. It is the one function a faulted world answers.
+ * `{ kind: "faulted", tick, code, issues }`. It is the one function a faulted world answers, and,
+ * like every other, it throws EngineError("world_busy") while a step runs on the world.
  */
 export function worldStatus(world: World): WorldStatus {
-  const { kernel, status } = worldState(world);
+  const { kernel, status } = idleState(world, "worldStatus");
   if (status.kind === "ok") return { kind: "ok", tick: kernel.tick };
   const issues = status.issues.map(({ path, message }) => ({ path, message }));
   return { kind: "faulted", tick: status.tick, code: status.code, issues };
@@ -184,24 +205,25 @@ export function worldStatus(world: World): WorldStatus {
  * copy: changing what it returns never changes the world. readChunk throws
  * EngineError("invalid_value") for a key that is not a chunk key, and returns undefined for a key
  * that has no chunk. readView and every method of the view throw EngineError("world_faulted")
- * once the world is poisoned.
+ * once the world is poisoned, and EngineError("world_busy") while a step runs on it.
  */
 export function readView<G extends CanonicalValue, C extends CanonicalValue>(
   world: World<G, C>,
 ): ReadView<G, C> {
-  healthyState(world);
+  healthyState(world, "readView");
   // The ruleset's validators accepted these values as a G and as Cs when they entered the world.
   return {
     get tick() {
-      return healthyState(world).kernel.tick;
+      return healthyState(world, "view.tick").kernel.tick;
     },
-    chunkKeys: () => healthyState(world).chunks.sortedKeys(),
+    chunkKeys: () => healthyState(world, "view.chunkKeys").chunks.sortedKeys(),
     readChunk(key) {
-      const { chunks } = healthyState(world);
+      const { chunks } = healthyState(world, "view.readChunk");
       parseChunkKey(key);
       const entry = chunks.get(key);
       return entry === undefined ? undefined : (copyCanonical(entry.value) as DeepReadonly<C>);
     },
-    readGlobal: () => copyCanonical(healthyState(world).global) as DeepReadonly<G>,
+    readGlobal: () =>
+      copyCanonical(healthyState(world, "view.readGlobal").global) as DeepReadonly<G>,
   };
 }

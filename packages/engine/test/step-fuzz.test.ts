@@ -5,6 +5,7 @@ import {
   canonicalize,
   EngineError,
   fullChecksum,
+  type Seed,
   stateRoot,
   step,
   type World,
@@ -13,11 +14,16 @@ import { tallyWorld } from "./fixtures/tally-ruleset.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 
 /**
- * Command fuzz (plan §8 "Fuzz de comandos"): 64 seeds of 200 ticks each, with random valid and
- * invalid commands from sfc32, over tally and its systems, run twice. Both runs must give the same
- * checksums, events, and rejections at every tick. The first run has audit on, so the incremental
- * root equals the full one after every tick; the second has it off, so audit is also shown not to
- * change a result.
+ * Command fuzz (plan §8 "Fuzz de comandos"): 64 seeds of 200 ticks each, with random commands
+ * from sfc32, over tally and its systems. Each seed runs two worlds with the same valid lists:
+ *
+ * - an audited world, which before about one tick in eight also receives the valid list broken in
+ *   one of seven ways: step must throw invalid_input and leave stateRoot and fullChecksum as they
+ *   were, and audit makes the incremental root equal the full one after every tick;
+ * - a control world without audit, which never receives a broken list.
+ *
+ * Both must give the same checksum, events, changed chunks, and statistics at every tick, so a
+ * broken list changes nothing, and neither does audit.
  *
  * Size. A tally tick costs about 110 µs, and about 300 µs with audit, which rehashes every chunk
  * (measured on the 2-core Codespace with Bun 1.4.4; indicative). The plan's estimate of 200 seeds
@@ -40,7 +46,10 @@ function randomPayload(random: Sfc32, type: string): CanonicalValue {
     case "plant":
       return { at: random.pick(KEYS), amount: random.between(-5, 150) };
     case "name":
-      return { entity: random.between(1, 20), name: random.pick(NAMES) };
+      return {
+        entity: random.below(8) === 0 ? "one" : random.between(1, 20),
+        name: random.pick(NAMES),
+      };
     default:
       return random.below(2) === 0 ? {} : [random.next()];
   }
@@ -77,44 +86,59 @@ function commandAt(tick: number): Command {
   return { applyTick: tick, seq: 0, type: "birth", origin: { kind: "admin" }, payload: {} };
 }
 
-/** Steps `world` with `commands` and returns what the tick did, as one comparable line. */
-function record(world: World, commands: readonly unknown[]): string {
-  try {
-    const { tick, checksum, events, changedChunks, stats } = step(world, commands as Command[]);
-    return canonicalize([tick, checksum, events as CanonicalValue, changedChunks, stats]);
-  } catch (error) {
-    if (!(error instanceof EngineError) || error.code !== "invalid_input") throw error;
-    return canonicalize(["invalid_input", error.issues as CanonicalValue]);
-  }
+/** Steps `world` with the valid `commands` and returns what the tick did, as one line. */
+function record(world: World, commands: readonly Command[]): string {
+  const { tick, checksum, events, changedChunks, stats } = step(world, commands);
+  return canonicalize([tick, checksum, events as CanonicalValue, changedChunks, stats]);
 }
 
-/** The record of every tick of the run of `seed`, with or without audit. */
-function run(seed: number, audit: boolean): string[] {
+/** Steps `world` with the broken `commands`, which must be rejected whole, changing nothing. */
+function expectRejected(world: World, commands: readonly unknown[]): void {
+  const before = [stateRoot(world), fullChecksum(world)];
+  let code: string | undefined;
+  try {
+    step(world, commands as Command[]);
+  } catch (error) {
+    code = error instanceof EngineError ? error.code : `${error}`;
+  }
+  expect(code).toBe("invalid_input");
+  expect([stateRoot(world), fullChecksum(world)]).toEqual(before);
+}
+
+/**
+ * The run of `seed` on two worlds: `audited`, under audit, which also receives a broken list
+ * before about one tick in eight, and `control`, without audit, which never does. Returns each
+ * world's record of every tick and how many broken lists were rejected.
+ */
+function run(seed: number) {
   const random = new Sfc32(seed);
-  const world = tallyWorld([seed, (seed * 7 + 1) >>> 0], audit);
-  const records: string[] = [];
+  const worldSeed: Seed = [seed, (seed * 7 + 1) >>> 0];
+  const audited = tallyWorld(worldSeed, true);
+  const control = tallyWorld(worldSeed);
+  const records = { audited: [] as string[], control: [] as string[] };
+  let broken = 0;
   for (let tick = 1; tick <= TICKS; tick += 1) {
     const commands = validCommands(random, tick);
     if (random.below(8) === 0) {
-      // Rejected as a whole, which must leave the world as it was for the valid list below.
-      records.push(record(world, random.pick(BREAKERS)(commands, tick)));
+      expectRejected(audited, random.pick(BREAKERS)(commands, tick));
+      broken += 1;
     }
-    records.push(record(world, commands));
+    records.audited.push(record(audited, commands));
+    records.control.push(record(control, commands));
   }
-  expect(stateRoot(world)).toBe(fullChecksum(world));
-  return records;
+  expect(stateRoot(control)).toBe(fullChecksum(control));
+  return { ...records, broken };
 }
 
 describe("command fuzz over tally", () => {
-  test(`${SEEDS} seeds of ${TICKS} ticks give the same records twice, the first under audit`, () => {
-    let invalid = 0;
+  test(`${SEEDS} seeds of ${TICKS} ticks: an audited world that also rejects broken lists matches a control`, () => {
+    let broken = 0;
     for (let seed = 1; seed <= SEEDS; seed += 1) {
-      const audited = run(seed, true);
-      const plain = run(seed, false);
-      expect(plain).toEqual(audited);
-      invalid += audited.filter((line) => line.startsWith('["invalid_input"')).length;
+      const result = run(seed);
+      expect(result.audited).toEqual(result.control);
+      broken += result.broken;
     }
-    // About one tick in eight carries an invalid list; the fuzz must exercise them.
-    expect(invalid).toBeGreaterThan((SEEDS * TICKS) / 16);
+    // About one tick in eight carries a broken list; the fuzz must exercise them.
+    expect(broken).toBeGreaterThan((SEEDS * TICKS) / 16);
   }, 30_000);
 });

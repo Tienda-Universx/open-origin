@@ -281,7 +281,9 @@ export function tallyCommands(tick: number): Command[] {
     const name = NAMES[tick % NAMES.length] as string;
     commands.push(tallyCommand(tick, 3, "name", { entity: (tick % 4) + 1, name }));
   }
+  if (tick % 17 === 0) commands.push(tallyCommand(tick, 4, "name", { entity: 1, name: "" }));
   if (tick % 13 === 0) commands.push(tallyCommand(tick, 5, "birth", {}));
+  if (tick % 19 === 0) commands.push(tallyCommand(tick, 6, "name", { entity: "one", name: "Ana" }));
   if (tick % 2 === 0) commands.push(tallyCommand(tick, 7, "lottery", {}));
   if (tick % 97 === 0) commands.push(tallyCommand(tick, 8, "unknown.command", [tick]));
   return commands;

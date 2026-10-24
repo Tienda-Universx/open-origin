@@ -12,7 +12,7 @@ import type { Tick } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import type { EngineEvent, EventCause, Rejected } from "../world/contracts.ts";
 import type { StreamIds } from "../world/ruleset.ts";
-import type { ActiveTick, WorldState } from "../world/world.ts";
+import { type ActiveStep, busyError, type WorldState } from "../world/world.ts";
 
 /** The ruleset code that is running: a command's handler, or a system. */
 export type Owner = {
@@ -33,7 +33,7 @@ const EXPIRED = "the tick context was used after its step returned: keep no refe
 const OUTSIDE =
   "the tick context was used outside every system and command handler: only they may use it";
 
-export class TickSession implements ActiveTick {
+export class TickSession implements ActiveStep {
   readonly state: WorldState;
   /** The tick being computed. */
   readonly tick: Tick;
@@ -104,6 +104,17 @@ export class TickSession implements ActiveTick {
   /** failWith("system_fault", [message], cause). */
   fail(message: string, cause?: unknown): EngineError {
     return this.failWith("system_fault", [message], cause);
+  }
+
+  /**
+   * The world_busy error for a call of `api` on this world by ruleset code during the tick, which
+   * is also recorded as the tick's fault: the code may catch the error, but not hide the misuse.
+   */
+  refuse(api: string): EngineError {
+    this.fail(
+      `${api} was called during a tick of this world: ruleset code cannot use the world it runs in`,
+    );
+    return busyError(api);
   }
 
   /** Marks the committed chunk `key` as written, once. */

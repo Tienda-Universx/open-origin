@@ -41,6 +41,7 @@ const DENIED_GLOBALS = [
   "SharedArrayBuffer",
   "Atomics",
   "Promise",
+  "Proxy",
   "Set",
   "WeakMap",
   "WeakSet",

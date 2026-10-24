@@ -309,6 +309,15 @@ describe("poisoning", () => {
     expect(worldStatus(world)).toMatchObject({ kind: "faulted", tick: 1, code: "system_fault" });
   });
 
+  test("a fault names the command by its index in the list, and by its seq in the message", () => {
+    const ruleset = stepRuleset([], { boom: throwing("apply"), ok: okHandler });
+    const world = stepWorld(ruleset);
+    const error = engineErrorOf(() => step(world, [command(1, 5, "ok"), command(1, 9, "boom")]));
+    expect(error.issues).toEqual([
+      { path: "/commands/1", message: `command 9 ("boom"): apply threw: ${BOOM}` },
+    ]);
+  });
+
   test("the cause of a throw is the thrown value", () => {
     const thrown = new RangeError("deep");
     const world = stepWorld(
@@ -330,7 +339,7 @@ describe("poisoning", () => {
     ]);
     world = stepWorld(ruleset);
     const message =
-      'system "recursive": step was called during a tick of this world: ruleset code cannot step the world it runs in';
+      'system "recursive": step was called during a tick of this world: ruleset code cannot use the world it runs in';
     const error = engineErrorOf(() => step(world as World, []));
     expect(error.issues).toEqual([{ path: "/systems/0", message }]);
     expect(worldStatus(world)).toMatchObject({ kind: "faulted", tick: 1, code: "system_fault" });
@@ -500,8 +509,28 @@ describe("audit detects writes that bypass the barrier, at the tick they happen"
     const tick = bypassTick(name, at);
     for (let ticks = 1; ticks <= tick; ticks += 1) step(world, []);
     expect(worldStatus(world)).toEqual({ kind: "ok", tick });
-    if (name.includes("not canonical")) expect(() => fullChecksum(world)).toThrow();
-    else expect(fullChecksum(world)).not.toBe(stateRoot(world));
+    if (name.includes("not canonical")) {
+      const error = engineErrorOf(() => fullChecksum(world));
+      expect({ code: error.code, issues: error.issues }).toEqual({
+        code: "invalid_value",
+        issues: [{ path: "/chunks/1,0/grass", message: "NaN is not a safe integer" }],
+      });
+    } else expect(fullChecksum(world)).not.toBe(stateRoot(world));
+  });
+
+  test("fullChecksum names the global value when it is not canonical", () => {
+    const world = stepWorld(
+      stepRuleset([
+        system("sneaky", (ctx) => {
+          (ctx.readGlobal() as Data).population = 0.5;
+        }),
+      ]),
+    );
+    step(world, []);
+    const error = engineErrorOf(() => fullChecksum(world));
+    expect(error.issues).toEqual([
+      { path: "/global/population", message: "0.5 is not a safe integer" },
+    ]);
   });
 
   test("an audited world that writes only through the barrier steps on", () => {
@@ -567,6 +596,24 @@ describe("the tick context is revoked when step returns", () => {
         issues: [{ path: "", message: EXPIRED }],
       });
     }
+  });
+
+  test("a context kept from a tick that faulted is revoked too", () => {
+    let kept: Ctx | undefined;
+    const world = stepWorld(
+      stepRuleset([
+        system("doomed", (ctx) => {
+          kept = ctx;
+          boom();
+        }),
+      ]),
+    );
+    engineErrorOf(() => step(world, []));
+    const error = engineErrorOf(() => kept?.readChunk("0,0"));
+    expect({ code: error.code, issues: error.issues }).toEqual({
+      code: "context_expired",
+      issues: [{ path: "", message: EXPIRED }],
+    });
   });
 
   test("a context kept from an earlier tick faults the tick that uses it", () => {

@@ -9,8 +9,9 @@
  * 3. The kernel digest, the state root, the events digest digest(["events", events]), and the
  *    tick checksum digest(["tick", stateRoot, eventsDigest]).
  *
- * Every problem of steps 1 and 2 is reported in one system_fault, at `/chunks/<key>/...` and
- * `/global/...`. Created chunks join the lazy index in amortized O(1), so no step of the commit
+ * Steps 1 and 2 report, in one system_fault, the first problem of each value that is not
+ * canonical, since canonical text fails fast, and every issue the validators return, at
+ * `/chunks/<key>/...` and `/global/...`. Created chunks join the lazy index in amortized O(1), so no step of the commit
  * depends on the number of chunks in the world.
  */
 import { canonicalize } from "../canonical/encode.ts";
@@ -19,7 +20,7 @@ import { type CanonicalValue, pointer } from "../canonical/value.ts";
 import { type Digest, Digester, digest, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes, subtractLanes } from "../digest/lanes.ts";
 import { describePath, EngineError, type Issue, IssueList } from "../errors.ts";
-import { composeRoot, kernelDigest, recomputeRoot } from "../world/checksum.ts";
+import { composeRoot, kernelDigest, pathInValue, recomputeRoot } from "../world/checksum.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import { runValidator } from "../world/validators.ts";
 import type { WorldState } from "../world/world.ts";
@@ -45,9 +46,8 @@ function taggedText(tagged: readonly CanonicalValue[], path: string, issues: Iss
     return canonicalize(tagged);
   } catch (error) {
     if (!EngineError.isEngineError(error)) throw error;
-    const prefix = `/${tagged.length - 1}`.length;
     for (const issue of error.issues) {
-      issues.report(`${path}${issue.path.slice(prefix)}`, issue.message, error.cause);
+      issues.report(pathInValue(issue.path, tagged, path), issue.message, error.cause);
     }
     return undefined;
   }
@@ -131,7 +131,7 @@ function staleIssue({ path, change, noun, tagged, cached }: Cached): Issue | und
   } catch (error) {
     if (!EngineError.isEngineError(error)) throw error;
     const [first] = error.issues;
-    const at = describePath((first?.path ?? "").slice(`/${tagged.length - 1}`.length));
+    const at = describePath(pathInValue(first?.path ?? "", tagged, ""));
     return { path, message: `${change}, and it is not canonical: at ${at}: ${first?.message}` };
   }
 }

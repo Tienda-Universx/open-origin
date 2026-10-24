@@ -87,8 +87,8 @@ cannot disagree about what is canonical.
 
 Every failure is an `EngineError` with a `code` (`invalid_value` here, `tick_overflow` for
 [time](#time), `invalid_input` and `invalid_ruleset` for [the world](#world), and
-`system_fault`, `integrity_violation`, `world_faulted`, `context_expired`, and `id_exhausted` for
-[step](#step); later batches add codes) and `issues`. An issue has a `path`, a JSON Pointer
+`system_fault`, `integrity_violation`, `world_faulted`, `world_busy`, `context_expired`, and
+`id_exhausted` for [step](#step); later batches add codes) and `issues`. An issue has a `path`, a JSON Pointer
 ([RFC 6901](https://www.rfc-editor.org/rfc/rfc6901)) into the value (`""` is the whole value, and
 `~` and `/` in keys become `~0` and `~1`), and a `message`.
 
@@ -148,8 +148,9 @@ What a digest does not do:
   the adapter (ADR 0020).
 - **Prove the absence of collisions.** The tests check the port against the reference, not the
   collision rate; ADR 0020 records why 128 bits.
-- **Update the state root per tick yet.** [The world](#world) composes its root with these lanes
-  once, when it is created; updating the sum for the chunks a tick changed arrives with `step`.
+- **Keep the state root by themselves.** The lanes only add and subtract: [the world](#world)
+  composes its root with them when it is created, and [step](#step) updates the sum for the chunks
+  each tick changed.
 
 ## Randomness
 
@@ -315,7 +316,7 @@ Every digest hashes a canonical array that starts with a domain tag:
 | Function | Cost | Result |
 |---|---|---|
 | `stateRoot(world)` | O(1) | The root the world caches |
-| `fullChecksum(world)` | O(N) | The root recomputed from the state alone, never from the cache. It equals `stateRoot` unless something changed the state without the engine knowing |
+| `fullChecksum(world)` | O(N) | The root recomputed from the state alone, never from the cache. It equals `stateRoot` unless something changed the state without the engine knowing. A value left not canonical by such a change throws `invalid_value` at its path, `/chunks/<key>/...` or `/global/...` |
 | `chunkHashes(world)` | O(N) | Each chunk's cached term as a digest, in a fresh record keyed in canonical order, to find which chunks differ between two worlds |
 
 The world caches each chunk's term, the chunk sum, the global digest, and the root. The kernel
@@ -376,12 +377,12 @@ in `tests/repo/engine-lint.test.ts`.
 
 | Phase | What happens | If it fails |
 |---|---|---|
-| 1. Guards | The brand check, then the world's health, then a step already running on the same world, which only ruleset code that holds the world can start | `invalid_input` or `world_faulted`, and nothing changes; a nested step is a fault of the running tick |
-| 2. Commands | Every command is validated and copied (below) | `invalid_input` with every problem, and nothing changes |
+| 1. Guards | The brand check, then a step already running on the same world, which only ruleset code that holds the world, or a host Proxy among the commands, can start, then the world's health | `invalid_input`, `world_busy`, or `world_faulted`, and nothing changes; a nested step from ruleset code is also a fault of the running tick |
+| 2. Commands | Every command is validated and copied (below), with the world already marked busy | `invalid_input` with every problem, and nothing changes |
 | 3. Tick | The kernel's tick advances | `tick_overflow` at `Number.MAX_SAFE_INTEGER`, and the world is poisoned |
 | 4. Commands | In seq order. A type without a handler, looked up with `Object.hasOwn`, or a `check(view, command)` that returns a rejection, is rejected; otherwise `apply(ctx, command)` runs | Poisoned |
 | 5. Systems | `run(ctx)` for each system, in the ruleset's order | Poisoned |
-| 6. Commit | The changed chunks, in key order, then the global value if it was written: canonical text, term, validator. Then the kernel digest, the state root, the events digest, and the tick checksum | Poisoned, with every problem of the data |
+| 6. Commit | The changed chunks, in key order, then the global value if it was written: canonical text, term, validator. Then the kernel digest, the state root, the events digest, and the tick checksum | Poisoned, with the first problem of each value that is not canonical (canonical text fails fast, so `{ a: 0.5, b: NaN }` reports only `/a`) and every issue the validators return |
 | 7. Audit | With `options.audit`, the root recomputed from the state alone must equal the incremental one | `integrity_violation`, and the world is poisoned |
 
 Systems and handlers must return `undefined`; a value, such as the `Promise` of an `async`
@@ -446,6 +447,19 @@ looks up and never iterates: this is the reviewed lint exception of `step/contex
   every later use of the context throws the same fault again. The first fault of a tick is the one
   reported.
 
+### A world is busy while it steps
+
+From the first read of a command to the end of the tick, every function that reads or steps the
+world (`step`, `readView` and the methods of every view, `fullChecksum`, `stateRoot`,
+`chunkHashes`, and `worldStatus`) throws `world_busy`, so nothing sees or saves a partial state:
+
+- Ruleset code that holds the world and calls one of them during the tick also faults the tick,
+  at the system or command that made the call, so catching the error hides nothing.
+- A host Proxy among the commands whose trap calls one of them while step reads the commands is
+  refused the same way. Step then sees the trap's own result: a descriptor, which it validates as
+  any other, or the thrown error, which makes that command an `invalid_input` issue. The world is
+  unchanged either way, so a command always applies at the tick it names.
+
 ### What is detected, and when
 
 Inside the tick, isolation is checked, not prevented (ADR 0020, ownership):
@@ -455,7 +469,8 @@ Inside the tick, isolation is checked, not prevented (ADR 0020, ownership):
 | A write through `writeChunk`, `writeGlobal`, or `createChunk` | Valid: the commit hashes it |
 | A value that is not canonical (`NaN`, `1.5`, `undefined`, a `Map`, `-0`), written through the barrier | At the commit of that tick: `system_fault` at its path |
 | Data that the ruleset's validators reject | At the commit of that tick: `system_fault` with the validator's issues |
-| A write through `readChunk` or `readGlobal`, a reference kept from an earlier tick, or a validator that changes the value it checks | With audit: after the commit of that tick, `integrity_violation` naming each stale chunk and the global value. Without audit: not in this pull request; snapshot encoding (next pull request) recomputes every digest and refuses a state that disagrees with them |
+| A `Proxy` written into the state, which `biome.json` denies in the engine but ruleset code can still create | Not when its traps answer as plain data would: JavaScript cannot tell a Proxy from its target, so the commit accepts it, and its traps then run on every read, the host's included. Only a change in its answers is detected, as the next row describes |
+| A write through `readChunk` or `readGlobal`, a reference kept from an earlier tick, a validator that changes the value it checks, or a Proxy whose answers change | With audit: after the commit of that tick, `integrity_violation` naming each stale chunk and the global value. Without audit: not in this pull request; snapshot encoding (next pull request) recomputes every digest and refuses a state that disagrees with them |
 
 The commit takes each chunk's term, and the global digest, before its validator runs, so a
 validator that changes its value is found like any other write that bypasses the barrier.
@@ -494,7 +509,11 @@ for tests, and is not counted, so a step returns the same result with or without
   and of everything a step returns;
 - randomness: counters per (stream, id) that continue within a tick and restart the next, and
   independence from other entities and streams;
-- cost: the exact `hashedBytes`, a world of 10,000 chunks with one changed, and a lazy index.
+- cost: the exact `hashedBytes`, a world of 10,000 chunks with one changed, and a lazy index;
+- a busy world: each read and `step`, from a system and from a command handler, and from a host
+  Proxy while the commands are read, including one whose own step would fault;
+- not yet: that the commit's work does not grow with the number of chunks, which the complexity
+  test of PR 8 measures.
 
 ### Golden, fuzz, and isolation
 
@@ -507,8 +526,8 @@ keeps no module state.
 
 | Test | What it proves |
 |---|---|
-| Golden (`golden-tally`) | A fixed seed and a scripted command list give, over 1,000 ticks, the checksums pinned at ticks 1, 10, 100, and 1000 and the pinned final state root, under the pinned `ENGINE_VERSION` and tally versions. The run is checked to reach every event and rejection reason it claims. The values pin behavior and do not prove it correct; a change that alters them must bump a version and record the new values (`fixtures/golden-tally.ts`) |
-| Fuzz (`step-fuzz`) | 200 seeds of 200 ticks, with random valid commands from `sfc32` and, on about one tick in eight, a list broken in one of seven ways, which must be rejected whole. Each seed runs twice: the first run with audit, so the incremental root equals the full one after every tick, and the second without, which must give the same checksums, events, rejections, and statistics |
+| Golden (`golden-tally`) | A fixed seed and a scripted command list give, over 1,000 ticks, the checksums pinned at ticks 1, 10, 100, and 1000 and the pinned final state root, and the pinned digest of every tick's checksum, under the pinned `ENGINE_VERSION` and tally versions. The run is checked to reach every event type and every rejection reason tally has. The values pin behavior and do not prove it correct; a change that alters them must bump a version and record the new values (`fixtures/golden-tally.ts`) |
+| Fuzz (`step-fuzz`) | 64 seeds of 200 ticks, with random valid command lists from `sfc32`. Each seed runs two worlds on the same lists. The first, under audit, also receives on about one tick in eight a list broken in one of seven ways, before the valid one: step must throw `invalid_input` and leave `stateRoot` and `fullChecksum` unchanged, and audit makes the incremental root equal the full one after every tick. The second, without audit, never receives a broken list. Both must give the same checksum, events, changed chunks, and statistics at every tick |
 | Isolation (`world-isolation`) | Three worlds (two of them replicas) stepped in turn, in a random interleaving, and sharing one ruleset object, give exactly what each gives alone |
 
 The fuzz runs 64 seeds, about 7.5 seconds on the 2-core Codespace: a tally tick costs about 110 µs,
