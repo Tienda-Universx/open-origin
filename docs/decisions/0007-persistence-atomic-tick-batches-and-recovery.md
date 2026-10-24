@@ -50,7 +50,9 @@ Codespace disk or the Docker volume has **no protection in v0.1**; backups (dump
 required before any public world.
 
 **Adopted defaults (2026-10-24), configurable.** The plan marked these parameters [D] (§I.2.1,
-§I.2.7, O-12); they are now adopted defaults, revisited with measurements in T7 (plan §M).
+§I.2.7, O-12); they are now defaults adopted under the maintainer's delegation of technical
+decisions ([tracker](../roadmap/v0.1-tracker.md) L11, L12), revisited with measurements in T7
+(plan §M).
 
 | Parameter | Adopted default |
 |---|---|
@@ -81,4 +83,5 @@ required before any public world.
 ## References
 
 - Plan: §B, §D, §E.5, §I.1.7, §I.2, §J.3, §L, §M, O-2, O-3, O-12, §N.
+- Tracker `docs/roadmap/v0.1-tracker.md`: L11, L12.
 - [0003. Authoritative deterministic engine](0003-authoritative-deterministic-engine.md).

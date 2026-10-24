@@ -45,9 +45,10 @@ AI modes (plan §J.4), implemented by an in-house gateway over `fetch` (O-20):
   the call if the reservation exceeds the balance. Provider caps add to local caps, never replace
   them. Local counters of tokens, neurons, and dollars always run (§J.6).
 - **Cognitive allocation: adopted default (2026-10-24), configurable** (plan §J.5, marked [D]
-  there). Each inhabitant gets an equal daily share C/N; a common pool serves high **internal**
-  salience triggers (new phenomenon, conversation); the queue is ordered by trigger tick with a
-  deterministic tie-break; everything is recorded.
+  there; adopted under the maintainer's delegation of technical decisions,
+  [tracker](../roadmap/v0.1-tracker.md) L11, L12). Each inhabitant gets an equal daily share C/N; a
+  common pool serves high **internal** salience triggers (new phenomenon, conversation); the queue
+  is ordered by trigger tick with a deterministic tie-break; everything is recorded.
 - Cognitive allocation depends only on world data, never on who watches or who pays
   ([0005](0005-observer-independence.md)). Shared time never depends on the AI budget. Each world
   with LLMs declares its budget and resulting cognitive density. The research budget is separate.
@@ -60,8 +61,9 @@ AI modes (plan §J.4), implemented by an in-house gateway over `fetch` (O-20):
   the demo with AI off; worlds with LLMs choose R according to their budget (O-10).
 - Model output is auditable and replayable from the log (reproducibility level N2).
 - Plan §N criteria 11 and 12 verify the defaults and the mock behavior; T9 builds the gateway.
-- The allocation default and `k` are revisited with measurements in the batch that implements
-  them (plan §M).
+- The allocation default, `k`, and R = 60 were adopted under the maintainer's delegation of
+  technical decisions (tracker L11, L12); they are revisited with measurements in the batch that
+  implements them (plan §M).
 
 ## Alternatives considered
 
@@ -81,4 +83,4 @@ AI modes (plan §J.4), implemented by an in-house gateway over `fetch` (O-20):
 ## References
 
 - Plan: P3, P8 (§E.1), §C, §D.2, §E.5, §H, §J.4–J.6, §K.2, §K.5, O-10, O-11, O-20, §M, §N.
-- Tracker `docs/roadmap/v0.1-tracker.md`: L2 point 1.
+- Tracker `docs/roadmap/v0.1-tracker.md`: L2 point 1, L11, L12.

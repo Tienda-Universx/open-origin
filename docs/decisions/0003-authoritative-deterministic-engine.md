@@ -48,7 +48,9 @@ invariance ([0005](0005-observer-independence.md)), purity lint and import test,
 future, cross-runtime (V8 headless or workerd).
 
 **Adopted defaults (2026-10-24), configurable.** The plan marked these parameters [D]; they are
-now adopted defaults, revisited with measurements in the batch that implements each one (plan §M).
+now defaults adopted under the maintainer's delegation of technical decisions
+([tracker](../roadmap/v0.1-tracker.md) L11, L12), revisited with measurements in the batch that
+implements each one (plan §M).
 
 | Parameter | Adopted default | Plan |
 |---|---|---|
@@ -81,4 +83,5 @@ now adopted defaults, revisited with measurements in the batch that implements e
 ## References
 
 - Plan: P1, P2, P5, P6, P7 (§E.1), §E.3, §E.5, §I.1, O-9, O-10, O-11, §M, §N.
+- Tracker `docs/roadmap/v0.1-tracker.md`: L11, L12.
 - RFC 8785, JSON Canonicalization Scheme: https://www.rfc-editor.org/rfc/rfc8785

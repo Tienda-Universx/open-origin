@@ -134,7 +134,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `packages/agents/` | T4 | Policies, memory, prompts, provenance |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
-| `tests/` | T6 | End-to-end: synchronization, recovery, observer invariance (`tests/repo/` holds the ADR format check since T1) |
+| `tests/` | T6 | End-to-end: synchronization, recovery, observer invariance. Since T1, `tests/repo/` holds the repository checks: ADR format (`adr.ts`), shared Markdown line filter (`markdown.ts`), git file listing (`files.ts`), invisible and bidirectional character scan (`hygiene.ts`), CI workflow invariants (`ci.test.ts`), relative links (`docs.ts`), and verbatim-document hashes (`docs.test.ts`) |
 | `docs/` | T1 | Vision, plan, tracker, ADRs, architecture; determinism spec in T2, persistence spec in T7 |
 | `.github/workflows/ci.yml` | T1 | CI |
 | `docker-compose.yml` | T7 | Local Postgres |
