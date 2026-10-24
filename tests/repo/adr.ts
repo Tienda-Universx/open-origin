@@ -179,7 +179,8 @@ function supersessionIssues(
 /** Runs of missing numbers from 0000 to the highest one, so one typo yields one issue. */
 function missingRanges(present: ReadonlySet<number>): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
-  for (let n = 0; n <= Math.max(-1, ...present); n++) {
+  const highest = Math.max(-1, ...present);
+  for (let n = 0; n <= highest; n++) {
     if (present.has(n)) continue;
     const last = ranges.at(-1);
     if (last !== undefined && last[1] === n - 1) last[1] = n;

@@ -28,7 +28,10 @@ describe("package.json", () => {
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {
     expect(manifest.scripts.lint).toContain("bunx --no-install --bun biome check .");
-    expect(manifest.scripts.lint).toContain("bunx --no-install --bun oxlint -c .oxlintrc.json");
+    // --deny-warnings: a rule lowered to "warn" in .oxlintrc.json still fails CI.
+    expect(manifest.scripts.lint).toContain(
+      "bunx --no-install --bun oxlint -c .oxlintrc.json --deny-warnings",
+    );
   });
 
   test("has no runtime dependencies and pins every dev dependency exactly (plan §P)", () => {
