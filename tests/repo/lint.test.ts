@@ -280,6 +280,14 @@ describe("automated quality controls", () => {
       "lint/correctness/noUnusedImports",
     ],
     [
+      "assignments to a builtin global",
+      {
+        "global-assign.ts":
+          "export function reset(value: typeof Math): void {\n  Math = value;\n}\n",
+      },
+      "lint/suspicious/noGlobalAssign",
+    ],
+    [
       "unused parameters",
       { "unused-param.ts": "export function w(a: number, b: number): number {\n  return a;\n}\n" },
       "lint/correctness/noUnusedFunctionParameters",
@@ -338,9 +346,8 @@ function biomeDiagnostics(output: string): Diagnostic[] {
   }));
 }
 
-/** Globals the engine core may not reference (ADR 0003 P5). */
+/** Globals the engine core may not reference (ADR 0003 P5), as noRestrictedGlobals denies them. */
 const DENIED_GLOBALS = [
-  "Math",
   "Date",
   "Intl",
   "globalThis",
@@ -349,7 +356,6 @@ const DENIED_GLOBALS = [
   "SharedArrayBuffer",
   "Atomics",
   "Promise",
-  "Map",
   "Set",
   "WeakMap",
   "WeakSet",
@@ -359,8 +365,37 @@ const DENIED_GLOBALS = [
   "performance",
   "structuredClone",
   "Reflect",
-  "JSON",
 ] as const;
+
+/**
+ * Globals that have, or will have, a reviewed per-file exception (ADR 0020): each is denied by a
+ * GritQL plugin of its own, `call` is a typical use, and `message` starts its diagnostic.
+ */
+const PLUGIN_GLOBALS = [
+  { name: "JSON", call: "JSON.stringify(0)" },
+  { name: "Math", call: "Math.imul(2, 3)" },
+  { name: "Map", call: "new Map<string, number>()" },
+].map((global) => ({ ...global, message: `The global \`${global.name}\`` }));
+
+/**
+ * Every kind of value reference to the global `name`, one per line, that its plugin must report.
+ * The parameter type `typeof name` is a type position, which it must not report.
+ */
+function valueReferences(name: string, call: string): string[] {
+  return [
+    `export const called = ${call};`,
+    `export const member = ${name}.toString;`,
+    `export const computed = (key: "toString") => ${name}[key];`,
+    `export const alias = ${name};`,
+    `export const { valueOf: unwrap } = ${name};`,
+    `export const argument = String(${name});`,
+    `export const shorthand = { ${name} };`,
+    `export const kind = typeof ${name};`,
+    `export const cast = (${name} as unknown) ?? 0;`,
+    `export function same(value: typeof ${name}): boolean {\n  return value === ${name};\n}`,
+    `export default ${name};`,
+  ];
+}
 
 /**
  * A source that breaks purity rules: the rules it must trigger (sorted), and how many of its
@@ -386,6 +421,16 @@ const PURITY_CASES: Record<string, PurityCase> = {
         message: `Do not use the global variable ${name}.`,
       },
     ]),
+  ),
+  ...Object.fromEntries(
+    PLUGIN_GLOBALS.map(({ name, call, message }) => {
+      const references = valueReferences(name, call);
+      const source = `${references.join("\n")}\n`;
+      return [
+        `plugin-global-${name}.ts`,
+        { source, rules: PLUGIN, message, matches: references.length },
+      ];
+    }),
   ),
   "exponent.ts": {
     source: "export const cube = 2 ** 3;\n",
@@ -615,6 +660,14 @@ describe("engine purity controls (packages/engine/src)", () => {
         "",
         // Calling `Object` members that do not enumerate keys, and declaring a constructor, are fine.
         "export const frozen = Object.freeze({ total: 0 });",
+        // Names of plugin globals as property names, as keys, and in types are not the globals;
+        // nor are identifiers that only start or end like them.
+        "export const holder = { Math: 1, JSON: 2, Map: 3 };",
+        "export const fields = holder.Math + holder.JSON + holder.Map;",
+        "export type Types = [Math, JSON, Map<string, number>, typeof Math, typeof JSON.parse];",
+        "export interface Named {\n  Math: number;\n  Map(): void;\n}",
+        "export const MathLike = 1;",
+        "export const isJSON = MathLike > 0;",
         "export class Counter {",
         "  readonly start: number;",
         "  constructor(start: number) {",
@@ -629,25 +682,26 @@ describe("engine purity controls (packages/engine/src)", () => {
 });
 
 /**
- * The reviewed exceptions of ADR 0020 ("Determinism rules enforced by tools"): canonical/order.ts
- * may enumerate keys through `Object` (key-order.grit skips it), and canonical/encode.ts may use
- * the global `JSON` (its override repeats the engine's denied globals without `JSON`, because an
- * override replaces a rule's options). Each covers its exact file, and every other purity rule
- * still applies to both.
+ * The reviewed exceptions of ADR 0020 ("Determinism rules enforced by tools"). Each rule that has
+ * one lives in a GritQL plugin of its own, registered for src minus its exception file, because
+ * Biome adds up the plugins of every override that matches a file and cannot take one away:
+ * canonical/order.ts may enumerate keys through `Object` (key-order.grit), canonical/encode.ts may
+ * use the global `JSON` (global-json.grit), and canonical/value.ts the global `Map`
+ * (global-map.grit). The global `Math` has a plugin of its own (global-math.grit) and no exception
+ * yet. Each exception covers its exact file, and every other purity rule still applies to it.
  */
 const ORDER_TS = `${ENGINE_SRC}/canonical/order.ts`;
 const ENCODE_TS = `${ENGINE_SRC}/canonical/encode.ts`;
+const VALUE_TS = `${ENGINE_SRC}/canonical/value.ts`;
 
-/** The denied globals of the override whose `includes` are exactly `includes`. */
-function deniedGlobalsOf(...includes: string[]): DeniedGlobals {
-  const override = (biomeConfig.overrides ?? []).find(
-    (entry) => JSON.stringify(entry.includes) === JSON.stringify(includes),
-  );
-  return override?.linter?.rules?.style?.noRestrictedGlobals?.options?.deniedGlobals ?? {};
-}
+/** The overrides that configure noRestrictedGlobals: biome.json keeps one list, in one override. */
+const GLOBAL_OVERRIDES = (biomeConfig.overrides ?? []).filter(
+  (override) => override.linter?.rules?.style?.noRestrictedGlobals !== undefined,
+);
 
 /** Denied in all of packages/engine/src, as biome.json says. */
-const ENGINE_DENIED = deniedGlobalsOf(`${ENGINE_SRC}/**`);
+const ENGINE_DENIED: DeniedGlobals =
+  GLOBAL_OVERRIDES[0]?.linter?.rules?.style?.noRestrictedGlobals?.options?.deniedGlobals ?? {};
 
 /** One broken purity rule: a source line and a text that only its diagnostic contains. */
 type Probe = { name: string; source: string; message: string };
@@ -664,7 +718,27 @@ const globalProbe = (name: string): Probe => ({
   message: `Do not use the global variable ${name}.`,
 });
 
-const JSON_PROBE = globalProbe("JSON");
+/** The probe of each plugin global, by name. */
+const PLUGIN_PROBES: Record<string, Probe> = Object.fromEntries(
+  PLUGIN_GLOBALS.map(({ name, message }) => [
+    name,
+    { name: `the global ${name}`, source: `export const global${name} = ${name};`, message },
+  ]),
+);
+
+/** The probe for `name`, which must be a plugin global. */
+function pluginProbe(name: string): Probe {
+  const probe = PLUGIN_PROBES[name];
+  if (probe === undefined) throw new Error(`${name} is not a plugin global`);
+  return probe;
+}
+
+/** Each excepted file and the one rule it may break. */
+const EXCEPTIONS: { file: string; probe: Probe }[] = [
+  { file: ORDER_TS, probe: KEY_ENUMERATION_PROBE },
+  { file: ENCODE_TS, probe: pluginProbe("JSON") },
+  { file: VALUE_TS, probe: pluginProbe("Map") },
+];
 
 /** Two rules reject this import, so two probes share it; a fixture holds it once. */
 const NODE_IMPORT = 'import { readFileSync } from "node:fs";\nexport const read = readFileSync;';
@@ -672,6 +746,7 @@ const NODE_IMPORT = 'import { readFileSync } from "node:fs";\nexport const read 
 /** Every purity rule, through one probe each; the cases above cover their variants. */
 const EVERY_RULE: Probe[] = [
   KEY_ENUMERATION_PROBE,
+  ...Object.values(PLUGIN_PROBES),
   ...Object.keys(ENGINE_DENIED).map(globalProbe),
   { name: "**", source: "export const cube = 2 ** 3;", message: "`**` and `**=`" },
   {
@@ -721,27 +796,34 @@ const EVERY_RULE: Probe[] = [
   },
 ];
 
-/** Paths that look like an excepted file but are not it: both exceptions must miss them. */
+/**
+ * The rules that have, or will have, an exception. Every path that looks like an excepted file,
+ * or like the future home of the integer helpers, must be rejected by all of them.
+ */
+const EXEMPTABLE = [KEY_ENUMERATION_PROBE, ...Object.values(PLUGIN_PROBES)];
+
 const NEAR_MISSES = [
-  `${ENGINE_SRC}/canonical/value.ts`,
   `${ENGINE_SRC}/order.ts`,
   `${ENGINE_SRC}/encode.ts`,
+  `${ENGINE_SRC}/value.ts`,
+  `${ENGINE_SRC}/int.ts`,
   `${ENGINE_SRC}/canonical/reorder.ts`,
   `${ENGINE_SRC}/canonical/encoder.ts`,
+  `${ENGINE_SRC}/canonical/values.ts`,
   `${ENGINE_SRC}/canonical/order/order.ts`,
   `${ENGINE_SRC}/canonical/encode/encode.ts`,
+  `${ENGINE_SRC}/canonical/value/value.ts`,
 ];
 
-describe("reviewed exceptions in packages/engine/src/canonical", () => {
+describe("reviewed exceptions in packages/engine/src", () => {
   // One Biome run lints every fixture, to bound CI time.
   let linted: LintSummary | undefined;
   function exceptionRun(): LintSummary {
     if (linted === undefined) {
       const everyRule = `${[...new Set(EVERY_RULE.map((probe) => probe.source))].join("\n")}\n`;
-      const nearMiss = `${KEY_ENUMERATION_PROBE.source}\n${JSON_PROBE.source}\n`;
+      const nearMiss = `${EXEMPTABLE.map((probe) => probe.source).join("\n")}\n`;
       linted = lintSummary({
-        [ORDER_TS]: everyRule,
-        [ENCODE_TS]: everyRule,
+        ...Object.fromEntries(EXCEPTIONS.map(({ file }) => [file, everyRule])),
         ...Object.fromEntries(NEAR_MISSES.map((path) => [path, nearMiss])),
       });
     }
@@ -764,36 +846,40 @@ describe("reviewed exceptions in packages/engine/src/canonical", () => {
     return Object.fromEntries(probes.map(({ name }) => [name, name === exempt ? 0 : 1]));
   }
 
-  test("Biome lints every fixture, with key-order.grit copied next to purity.grit", () => {
-    expect(pluginPaths(biomeConfig)).toContain("./packages/engine/lint/key-order.grit");
-    expect(Object.keys(ENGINE_DENIED)).toContain("JSON");
+  test("Biome lints every fixture, with every plugin copied next to purity.grit", () => {
+    expect(pluginPaths(biomeConfig)).toEqual(
+      expect.arrayContaining([
+        "./packages/engine/lint/key-order.grit",
+        "./packages/engine/lint/global-json.grit",
+        "./packages/engine/lint/global-math.grit",
+        "./packages/engine/lint/global-map.grit",
+      ]),
+    );
     const { exitCode, checked } = exceptionRun();
     expect(exitCode).toBe(1);
-    expect(checked).toBe(2 + NEAR_MISSES.length);
+    expect(checked).toBe(EXCEPTIONS.length + NEAR_MISSES.length);
   });
 
-  test("the encode.ts override denies every engine global except JSON, with the same messages", () => {
-    const withoutJson = Object.fromEntries(
-      Object.entries(ENGINE_DENIED).filter(([name]) => name !== "JSON"),
-    );
-    expect(deniedGlobalsOf(ENCODE_TS)).toEqual(withoutJson);
+  test("one override denies globals, for all of src, and it leaves the plugin globals out", () => {
+    expect(GLOBAL_OVERRIDES.map((override) => override.includes)).toEqual([[`${ENGINE_SRC}/**`]]);
+    const denied = Object.keys(ENGINE_DENIED);
+    expect([...denied].sort()).toEqual([...DENIED_GLOBALS].sort());
+    expect(PLUGIN_GLOBALS.filter(({ name }) => denied.includes(name))).toEqual([]);
   });
 
-  test("canonical/order.ts may enumerate keys, and every other purity rule applies to it", () => {
-    expect(probeCounts(ORDER_TS, EVERY_RULE)).toEqual(
-      expectedCounts(EVERY_RULE, KEY_ENUMERATION_PROBE.name),
-    );
-  });
-
-  test("canonical/encode.ts may use JSON, and every other purity rule applies to it", () => {
-    expect(probeCounts(ENCODE_TS, EVERY_RULE)).toEqual(expectedCounts(EVERY_RULE, JSON_PROBE.name));
-  });
+  test.each(EXCEPTIONS)(
+    "$file may break only its own rule, and every other one applies",
+    ({ file, probe }) => {
+      expect(probeCounts(file, EVERY_RULE)).toEqual(expectedCounts(EVERY_RULE, probe.name));
+    },
+  );
 
   test("each exception covers its exact path and no other file", () => {
-    const probes = [KEY_ENUMERATION_PROBE, JSON_PROBE];
-    const counts = Object.fromEntries(NEAR_MISSES.map((path) => [path, probeCounts(path, probes)]));
-    const bothRejected = expectedCounts(probes, "");
-    expect(counts).toEqual(Object.fromEntries(NEAR_MISSES.map((path) => [path, bothRejected])));
+    const counts = Object.fromEntries(
+      NEAR_MISSES.map((path) => [path, probeCounts(path, EXEMPTABLE)]),
+    );
+    const allRejected = expectedCounts(EXEMPTABLE, "");
+    expect(counts).toEqual(Object.fromEntries(NEAR_MISSES.map((path) => [path, allRejected])));
   });
 });
 

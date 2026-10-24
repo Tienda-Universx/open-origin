@@ -115,9 +115,10 @@ T4 adds an activity index based on world data only ([0005](0005-observer-indepen
 
 **Canonical values.** Safe integers without `-0`, strings, booleans, dense arrays, and plain
 records; no `null`. Strings and record keys must be well formed and in NFC: the core validates and
-never normalizes. The key `__proto__` is rejected, cycles are rejected, nesting depth is at most 64, and a command
-payload is at most 8 KiB. The text form is the subset of RFC 8785 these values need: keys sorted by
-UTF-16 code units, integers in decimal, strings escaped as `JSON.stringify` does, no whitespace.
+never normalizes. The key `__proto__` is rejected; values are trees, so cycles and objects that
+appear twice are rejected; nesting depth is at most 64, and a command payload is at most 8 KiB.
+The text form is the subset of RFC 8785 these values need: keys sorted by UTF-16 code units,
+integers in decimal, strings escaped as `JSON.stringify` does, no whitespace.
 The parser accepts exactly the canonical texts: it parses, validates, re-serializes, and requires
 an identical result. The core encodes UTF-8 itself; adapters decode with a fatal `TextDecoder`.
 
@@ -144,15 +145,18 @@ the batch that defines the length of a day, an internal law (plan O-13).
 **Determinism rules enforced by tools.** In `packages/engine/src`:
 
 - the type library is ES2024 without host types;
-- Biome denies host and non-deterministic globals (among them `Reflect` and `JSON`, which
-  enumerate or serialize keys in insertion order), Node modules, `console`, `process`, `eval`,
-  `for…in`, and non-relative imports;
+- Biome denies host and non-deterministic globals with one `noRestrictedGlobals` list for all of
+  `src` (among them `Reflect`, which enumerates keys in insertion order), Node modules, `console`,
+  `process`, `eval`, `for…in`, and non-relative imports;
 - GritQL plugins deny `**`, `async`/`await`, locale-dependent methods, own-key enumeration
   (`Object.keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`,
   `getOwnPropertyDescriptors`) outside the ordering helper, binding or destructuring `Object`,
   and `.constructor`, which reaches the `Function` constructor;
-- `Math` is allowed only in the integer helper module, `JSON` only in the canonical encoder, and
-  `Map`/`Set` only in listed modules; each exception is a reviewed override in `biome.json`;
+- `JSON` is allowed only in the canonical encoder, `Map` only in the canonical walk, which looks up
+  the objects it has entered and never iterates them, and `Math` only in the integer helper
+  module; `Set` stays denied. Each of these three globals has a GritQL plugin of its own that
+  reports every reference to it outside a type, registered in `biome.json` for `src` minus its
+  one exception file, because an override replaces a rule's options instead of merging them;
 - a repository test rejects reference directives, every `declare` declaration (a local
   `declare const Bun` would bypass both the type library and the global rules), declaration
   files, imports that leave `src`, Biome suppression comments, and `@ts-ignore`,

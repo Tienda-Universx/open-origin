@@ -116,6 +116,16 @@ describe("canonicalize", () => {
     expect(error.message).toBe("invalid_value at /a/1: 1.5 is not a safe integer");
   });
 
+  test("rejects an object reached twice", () => {
+    const list = [1];
+    expect(engineErrorOf(() => canonicalize([list, list])).issues).toEqual([
+      {
+        path: "/1",
+        message: "the value is the same object as the value at /0: canonical values are trees",
+      },
+    ]);
+  });
+
   test("rejects a getter without calling it", () => {
     let calls = 0;
     const value = {

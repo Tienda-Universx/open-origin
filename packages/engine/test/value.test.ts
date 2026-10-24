@@ -31,6 +31,8 @@ const notSafe = (value: string) => `${value} is not a safe integer`;
 const symbols = (count: number) => `the object has symbol keys (${count}): keys must be strings`;
 const cycle = (where: string) =>
   `the value contains itself: it is the same object as the value at ${where}`;
+const shared = (where: string) =>
+  `the value is the same object as the value at ${where}: canonical values are trees`;
 
 /** `value` nested inside `depth` arrays: depth 1 is [value]. */
 function nestedArrays(depth: number, value: unknown = 0): unknown {
@@ -43,6 +45,16 @@ function nestedArrays(depth: number, value: unknown = 0): unknown {
 function nestedRecords(depth: number, value: unknown = 0): unknown {
   let nested = value;
   for (let level = 0; level < depth; level += 1) nested = { k: nested };
+  return nested;
+}
+
+/** `depth` arrays, each holding the next one twice: 2^depth paths through depth + 1 values. */
+function doubledArrays(
+  depth: number,
+  wrap: (array: unknown[]) => unknown = (array) => array,
+): unknown {
+  let nested: unknown = 0;
+  for (let level = 0; level < depth; level += 1) nested = wrap([nested, nested]);
   return nested;
 }
 
@@ -74,7 +86,6 @@ describe("validateCanonical accepts canonical values", () => {
     ["NFC keys outside the fast path", { [String.fromCodePoint(0xe9, 0x1f600)]: 1 }],
     ["64 nested arrays", nestedArrays(64)],
     ["64 nested records", nestedRecords(64)],
-    ["the same object twice, which is not a cycle", ((shared) => [shared, shared])({ a: 1 })],
   ])("%s", (_name, value) => {
     expect(validateCanonical(value)).toEqual([]);
   });
@@ -219,6 +230,59 @@ describe("validateCanonical rejects, with the path of each issue", () => {
     const inner: Record<string, unknown> = {};
     inner.y = [inner];
     expect(validateCanonical({ x: inner })).toEqual([{ path: "/x/y/0", message: cycle("/x") }]);
+  });
+
+  test("an object reached twice, at its second occurrence, with the path of the first", () => {
+    const record = { a: 1 };
+    expect(validateCanonical([record, record])).toEqual([{ path: "/1", message: shared("/0") }]);
+    // Canonical order decides which occurrence is first: /a sorts before /b.
+    const list = [1];
+    expect(validateCanonical({ b: { x: list }, a: [list] })).toEqual([
+      { path: "/b/x", message: shared("/a/0") },
+    ]);
+    // An object that contains itself is still a cycle, and a later occurrence is shared.
+    const self: Record<string, unknown> = {};
+    self.self = self;
+    expect(validateCanonical([self, self])).toEqual([
+      { path: "/0/self", message: cycle("/0") },
+      { path: "/1", message: shared("/0") },
+    ]);
+  });
+
+  test("an object reached twice, without walking its contents again", () => {
+    const bad = [null];
+    expect(validateCanonical({ a: bad, b: bad })).toEqual([
+      { path: "/a/0", message: NULL },
+      { path: "/b", message: shared("/a") },
+    ]);
+  });
+
+  test("a value whose levels each hold the next one twice, in time linear in its objects", () => {
+    // 2^24 paths would take seconds to walk; the walk enters each of the 24 arrays once.
+    const expected = Array.from({ length: 23 }, (_, index) => {
+      const depth = 22 - index;
+      return { path: `${"/0".repeat(depth)}/1`, message: shared("/0".repeat(depth + 1)) };
+    });
+    expect(validateCanonical(doubledArrays(24))).toEqual(expected);
+  }, 1_000);
+
+  test("a value whose 64 levels each hold the next one twice, reading each property once", () => {
+    // Proxies count the reads and refuse to read beyond a budget, so an exponential walk stops.
+    let reads = 0;
+    const counting: ProxyHandler<unknown[]> = {
+      getOwnPropertyDescriptor(target, key) {
+        reads += 1;
+        if (reads > 1_000) throw new Error("read budget exhausted");
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    };
+    const issues = validateCanonical(doubledArrays(64, (array) => new Proxy(array, counting)));
+    // Each array is read once: its length and its two elements.
+    expect(reads).toBe(3 * 64);
+    expect(issues).toHaveLength(50);
+    expect(issues.filter(({ message }) => message.endsWith("canonical values are trees"))).toEqual(
+      issues,
+    );
   });
 
   test("every issue in one value, in canonical key order", () => {

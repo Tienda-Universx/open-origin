@@ -11,8 +11,9 @@ subsystem: digests, randomness, the world, `step`, and snapshots.
 
 Everything the engine stores, hashes, or compares is a canonical value, and its only text form is
 canonical text. Code: `packages/engine/src/canonical/` and `packages/engine/src/errors.ts`. Tests:
-`packages/engine/test/` (`value`, `copy`, `encode`, `order`, `errors`, and `canonical-fuzz`); the
-lint exceptions for `order.ts` and `encode.ts` are proven in `tests/repo/lint.test.ts`.
+`packages/engine/test/` (`value`, `copy`, `encode`, `order`, `errors`, `hostile`, and
+`canonical-fuzz`); the lint exceptions for `order.ts`, `encode.ts`, and `value.ts` are proven in
+`tests/repo/lint.test.ts`.
 
 ### What is canonical
 
@@ -23,7 +24,8 @@ lint exceptions for `order.ts` and `encode.ts` are proven in `tests/repo/lint.te
 | String | Well-formed UTF-16 (`isWellFormed`), in Unicode Normalization Form C | A lone surrogate has no UTF-8 form, and digests hash UTF-8. NFC gives each text one sequence of code points; the core rejects other forms and never normalizes, so a stored value is the value given |
 | Array | Dense; prototype `Array.prototype`; no own properties other than its elements and `length`; no symbol keys | Holes and extra properties would vanish from the text, so two different values would share it |
 | Record | Prototype `Object.prototype` or `null`; only own, enumerable, string-keyed data properties; keys follow the string rule; no key `__proto__` | A getter or a Proxy could answer differently on each read. `__proto__` sets the prototype when assigned |
-| Nesting | At most 64 arrays and records deep, and no value that contains itself | Bounds recursion. A cycle is reported at once, even one that branches |
+| Nesting | At most 64 arrays and records deep | Bounds recursion |
+| Tree | No array or record appears twice, so no value contains itself | A shared object would be walked once per path, which grows exponentially with depth, and a write through one place in the state would change another without marking it dirty. A cycle is reported at once, even one that branches |
 
 Nothing else is canonical: not `null` or `undefined`, bigints, symbols, or functions, and no other
 object (`Map`, `Set`, `Date`, class instances, typed arrays, boxed primitives, `Array`
@@ -90,11 +92,15 @@ codes) and `issues`. An issue has a `path`, a JSON Pointer
 
 - Validation and copying report every issue they reach, in canonical order. A value rejected as a
   whole is one issue, and its contents are not checked: an object that is not a plain array or
-  record, a sparse array, an accessor, a cycle, nesting beyond 64, and an object that throws while
-  being read.
+  record, a sparse array, an accessor, a cycle, nesting beyond 64, and an object reached a second
+  time, reported with the path of its first occurrence.
 - An object that throws while being read (a revoked Proxy, or a trap that throws or breaks a
   Proxy invariant) is an issue at its path, so these operations throw nothing but `EngineError`;
-  `copyCanonical` and `canonicalize` keep the first thrown value as the `cause`.
+  `copyCanonical` and `canonicalize` keep the first thrown value as the `cause`. The walk may have
+  read part of the object first: the issues it found there come before the issue at the object's
+  path, and the contents after the throw are not checked.
+- A thrown `EngineError` is treated like any other thrown value. Only the error that the walk's own
+  fail-fast reporting throws, which stops `canonicalize` at its first issue, passes through.
 - An `EngineError` keeps the first 50 issues and its message counts them all:
   `invalid_value at /0: NaN is not a safe integer; 120 issues in all, 70 dropped beyond the first 50`.
 - `validateCanonical` returns at most those 50 issues; an empty list means the value is canonical.
@@ -105,25 +111,35 @@ codes) and `issues`. An issue has a `path`, a JSON Pointer
 
 ### Cost and limits
 
-- A walk costs O(n) for n values, plus a key sort per record and, for the cycle check, a scan of
-  the enclosing arrays and records (at most 64) per object.
+- A walk costs O(n) for n values, plus a key sort per record. Each array and record also costs one
+  lookup and one insertion in a `Map` of the objects entered so far, which finds cycles and shared
+  objects; a shared object is rejected at its second occurrence without walking its contents again.
 - Strings and keys with no quote, backslash, or C0 control are written between quotes without
   calling `JSON.stringify`; a test checks every canonical one-unit string against it.
-- A value may hold the same object twice when that is not a cycle. The walk visits it once per
-  occurrence, so the cost follows the expanded tree, and a few dozen arrays that each hold the
-  next one twice expand beyond any budget. `JSON.parse` never shares objects.
 - NFC is checked with the host's Unicode data. Unicode keeps the normalization of assigned
   characters stable, so two hosts can disagree only on text with a character that one of them
   does not assign yet.
 
 ### Lint exceptions
 
-Two reviewed overrides in `biome.json` each exempt one canonical file from one purity rule:
+Each reviewed exception lets one file break one purity rule. That rule lives in a GritQL plugin of
+its own, which `biome.json` registers for `src/**` except that file: Biome adds up the plugins of
+every override that matches a file and cannot take one away, while an override that set
+`noRestrictedGlobals` again would replace the engine's list of denied globals instead of merging
+it. The list therefore stays one list, in one override.
 
-| File | May use | Mechanism |
+| File | May use | Plugin in `packages/engine/lint/` |
 |---|---|---|
-| `canonical/order.ts` | Key enumeration through `Object`: it lists own keys with `getOwnPropertyNames` and `getOwnPropertySymbols`, and sorts them | The key-enumeration pattern lives in its own plugin, `packages/engine/lint/key-order.grit`, registered for `src/**` except this file, because Biome adds up the plugins of every matching override |
-| `canonical/encode.ts` | The global `JSON` | An override for this file repeats the engine's denied globals without `JSON`, because an override replaces a rule's options instead of merging them |
+| `canonical/order.ts` | Key enumeration through `Object`: it lists own keys with `getOwnPropertyNames` and `getOwnPropertySymbols`, and sorts them | `key-order.grit` |
+| `canonical/encode.ts` | The global `JSON` | `global-json.grit` |
+| `canonical/value.ts` | The global `Map`, to look up the objects a walk has entered; it never iterates one | `global-map.grit` |
 
-`tests/repo/lint.test.ts` proves that each exception covers its exact path, that look-alike
-paths are still rejected, and that every other purity rule applies to both files.
+`Math` has a plugin of the same kind, `global-math.grit`, and no exception yet. A global's plugin
+reports every reference to the name outside a type: member access, calls, `new`, aliasing,
+arguments, shorthand properties, and `typeof`, even where a local declaration shadows the global.
+Property names, keys, and types are not references to it. Assigning to any of these globals is
+rejected everywhere by Biome's recommended `noGlobalAssign`.
+
+`tests/repo/lint.test.ts` proves that each plugin reports those references and not names, keys, or
+types; that each exception covers its exact path; that look-alike paths are still rejected; and that
+every other purity rule applies to the excepted files.

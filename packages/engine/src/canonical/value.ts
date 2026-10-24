@@ -1,10 +1,11 @@
-import { describePath, EngineError, type Issue, IssueList } from "../errors.ts";
+import { describePath, type Issue, IssueList } from "../errors.ts";
 import { ownKeyCount, sortedOwnKeys, symbolKeyCount } from "./order.ts";
 
 /**
  * A value the engine can hash, store, and compare (ADR 0020): a boolean, a safe integer other
  * than -0, a well-formed string in NFC, a dense array, or a plain record whose keys are such
- * strings, nested at most MAX_DEPTH deep. There is no null.
+ * strings, nested at most MAX_DEPTH deep. It is a tree: no array or record appears in it twice.
+ * There is no null.
  */
 export type CanonicalValue =
   | boolean
@@ -34,13 +35,31 @@ export interface IssueSink {
   report(path: string, message: string, cause?: unknown): void;
 }
 
+/** An array or record the walk entered. */
+type Visit = {
+  /** The visit of the array or record that holds this one; undefined for the root. */
+  readonly parent: Visit | undefined;
+  /** Its key or index in that array or record; undefined for the root. */
+  readonly segment: string | number | undefined;
+  /** Whether the walk is still inside it, so that reaching it again is a cycle. */
+  inside: boolean;
+};
+
 type Walk<T> = {
   readonly builder: Builder<T>;
   readonly sink: IssueSink;
-  /** Keys and indexes from the root to the current value. */
+  /** Keys and indexes from the root to the current value; its length is the current depth. */
   readonly path: (string | number)[];
-  /** The arrays and records that enclose the current value, outermost first. */
-  readonly ancestors: object[];
+  /**
+   * Every array and record entered so far, so that a second occurrence is found at once and the
+   * walk stays linear in the objects of a value that is not a tree. Only looked up, never
+   * iterated: biome.json allows `Map` in this file alone.
+   */
+  readonly visits: Map<object, Visit>;
+  /** The innermost array or record the walk is inside; undefined before it enters one. */
+  current: Visit | undefined;
+  /** What the sink threw to stop the walk. Every other thrown value becomes an issue. */
+  halt: { readonly error: unknown } | undefined;
 };
 
 const NOT_PLAIN =
@@ -60,7 +79,13 @@ function pointer(path: readonly (string | number)[]): string {
 }
 
 function report<T>(walk: Walk<T>, message: string, cause?: unknown): void {
-  walk.sink.report(pointer(walk.path), message, cause);
+  try {
+    walk.sink.report(pointer(walk.path), message, cause);
+  } catch (error) {
+    // A fail-fast sink throws to stop the walk: walkObject rethrows exactly this value.
+    walk.halt = { error };
+    throw error;
+  }
 }
 
 function reject<T>(walk: Walk<T>, message: string, cause?: unknown): T {
@@ -129,31 +154,53 @@ function walkValue<T>(value: unknown, walk: Walk<T>): T {
   }
 }
 
-function walkObject<T>(value: object, walk: Walk<T>): T {
-  const ancestor = walk.ancestors.indexOf(value);
-  if (ancestor !== -1) {
-    const where = describePath(pointer(walk.path.slice(0, ancestor)));
+/** The path at which the walk first reached the object of `visit`. */
+function pathOf(visit: Visit): (string | number)[] {
+  const path: (string | number)[] = [];
+  for (let at: Visit | undefined = visit; at !== undefined; at = at.parent) {
+    if (at.segment !== undefined) path.push(at.segment);
+  }
+  return path.reverse();
+}
+
+/** Rejects an object the walk reached before: a cycle while inside it, a shared object after. */
+function rejectRepeat<T>(earlier: Visit, walk: Walk<T>): T {
+  const where = describePath(pointer(pathOf(earlier)));
+  if (earlier.inside) {
     return reject(
       walk,
       `the value contains itself: it is the same object as the value at ${where}`,
     );
   }
-  const depth = walk.ancestors.length;
+  return reject(
+    walk,
+    `the value is the same object as the value at ${where}: canonical values are trees`,
+  );
+}
+
+function walkObject<T>(value: object, walk: Walk<T>): T {
+  const earlier = walk.visits.get(value);
+  if (earlier !== undefined) return rejectRepeat(earlier, walk);
+  const depth = walk.path.length;
   if (depth >= MAX_DEPTH) {
     return reject(walk, `the value nests deeper than ${MAX_DEPTH} arrays and records`);
   }
-  const pathLength = walk.path.length;
-  walk.ancestors.push(value);
+  const parent = walk.current;
+  const visit: Visit = { parent, segment: walk.path.at(-1), inside: true };
+  walk.visits.set(value, visit);
+  walk.current = visit;
   try {
     return Array.isArray(value) ? walkArray(value, walk) : walkRecord(value, walk);
   } catch (error) {
-    // A fail-fast sink stops the whole walk. Anything else came from reading this object (a
-    // revoked Proxy, or a trap that threw or broke an invariant): its children catch their own.
-    if (EngineError.isEngineError(error)) throw error;
-    walk.path.length = pathLength;
+    // Only the sink's own throw stops the whole walk. Anything else came from reading this object
+    // (a revoked Proxy, or a trap that threw, even an EngineError, or broke an invariant): its
+    // children catch their own, and the issues already reported for them stay before this one.
+    if (walk.halt !== undefined && walk.halt.error === error) throw error;
+    walk.path.length = depth;
     return reject(walk, `the object threw while being read: ${describeThrown(error)}`, error);
   } finally {
-    walk.ancestors.length = depth;
+    visit.inside = false;
+    walk.current = parent;
   }
 }
 
@@ -264,12 +311,16 @@ function walkRecord<T>(record: object, walk: Walk<T>): T {
 /**
  * Walks `value` once, depth first in canonical key order, and reports every issue it reaches to
  * `sink`. A value rejected as a whole (an object that is not a plain array or record, a sparse
- * array, an accessor, a cycle, nesting beyond MAX_DEPTH, or an object that throws while read) is
- * one issue, and its contents are not walked. Each property is read once, through its own
- * descriptor. The result is meaningful only when nothing was reported.
+ * array, an accessor, a cycle, an object reached a second time, or nesting beyond MAX_DEPTH) is
+ * one issue, and its contents are not walked. An object that throws while read is one issue at
+ * its path, after the issues already reported for the contents read before the throw; the rest of
+ * its contents is not walked. Each property is read once, through its own descriptor. The result
+ * is meaningful only when nothing was reported. A sink may throw to stop the walk: that value, and
+ * only that value, propagates.
  */
 export function walkCanonical<T>(value: unknown, builder: Builder<T>, sink: IssueSink): T {
-  return walkValue(value, { builder, sink, path: [], ancestors: [] });
+  const visits = new Map<object, Visit>();
+  return walkValue(value, { builder, sink, path: [], visits, current: undefined, halt: undefined });
 }
 
 const VALIDATOR: Builder<undefined> = {
