@@ -29,19 +29,16 @@ We will deliver every batch through branches and pull requests into `main`.
 
 - An architectural change adds or supersedes an ADR in the same pull request
   ([0001](0001-record-architecture-decisions.md)).
-- Plan O-29 recommends that the maintainer enable "require pull request" on `main` in GitHub; it
-  could not be verified from the Codespace.
+- Plan O-29 recommends that the maintainer enable "require pull request" on `main` in GitHub; since
+  2026-10-24 a ruleset enforces it ([0016](0016-github-repository-baseline.md)).
 
 ## Consequences
 
 - Each PR is reviewable on its own, and large text-only deliveries do not hide tooling changes
   (the reason T1 was split into several PRs, plan §P).
-- Branch protection is a maintainer action outside the repository; until it is enabled, the rule
-  relies on discipline and review.
 - `main` keeps every work-unit commit, plus one merge commit per PR.
-- The repository still allows squash and rebase merging (GitHub API, checked 2026-10-24), so the
-  merge-commit rule is policy only until the maintainer disables those merge modes in the
-  repository settings.
+- GitHub enforces these rules on `main` (pull request required, merge commits only, CI required);
+  see [0016](0016-github-repository-baseline.md).
 
 ## Alternatives considered
 

@@ -207,7 +207,10 @@ See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choi
   descriptive. Commit messages carry no AI attribution trailers (such as `Co-Authored-By`).
 - Pull requests are merged with a merge commit (no squash, no rebase-merge), parent first in stacked
   PRs, using GitHub's default merge message (never the PR body); see
-  [ADR 0012](docs/decisions/0012-branching-commits-and-pull-requests.md).
+  [ADR 0012](docs/decisions/0012-branching-commits-and-pull-requests.md). A ruleset on `main`
+  enforces the pull request, the merge method, and a green CI check
+  ([ADR 0016](docs/decisions/0016-github-repository-baseline.md)). Merged branches are deleted and
+  GitHub retargets the child of a stacked PR; close and reopen it if its CI does not run.
 - Push and open pull requests with a user-authenticated token. In T1, pushes and pull requests made
   with a Codespace's built-in credentials did not start GitHub Actions workflows.
 - Tests and docs ship with the behavior they cover.
