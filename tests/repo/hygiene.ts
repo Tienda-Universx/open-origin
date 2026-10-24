@@ -1,9 +1,12 @@
 /**
- * Invisible and bidirectional control characters can hide code from reviewers
+ * Invisible, format and bidirectional control characters can hide code from reviewers
  * ("Trojan Source", CVE-2021-42574) or silently change behavior (a literal BOM in a regex).
- * Text files must write them as escapes instead.
+ * Text files must write them as escapes instead. Covered: soft hyphen, Arabic letter mark,
+ * Mongolian vowel separator, zero-width characters and marks, line and paragraph separators,
+ * bidi embeddings, overrides and isolates, invisible operators, BOM, interlinear annotations.
  */
-const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/u;
+const INVISIBLE =
+  /[\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB]/u;
 
 export type InvisibleChar = { line: number; codePoint: string };
 
@@ -22,7 +25,12 @@ export function findInvisibleChars(text: string): InvisibleChar[] {
 
 const UTF8_KEEPING_BOM = new TextDecoder("utf-8", { ignoreBOM: true });
 
-/** Reads a file as UTF-8 and keeps a leading BOM, which Bun.file().text() silently drops. */
-export async function readTextKeepingBom(path: string): Promise<string> {
-  return UTF8_KEEPING_BOM.decode(await Bun.file(path).bytes());
+/** Decodes UTF-8 and keeps a leading BOM, which Bun.file().text() silently drops. */
+export function decodeKeepingBom(bytes: Uint8Array): string {
+  return UTF8_KEEPING_BOM.decode(bytes);
+}
+
+/** Git's heuristic: content with a NUL byte in its first 8000 bytes is binary. */
+export function isProbablyText(bytes: Uint8Array): boolean {
+  return !bytes.subarray(0, 8000).includes(0);
 }
