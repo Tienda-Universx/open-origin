@@ -74,7 +74,13 @@ export interface ReadView<G extends CanonicalValue, C extends CanonicalValue> {
   readGlobal(): DeepReadonly<G>;
 }
 
-/** Draws for one stream that the system or handler declared (ADR 0020, randomness). */
+/**
+ * Draws for one stream that the system or handler declared (ADR 0020, randomness). Each draws from
+ * the sequence of (stream, id) for the tick, keyed by tickKey(tick, id), whose counter continues
+ * across calls and restarts every tick. `u32` and `int` keyed by an entity and `permutation` keyed
+ * by a resource with the same id share one sequence within a stream: an owner that draws for both
+ * purposes should declare a stream for each, so that neither shifts the other's draws.
+ */
 export interface TickRandom {
   u32(stream: string, entity: EntityId): number;
   /** An integer in [0, bound), for an integer `bound` in [1, 2^32]. */

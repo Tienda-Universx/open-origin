@@ -82,21 +82,45 @@ describe("tick randomness", () => {
     ]);
   });
 
-  test("an entity and a resource with the same id share one sequence in a stream", () => {
-    let seen: number[] = [];
+  test("u32 and int for an entity share one sequence with permutation for the same id", () => {
+    let seen: unknown[] = [];
     const ruleset = stepRuleset([
       system(
         "mixed",
         (ctx) => {
-          ctx.random.u32("mixed", 7);
-          seen = ctx.random.permutation("mixed", 7, 4);
+          seen = [
+            ctx.random.u32("mixed", 7),
+            ctx.random.int("mixed", 7, 10),
+            ctx.random.permutation("mixed", 7, 4),
+          ];
         },
         ["mixed"],
       ),
     ]);
     step(stepWorld(ruleset), []);
     const sequence = new DrawSequence(SEED, streamId("mixed"), tickKey(1, 7));
-    sequence.u32();
-    expect(seen).toEqual(sequence.permutation(4));
+    expect(seen).toEqual([sequence.u32(), sequence.int(10), sequence.permutation(4)]);
+  });
+
+  test("separate streams keep an entity's draws and a resource's permutation independent", () => {
+    /** The permutation for resource 7 after `draws` draws for entity 7 in another stream. */
+    const permutationAfter = (draws: number) => {
+      let seen: number[] = [];
+      const ruleset = stepRuleset([
+        system(
+          "split",
+          (ctx) => {
+            for (let n = 0; n < draws; n += 1) ctx.random.u32("entities", 7);
+            seen = ctx.random.permutation("resources", 7, 6);
+          },
+          ["entities", "resources"],
+        ),
+      ]);
+      step(stepWorld(ruleset), []);
+      return seen;
+    };
+    const control = new DrawSequence(SEED, streamId("resources"), tickKey(1, 7)).permutation(6);
+    expect(permutationAfter(0)).toEqual(control);
+    expect(permutationAfter(9)).toEqual(control);
   });
 });

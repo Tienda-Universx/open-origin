@@ -193,10 +193,11 @@ What the generator does not do:
   holds the seed is C3 (ADR 0020). It is not a cryptographic generator.
 - **Pass a statistical battery.** The checks above are smoke tests on fixed samples; no PractRand
   or TestU01 battery has been run.
-- **Keep counters across calls yet.** The per-tick counter for each stream and entity arrives with
-  the step context, and so does the fault for a draw from a stream its caller did not declare.
-  The ruleset check that rejects colliding stream ids, streams shared by two owners, and the
-  reserved `engine.` prefix is part of [the world](#world).
+- **Keep counters across calls by itself.** A `DrawSequence` keeps its own counter; the tick
+  context keeps one sequence per stream and id for each tick (see [the tick
+  context](#the-tick-context)), and faults a draw from a stream its caller did not declare. The
+  ruleset check that rejects colliding stream ids, streams shared by two owners, and the reserved
+  `engine.` prefix is part of [the world](#world).
 
 ## Time
 
@@ -418,7 +419,7 @@ method is a fault at the system or command that made it.
 | `writeChunk(key)`, `writeGlobal()` | The live value, marked as changed, so that the commit hashes it |
 | `createChunk(key, initial)` | Validates the key and copies `initial`. The chunk can be read and written at once, and `chunkKeys` lists it from the next tick on. A key that exists is a fault |
 | `newEntityId()` | The next id from `nextEntityId`. When `nextEntityId` is `Number.MAX_SAFE_INTEGER` it throws `id_exhausted`, so `nextEntityId` stays a safe integer |
-| `random.u32`, `random.int`, `random.permutation` | A `DrawSequence` of a stream the running system or handler declared, keyed by `tickKey(tick, id)`, where `id` is the entity, or the resource of a permutation. The counter of each (stream, id) continues across calls and restarts every tick, so an entity and a resource with the same id share one sequence in a stream. Another stream is a fault |
+| `random.u32`, `random.int`, `random.permutation` | A `DrawSequence` of a stream the running system or handler declared, keyed by `tickKey(tick, id)`, where `id` is the entity, or the resource of a permutation. The counter of each (stream, id) continues across calls and restarts every tick. So `u32` and `int` keyed by an entity and `permutation` keyed by a resource with the same id share one sequence within a stream, each shifting the other's draws: an owner that draws for both purposes should declare a stream for each. A stream the owner did not declare is a fault |
 | `rejectedCommands()` | A fresh array of this tick's rejections |
 | `emit(type, payload)` | `type` is a non-empty canonical string not prefixed `engine.`, and `payload` is copied. Events are numbered from 0 in each tick, in emission order, with the cause `{ kind: "command", seq }` or `{ kind: "system", name }` |
 
@@ -494,6 +495,34 @@ for tests, and is not counted, so a step returns the same result with or without
 - randomness: counters per (stream, id) that continue within a tick and restart the next, and
   independence from other entities and streams;
 - cost: the exact `hashedBytes`, a world of 10,000 chunks with one changed, and a lazy index.
+
+### Golden, fuzz, and isolation
+
+These tests run a whole ruleset, `tally` (`packages/engine/test/fixtures/tally-ruleset.ts`). It
+has four systems, three with streams of their own; commands that `check` rejects; a chunk created
+every 7 ticks with an id from `newEntityId`; a permutation for a contended market; events from
+systems and handlers; text with non-ASCII and astral characters, written as escapes; record keys
+that look like integers, inserted out of canonical order; and integers near 2^53 in magnitude. It
+keeps no module state.
+
+| Test | What it proves |
+|---|---|
+| Golden (`golden-tally`) | A fixed seed and a scripted command list give, over 1,000 ticks, the checksums pinned at ticks 1, 10, 100, and 1000 and the pinned final state root, under the pinned `ENGINE_VERSION` and tally versions. The run is checked to reach every event and rejection reason it claims. The values pin behavior and do not prove it correct; a change that alters them must bump a version and record the new values (`fixtures/golden-tally.ts`) |
+| Fuzz (`step-fuzz`) | 200 seeds of 200 ticks, with random valid commands from `sfc32` and, on about one tick in eight, a list broken in one of seven ways, which must be rejected whole. Each seed runs twice: the first run with audit, so the incremental root equals the full one after every tick, and the second without, which must give the same checksums, events, rejections, and statistics |
+| Isolation (`world-isolation`) | Three worlds (two of them replicas) stepped in turn, in a random interleaving, and sharing one ruleset object, give exactly what each gives alone |
+
+The fuzz runs 64 seeds, about 7.5 seconds on the 2-core Codespace: a tally tick costs about 110 µs,
+and about 300 µs with audit, which recomputes every chunk. The plan's estimate of 200 seeds took
+about 22 seconds, and every check runs the whole suite. Its explicit timeout is 30 seconds, and the
+comment at the top of `step-fuzz.test.ts` says how to run a larger sweep once, by hand.
+
+Measured observation (indicative: CPU profiles of tally runs, Bun 1.4.4 on the 2-core Codespace,
+2026-10-24): for small chunks, of about 140 bytes of canonical text, the fixed costs of each
+`walkCanonical` call (its `Map` of visited objects, path arrays, descriptor reads, and key lists)
+dominate, and a commit spends about 70% of its time walking values. A small changed chunk costs
+about 10 µs at the commit, far more than the per-byte figure of ADR 0020 (68 to 110 µs per 7 KB)
+predicts, so that figure underestimates the cost of small chunks. The benchmark of the next
+pull requests measures it properly.
 
 ### What arrives with snapshots
 

@@ -112,6 +112,39 @@ describe("IssueList", () => {
     expect(Object.hasOwn(error, "cause")).toBe(false);
   });
 
+  test("toError detaches its error: later reports change it not, and a later call sees them", () => {
+    const list = new IssueList();
+    list.report("/a", "first");
+    const first = list.toError("invalid_value");
+    list.report("/b", "second", new Error("late cause"));
+    expect(first.issues).toEqual([{ path: "/a", message: "first" }]);
+    expect(Object.hasOwn(first, "cause")).toBe(false);
+    const second = list.toError("invalid_value");
+    expect(second).not.toBe(first);
+    expect(second.issues).toEqual([
+      { path: "/a", message: "first" },
+      { path: "/b", message: "second" },
+    ]);
+  });
+
+  test("throwIfAny throws what toError returns, with the count and the first cause", () => {
+    const list = new IssueList();
+    const cause = new Error("cause");
+    list.report("/a", "with a cause", cause);
+    list.report("/b", "without");
+    let thrown: unknown;
+    try {
+      list.throwIfAny("invalid_input");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toEqual(list.toError("invalid_input"));
+    expect((thrown as EngineError).cause).toBe(cause);
+    expect((thrown as EngineError).message).toBe(
+      "invalid_input at /a: with a cause; 2 issues in all",
+    );
+  });
+
   test("throwIfAny does nothing while the list is empty", () => {
     expect(() => new IssueList().throwIfAny("invalid_value")).not.toThrow();
   });
