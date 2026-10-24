@@ -3,7 +3,7 @@
  * See docs/decisions/0000-adr-template.md for the canonical shape.
  */
 
-import { visibleLines } from "./markdown.ts";
+import { visibleText } from "./markdown.ts";
 
 export type AdrFile = { name: string; content: string };
 export type AdrIssue = { file: string; message: string };
@@ -71,7 +71,7 @@ function metadataValues(header: readonly string[], key: MetadataKey): string[] {
 type ParsedAdr = { file: AdrFile; lines: readonly string[]; header: readonly string[] };
 
 function parseAdr(file: AdrFile): ParsedAdr {
-  const lines = visibleLines(file.content.replace(/^\uFEFF/, "").split(/\r?\n/));
+  const lines = visibleText(file.content);
   return { file, lines, header: headerOf(lines) };
 }
 

@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkLinks, githubSlug, headingAnchors } from "./docs.ts";
-import { repoFiles } from "./files.ts";
-
-const ROOT = Bun.fileURLToPath(new URL("../../", import.meta.url));
+import { REPO_ROOT, repoFiles } from "./files.ts";
 
 /**
  * SHA-256 of the verbatim copies approved by the maintainer. They are records, not living
@@ -31,6 +29,11 @@ describe("githubSlug", () => {
 });
 
 describe("headingAnchors", () => {
+  test("reads the first heading of a file that starts with a byte order mark", () => {
+    const markdown = `${String.fromCodePoint(0xfeff)}# Title\r\n## Part two`;
+    expect([...headingAnchors(markdown)]).toEqual(["title", "part-two"]);
+  });
+
   test("numbers repeated headings and ignores headings inside code blocks", () => {
     const markdown = ["# Title", "## Notes", "```", "## Fake", "```", "## Notes"].join("\n");
     expect([...headingAnchors(markdown)]).toEqual(["title", "notes", "notes-1"]);
@@ -76,10 +79,10 @@ describe("checkLinks", () => {
 
 describe("repository documentation", () => {
   test("every relative link in tracked Markdown files resolves", async () => {
-    const files = repoFiles(ROOT);
+    const files = repoFiles(REPO_ROOT);
     const docs = new Map<string, string>();
     for (const path of files.filter((file) => file.endsWith(".md"))) {
-      const file = Bun.file(`${ROOT}${path}`);
+      const file = Bun.file(`${REPO_ROOT}${path}`);
       if (await file.exists()) docs.set(path, await file.text());
     }
     // Guard against a vacuous pass: the scan must see the documents that carry links.
@@ -91,7 +94,7 @@ describe("repository documentation", () => {
   test.each(Object.entries(VERBATIM))(
     "%s is byte-identical to the approved copy",
     async (path, sha256) => {
-      const bytes = await Bun.file(`${ROOT}${path}`).bytes();
+      const bytes = await Bun.file(`${REPO_ROOT}${path}`).bytes();
       expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex")).toBe(sha256);
     },
   );

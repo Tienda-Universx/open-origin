@@ -60,3 +60,8 @@ export function visibleLines(lines: readonly string[]): string[] {
     return stripped.visible;
   });
 }
+
+/** The visible lines of a Markdown document: no BOM, CRLF or LF line breaks, see visibleLines. */
+export function visibleText(markdown: string): string[] {
+  return visibleLines(markdown.replace(/^\uFEFF/, "").split(/\r?\n/));
+}

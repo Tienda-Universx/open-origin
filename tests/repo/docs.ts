@@ -2,7 +2,7 @@
  * Checks for the Markdown documentation: relative links must point to existing files and anchors.
  */
 
-import { visibleLines } from "./markdown.ts";
+import { visibleText } from "./markdown.ts";
 
 export type LinkIssue = { file: string; target: string; reason: "missing file" | "missing anchor" };
 
@@ -24,7 +24,7 @@ export function githubSlug(heading: string): string {
 export function headingAnchors(markdown: string): Set<string> {
   const anchors = new Set<string>();
   const seen = new Map<string, number>();
-  for (const line of visibleLines(markdown.split(/\r?\n/))) {
+  for (const line of visibleText(markdown)) {
     const text = HEADING.exec(line)?.[1];
     if (text === undefined) continue;
     const slug = githubSlug(text);
@@ -37,7 +37,7 @@ export function headingAnchors(markdown: string): Set<string> {
 
 /** Relative link targets of a Markdown document, ignoring code blocks, code spans and URLs. */
 function relativeTargets(markdown: string): string[] {
-  return visibleLines(markdown.split(/\r?\n/)).flatMap((line) =>
+  return visibleText(markdown).flatMap((line) =>
     [...line.replace(INLINE_CODE, "").matchAll(LINK)]
       .map(([, target = ""]) => target)
       .filter((target) => !SCHEME.test(target)),
