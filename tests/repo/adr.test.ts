@@ -292,6 +292,15 @@ describe("validateAdr, required alternatives and header boundary", () => {
   });
 });
 
+describe("validateAdr, metadata written once", () => {
+  test.each(["Status", "Date"])("rejects a header with two %s lines", (key) => {
+    const file = adr();
+    const line = key === "Status" ? "- Status: Accepted" : "- Date: 2026-10-24";
+    const content = file.content.replace(line, `${line}\n${line}`);
+    expect(messages({ ...file, content })).toContain(`metadata '${key}' must appear once`);
+  });
+});
+
 describe("validateAdrSet", () => {
   test("accepts contiguous numbering starting at 0000", () => {
     const files = [
@@ -330,6 +339,29 @@ describe("validateAdrSet", () => {
     expect(validateAdrSet(files).map((issue) => issue.message)).toContain(
       "status names ADR 0009, which does not exist",
     );
+  });
+
+  test.each([
+    ["itself", "0001"],
+    ["the template", "0000"],
+  ])("rejects an ADR superseded by %s", (_name, target) => {
+    const files = [
+      adr({ name: "0000-adr-template.md", title: "# 0000. ADR template" }),
+      adr({ name: "0001-first.md", title: "# 0001. First", status: `Superseded by ${target}` }),
+    ];
+    expect(validateAdrSet(files).map((issue) => issue.message)).toContain(
+      `an ADR cannot be superseded by itself or by the template (${target})`,
+    );
+  });
+
+  test("reports a run of missing numbers as one range", () => {
+    const files = [
+      adr({ name: "0000-adr-template.md", title: "# 0000. ADR template" }),
+      adr({ name: "0005-fifth.md", title: "# 0005. Fifth" }),
+    ];
+    expect(validateAdrSet(files).map((issue) => issue.message)).toEqual([
+      "numbering must be contiguous from 0000; missing 0001 to 0004",
+    ]);
   });
 
   test("accepts a superseded status that names an existing ADR", () => {
