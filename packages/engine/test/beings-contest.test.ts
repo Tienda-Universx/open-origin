@@ -207,7 +207,7 @@ function fastLife(deathEnabled: boolean): beings.LifeConfig {
 const COLLAPSE = 1 + Math.ceil(200 / 12);
 
 describe("incapacity and death", () => {
-  test("incapacitate at health 0, refuse walks, allow meals, and recover at the exact tick", () => {
+  test("incapacitate at health 0, fail walks, allow meals, and recover at the exact tick", () => {
     const patient = brain((senses) => {
       if (senses.self.condition === "ok") return idleFor(12_000);
       if (senses.self.outcome.result === "none") {
@@ -224,8 +224,17 @@ describe("incapacity and death", () => {
     });
     const world = beingsWorld({ controllers: { [SPECIES.id]: patient }, life: fastLife(false) });
     const needs = { nutrition: 0, rest: 900_000 };
-    const events = runTo(world, 60, [spawn(1, { species: SPECIES.id, cell: SHORT_CELL, needs })]);
-    // Refused at the collapse, the walk idles the being 60 s; then it eats, and one bite of
+    const events = runTo(world, COLLAPSE, [
+      spawn(1, { species: SPECIES.id, cell: SHORT_CELL, needs }),
+    ]);
+    // The walk fails its precondition at the collapse: no refusal of the intention.
+    expect(beingOf(world, 1).outcome).toEqual({
+      result: "failed",
+      tick: COLLAPSE,
+      reason: "incapacitated",
+    });
+    events.push(...runTo(world, 60));
+    // The failed walk idles the being 60 s; then it eats, and one bite of
     // 500,000 lifts nutrition above recoverAbove, so health rises from 0 at 5,000 per second and
     // passes recoverAbove after ⌈300,001 / 5000⌉ = 61 s.
     const meal = COLLAPSE + beings.REFUSED_IDLE_MS / 12_000;
@@ -247,7 +256,6 @@ describe("incapacity and death", () => {
         .map(({ tick, type, payload }) => [tick, type, payload]),
     ).toEqual([
       [COLLAPSE, "being.incapacitated", { id: 1 }],
-      [COLLAPSE, "being.intention_rejected", { id: 1, reason: "incapacitated" }],
       [meal, "being.started", { id: 1, activity: "eat" }],
       [bite, "being.ate", { id: 1, units: SPECIES.diet.biteUnits }],
       [recovery, "being.recovered", { id: 1 }],

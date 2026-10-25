@@ -410,10 +410,10 @@ arrived at exhaustion reported as interrupted.
   on each of 8 seeds, which draw different orders;
 - across 120 world seeds, the rival left short is each id about as often: the chi-square statistic
   of the three counts stays below 13.82, its 0.999 quantile with 2 degrees of freedom;
-- with faster laws, a starving being incapacitated at the exact tick its health reaches 0, its walk
-  refused or interrupted where it stands, a meal allowed, and its recovery at the exact tick its
-  health passes `recoverAbove`; with death enabled, the being dies, leaves its chunk, and the chunk
-  leaves the occupancy index at the next day;
+- with faster laws, a starving being incapacitated at the exact tick its health reaches 0, a walk
+  it proposes failing its precondition and one in progress interrupted where it stands, a meal
+  allowed, and its recovery at the exact tick its health passes `recoverAbove`; with death enabled,
+  the being dies, leaves its chunk, and the chunk leaves the occupancy index at the next day;
 - three seeded runs of 250 ticks with random spawns, valid and not, and a random brain whose choices
   come from its draws, valid and not, on a patch of food: after every tick, ids are unique, each
   being is in the chunk of its cell, chunks with beings ⊆ occupancy ⊆ materialized chunks, `due` is
