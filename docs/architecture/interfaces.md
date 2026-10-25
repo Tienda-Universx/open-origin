@@ -31,6 +31,10 @@ packages/ui ── shared by apps/web and apps/admin (presentational)
 - **Public plane.** Server → client: `hello` (protocol version and audience), `snapshot` on chunk
   subscription, `delta` per tick or every N ticks, `events`. Client → server: `subscribe(chunks)`,
   `follow(beingId)`, `ping`. Clients are read-only in v0.1 (§I.3, §E.4).
+- **One shared universe.** No client message controls time, and a test of the allowlist rejects
+  any that would. Public events reach every client, while region detail follows chunk
+  subscriptions. The plane publishes only durable ticks
+  ([0022](../decisions/0022-single-shared-public-universe.md)).
 - **Admin plane.** Own listener, own routes, own DTOs: `protocol` has `public` and `admin`
   audiences.
 - **DTO entry points.** `packages/protocol` exposes a public and an admin entry point; which app
