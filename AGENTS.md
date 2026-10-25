@@ -27,6 +27,7 @@ Bun are allowed when they add value.
 | Apply formatting and safe fixes | `bun run format` |
 | Tests | `bun test` |
 | Engine benchmark (manual, not part of `check`) | `bun packages/engine/bench/step.ts` |
+| Worldgen benchmark (manual, not part of `check`) | `bun packages/engine/bench/worldgen.ts` |
 
 CLIs whose launcher targets Node (for example `tsc`, `biome`) run with `bunx --no-install --bun`:
 `--bun` keeps them on Bun, and `--no-install` stops bunx from downloading a registry package when
