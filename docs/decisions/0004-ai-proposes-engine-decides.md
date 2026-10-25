@@ -35,8 +35,8 @@ decisions ([tracker](../roadmap/v0.1-tracker.md) L11, L12) and are revisited wit
 the batch that implements each one (plan §M).
 
 Refined by [0021](0021-procedural-world.md): R counts simulated days, and a day's length is now a
-law of each world. With the default day of 75,600 s and the default tick settings, R is about 68.6,
-and every budget per simulated day scales with it.
+law of each world. With the default tick settings, R = 5,184,000 / L for a day of L simulated
+seconds, and every budget per simulated day scales with it.
 
 AI modes (plan §J.4), implemented by an in-house gateway over `fetch` (O-20):
 

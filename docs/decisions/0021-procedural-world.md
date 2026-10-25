@@ -192,8 +192,8 @@ This ADR refines five earlier ones:
 - [0003](0003-authoritative-deterministic-engine.md) and
   [0004](0004-ai-proposes-engine-decides.md): R stays simulated days per real day. The default
   tick settings give 60 simulated seconds per real second, so for a day of L simulated seconds,
-  R = 5,184,000 / L. That is about 68.6 for the default day of 75,600 s, and every budget per
-  simulated day scales with it.
+  R = 5,184,000 / L, and every budget per simulated day scales with it. The default L is frozen
+  with the golden values.
 - [0006](0006-provenance-and-inheritable-contamination-taints.md): control 4 is confirmed.
 - [0008](0008-data-classification-and-audience-projections.md): the world seed predicts all of the
   kernel's randomness, but not terrain, which comes from the terrain seed. Both seeds are C3, and so

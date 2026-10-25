@@ -66,7 +66,7 @@ implements each one (plan §M).
 
 Refined by [0021](0021-procedural-world.md): these defaults give 60 simulated seconds per real
 second, and R stays simulated days per real day, so a world whose day lasts L simulated seconds
-has R = 5,184,000 / L, about 68.6 for the default day of 75,600 s.
+has R = 5,184,000 / L. The default L is frozen with worldgen's golden values in T3.
 
 ## Consequences
 
