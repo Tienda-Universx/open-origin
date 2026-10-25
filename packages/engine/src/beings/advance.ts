@@ -183,8 +183,9 @@ function progress(env: BeingsEnv, work: Work): boolean {
 
 /** Starts `step` at this tick, if its preconditions hold; otherwise the being stays free. */
 function start(env: BeingsEnv, work: Work, step: PlanStep, arrivals: readonly number[]): boolean {
+  // Preconditions are checked when a step starts: failing one is no refusal of the intention.
   if (step.kind === "walk" && work.condition === "incapacitated")
-    return refuse(env, work, "incapacitated");
+    return fail(env, work, "incapacitated");
   if (step.kind === "eat" && env.foodAt(work.cell, work.species) <= 0)
     return fail(env, work, "no_food");
   if (step.kind === "walk")
@@ -313,16 +314,24 @@ export function advance(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Bein
   if (work.activity.kind === "walk") walk(env, work, work.activity);
   const before = work.activity.kind;
   physiology(env, work);
-  if (work.died) return work;
-  const forced = work.activity.kind === "sleep" && before !== "sleep";
-  const ended = !forced && progress(env, work);
+  // A forced sleep that began now leaves nothing else to do at this tick.
+  if (!work.died && (work.activity.kind !== "sleep" || before === "sleep")) carryOn(env, work);
+  return work;
+}
+
+/**
+ * Advances the activity, then asks the brain when the activity ended with nothing planned or when
+ * a wake condition holds, even at the tick the activity ends; the brain's intention replaces the
+ * plan. A condition that interrupts a meal drops the bite due at this tick.
+ */
+function carryOn(env: BeingsEnv, work: Work): void {
+  const ended = progress(env, work);
   if (ended && work.activity.kind !== "idle") finish(env, work, "done");
-  if (ended) next(env, work);
-  else if (!forced && wakeConditionHolds(env, work)) {
-    // The brain decides anew, which replaces the plan; a meal takes no bite at this tick.
+  const woken = wakeConditionHolds(env, work);
+  if (woken && !ended) {
     work.claim = undefined;
     finish(env, work, "interrupted", "wake_condition");
-    decide(env, work);
   }
-  return work;
+  if (woken) decide(env, work);
+  else if (ended) next(env, work);
 }

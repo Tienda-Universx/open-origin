@@ -575,6 +575,33 @@ describe("the edges of the tick", () => {
     ]);
   });
 
+  test("ask the brain when a wake condition holds at the tick the activity ends", () => {
+    let decisions = 0;
+    const planner = brain((senses) => {
+      decisions += 1;
+      if (senses.self.behavior.kind === "wait") return idleFor(6_000_000);
+      const steps = [
+        { kind: "idle", ms: 144_000 },
+        { kind: "sleep", untilRest: 1_000_000 },
+      ] as const;
+      return { steps, wakeWhen: { nutritionBelow: 899_000 }, behavior: behavior("wait") };
+    });
+    const world = beingsWorld({ controllers: { [SPECIES.id]: planner } });
+    const needs = { nutrition: 900_000, rest: 500_000 };
+    // The idle of 144 s ends at tick 2 + 12 = 14, the tick nutrition falls past 899,000.
+    const events = runTo(world, 20, [spawn(1, { species: SPECIES.id, cell: [5, 5], needs })]);
+    expect(
+      events.filter(({ tick }) => tick === 14).map(({ type, payload }) => [type, payload]),
+    ).toEqual([["being.started", { id: 1, activity: "idle" }]]);
+    expect(decisions).toBe(2);
+    const being = beingOf(world, 1);
+    expect([being.activity, being.plan, being.wakeWhen]).toEqual([
+      { kind: "idle", start: 14, ms: 6_000_000 },
+      [],
+      {},
+    ]);
+  });
+
   test("end a sleep whose target is already met at the next tick", () => {
     const sleeper = brain((senses) =>
       senses.self.outcome.result === "none"
@@ -612,6 +639,17 @@ describe("the edges of the tick", () => {
     let rest = 300;
     while (!arrivals.slice(0, -1).includes(exhaustion(rest))) rest += 1;
     const tick = exhaustion(rest);
+    // A walk whose last step arrives at the tick of exhaustion is done, not interrupted.
+    let lastRest = rest;
+    while (exhaustion(lastRest) !== arrivals.at(-1)) lastRest += 1;
+    const whole = beingsWorld({ controllers: { [SPECIES.id]: walker(dirs) } });
+    const needs = { nutrition: 900_000, rest: lastRest };
+    const ended = runTo(whole, exhaustion(lastRest), [
+      spawn(1, { species: SPECIES.id, cell: start, needs }),
+    ]);
+    expect(
+      ended.filter((event) => event.type === "being.finished").map(({ payload }) => payload),
+    ).toEqual([{ id: 1, activity: "walk", result: "done", reason: "" }]);
     const world = beingsWorld({ controllers: { [SPECIES.id]: walker(dirs) } });
     const events = runTo(world, tick, [
       spawn(1, { species: SPECIES.id, cell: start, needs: { nutrition: 900_000, rest } }),

@@ -245,9 +245,11 @@ keeps its own window: a brain that writes to its senses changes nothing the engi
 engine copies the intention canonically, reading each member once and refusing accessors, then
 validates its shape and bounds, and every step of a walk against its window of the same tick. A
 walk is the first step or none, so its arrivals are computed from that window; the preconditions of
-the other steps (food to eat, a condition that allows walking) are checked when they start. An
-invalid intention is rejected with one of the reasons `malformed`, `walk_not_first`, and
-`walk_blocked`: the being idles briefly and `outcome` records the reason. A brain that throws
+the steps, food to eat and a condition that allows walking, are checked when they start. A step
+whose precondition fails is no refusal: the being idles briefly, and `outcome` records `failed`
+with the reason `no_food` or `incapacitated`. An invalid intention is rejected with one of the
+reasons `malformed`, `walk_not_first`, and `walk_blocked`: the being idles briefly, `outcome`
+records the reason, and the engine emits `being.intention_rejected`. A brain that throws
 poisons the world. The ruleset captures its brains as it captures its lists, and its
 brain version composes each species with its brain, in species order.
 
@@ -315,9 +317,9 @@ One system, `beings`, runs three phases:
      activity, `interrupted` with the reason `exhausted` (a walk whose last step arrived is
      `done`), takes no bite at that tick, drops the plan and the wake conditions, and starts a
      forced sleep; a collapse ends a walk the same way, with the reason `incapacitated`.
-   - A wake condition that holds ends the current activity, `interrupted` with the reason
-     `wake_condition`, without the bite due at that tick, and asks the brain, whose intention
-     replaces the plan.
+   - A wake condition that holds asks the brain, whose intention replaces the plan, also at the
+     tick the activity ends; an activity it interrupts ends `interrupted` with the reason
+     `wake_condition`, without the bite due at that tick.
    - A sleep whose target rest already holds ends at the next tick.
 3. **Resolve and apply.** Claimed cells in order of chunk key (UTF-16 code units, the kernel's
    order) and cell index. When the food covers every claim, each claimant takes its bite. Otherwise
@@ -368,29 +370,33 @@ threshold, taken food ignored when a meal checks its cell, no exhaustion, and re
 cell is eaten again.
 
 An independent verifier then found six defects that these tests missed, and 14 deliberate defects
-they let pass. Two of those belong to the contests of the next section, and one, a floored middle
-of the light period in `nextLightTick`, was not reproduced here: in 38,599 days with an odd light
-period, the light at the two middle seconds is the same. The tests added for the rest check that:
+they let pass, two of which belong to the contests of the next section. The tests added for the
+rest check that:
 
 - a brain that writes over its senses cannot forge a walk, because the engine judges by its own
   window;
-- a wake condition that holds with planned steps left asks the brain; a meal it interrupts at a
-  bite takes no bite there; a refused intention clears its conditions; and a condition the body
-  already meets exactly is dropped;
-- a sleep whose target holds ends at the next tick; steps due at the tick of exhaustion arrive, and
-  the forced sleep finishes the walk and starts with its own events;
+- a wake condition that holds with planned steps left asks the brain, also when it starts to hold
+  at the tick the activity ends; a meal it interrupts at a bite takes no bite there; a refused
+  intention clears its conditions; and a condition the body already meets exactly is dropped;
+- a sleep whose target holds ends at the next tick; steps due at the tick of exhaustion arrive; the
+  forced sleep finishes the walk, `done` when its last step arrived then, and starts with its own
+  events;
+- `nextLightTick` finds a crossing at the light's middle second, on two days whose light period is
+  odd and whose light is 999 at second ⌊light/2⌋ and 1000 at ⌈light/2⌉;
 - a being recovers at the tick its health passes `recoverAbove`, processed every tick or every 500;
 - rest re-anchors at the tick it passes `recoverAbove`, not at the tick it reaches it; a cell's
   entry is dropped once it regrew, when its chunk is written; a being is processed at least once a
   simulated day; and a spawn may stand exactly as deep as the species wades.
 
-Each of 18 more deliberate defects makes them fail: no daily processing, regrown entries kept, a
+Each of 21 more deliberate defects makes them fail: a floored middle of the light period, no
+daily processing, regrown entries kept, a
 condition met exactly kept, no level just above `recoverAbove`, a spawn refused at its wading
 depth, recovery at `recoverAbove` itself, the bite kept at an interruption, the conditions kept by
 a forced sleep and by a refusal, no level at rest 0, regrowth shifted by a tick, the brain's window
 judged, steps due at exhaustion dropped, no event for the interrupted activity or the forced sleep,
-a sleep that waits out a target it met, no wake at recovery, and the next planned step run instead
-of asking the brain.
+a sleep that waits out a target it met, no wake at recovery, the next planned step run instead of
+asking the brain, a condition ignored at the tick the activity ends, and a walk whose last step
+arrived at exhaustion reported as interrupted.
 
 ## Preregistration
 

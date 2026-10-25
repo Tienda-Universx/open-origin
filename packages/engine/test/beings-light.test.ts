@@ -63,6 +63,27 @@ describe("nextLightTick", () => {
     expect(found).toBeGreaterThan(60);
   });
 
+  test.each([
+    [
+      "below 999, on a day whose light period of 65,923 s is odd",
+      { daylight: 872, after: 166_781, watch: { threshold: 999, direction: "below" } },
+    ],
+    [
+      "above 1000, on a day whose light period of 41,655 s is odd",
+      { daylight: 551, after: 46_714, watch: { threshold: 1000, direction: "above" } },
+    ],
+  ] as const)(
+    "finds the crossing at the light's middle second, %s",
+    (_name, { daylight, after, watch }) => {
+      // At one second per tick the light is 999 at second ⌊light/2⌋ and 1000 at ⌈light/2⌉, the
+      // middle where the pieces of the bisection meet.
+      const clock = clockOf(75_600, daylight, 1);
+      const expected = scan(clock, after, watch, 2 * 75_600);
+      expect(expected).toBeDefined();
+      expect(nextLightTick(clock, after, watch)).toBe(expected);
+    },
+  );
+
   test("never wakes at once on a condition that already holds", () => {
     const clock = clockOf(75_600, 550, 12);
     // At night the radiance sits at its floor: "below 100" holds now and next comes the next dusk.
