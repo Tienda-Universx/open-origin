@@ -247,20 +247,49 @@ function checkSpecies(value: unknown, path: string, sink: IssueSink): string | u
   return id;
 }
 
-/** Reports every problem of the species list: ordered by id, without repeats. */
+/**
+ * Reports a species that does not eat the food of the first: life@1 has one food deposit, whose
+ * regrowth every species shares, because a depletion entry records what was taken from a cell
+ * without saying which deposit it was taken from. A later version may give each deposit its own.
+ */
+function checkOneFood(species: readonly Species[], path: string, sink: IssueSink): void {
+  const [first] = species;
+  species.forEach((other, index) => {
+    if (index === 0 || first === undefined) return;
+    const sameDeposit = other.diet.deposit === first.diet.deposit;
+    const sameRegrowth =
+      other.regrowth.num === first.regrowth.num && other.regrowth.den === first.regrowth.den;
+    if (sameDeposit && sameRegrowth) return;
+    sink.report(
+      `${path}/${index}`,
+      `${LIFE_VERSION} has one food deposit: every species eats deposit ${first.diet.deposit} with the regrowth of the first`,
+    );
+  });
+}
+
+/** Reports every problem of the species list: ordered by id, without repeats, and one food. */
 function checkSpeciesList(value: unknown, path: string, sink: IssueSink): void {
-  const list = readList(value, path, LIFE_BOUNDS.species, sink);
+  let reported = 0;
+  const counted: IssueSink = {
+    report: (at, message, cause) => {
+      reported += 1;
+      sink.report(at, message, cause);
+    },
+  };
+  const list = readList(value, path, LIFE_BOUNDS.species, counted);
   let previous: string | undefined;
   list?.forEach((entry, index) => {
-    const id = checkSpecies(entry, `${path}/${index}`, sink);
+    const id = checkSpecies(entry, `${path}/${index}`, counted);
     if (id !== undefined && previous !== undefined && id <= previous) {
-      sink.report(
+      counted.report(
         `${path}/${index}/id`,
         `"${id}" must come after "${previous}": species are ordered by id, without repeats`,
       );
     }
     if (id !== undefined) previous = id;
   });
+  // Compared only when every species is valid, so that each has a diet and a regrowth.
+  if (list !== undefined && reported === 0) checkOneFood(list as readonly Species[], path, sink);
 }
 
 /**
