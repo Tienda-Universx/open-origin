@@ -10,9 +10,9 @@ test "≥10 días simulados sin colapso" and acceptance criterion §N.15. The ma
 beings that exist, move, satisfy needs, and survive by real mechanisms of the world, not by
 scripts, with `AI_MODE=off`, and for a base that T5 can extend with perception, memory, beliefs,
 and relationships ([tracker](../roadmap/v0.1-tracker.md) S18, L43). Earlier decisions leave T4
-three things: the activity index based on world data only
-([0020](0020-deterministic-core-design.md)), the schema of a materialized chunk, perception, and
-the cost of terrain reads ([0021](0021-procedural-world.md)).
+four things: the activity index based on world data only
+([0020](0020-deterministic-core-design.md)), and the schema of a materialized chunk, perception,
+and the cost of terrain reads ([0021](0021-procedural-world.md)).
 
 The forces:
 
@@ -57,15 +57,17 @@ process each being only at its decision points.
 | L1 Utility AI | `packages/agents` | which behavior is worth doing now | write state, see beyond its senses, remember outside the state |
 | L2 plan | `packages/agents` | up to three steps and their route, by Dijkstra or A* over the sensed grid | invent costs |
 
-- `src/beings` imports only an allowlist: `src/worldgen/index.ts`, `int`, `errors`,
-  `canonical/copy`, `digest/*`, `world/chunk`, `world/members`, `time/tick`, and `world/contracts`
-  for types. It never imports `rng/*`, `step/*`, `snapshot/*`, `world/world.ts`, `world/create.ts`,
-  or `src/index.ts`, so randomness enters only through `ctx.random` and the terrain seed is never
-  touched. Neither the kernel nor worldgen imports `src/beings`. A repository scan enforces this.
+- `src/beings` imports only an allowlist: `src/worldgen/index.ts`, `int`, `errors`, `time/tick`,
+  `world/chunk`, `world/members`, `world/contracts` for types only, and the modules under
+  `canonical/` and `digest/`. It never imports `rng/*`, `step/*`, `snapshot/*`, `world/world.ts`,
+  `world/create.ts`, or `src/index.ts`, so randomness enters only through `ctx.random` and the
+  terrain seed is never touched. Neither the kernel nor worldgen imports `src/beings`. The
+  repository scan `tests/repo/engine-purity.ts` enforces this from T4-2.
 - `packages/agents` imports only the public entry `@open-origin/engine`. It shares the engine's
   denied globals and GritQL plugins, has its own import rule, and has no module state.
-- The host composes `createBeingsRuleset({ controllers })`, one brain per species. In T4 the host
-  is the tests; in T6, the server.
+- The host composes `createBeingsRuleset({ controllers })`, one brain per species, which the
+  engine captures as it captures a ruleset's lists: copied, accessors refused. In T4 the host is the
+  tests; in T6, the server.
 
 **Beings live in the chunk of their cell.** A materialized chunk holds `{ beings, depletion, due }`:
 the beings whose cell lies in it, ordered by id; the cells whose food was eaten; and the earliest
@@ -81,32 +83,41 @@ tick the system reads `due` from each chunk in `occupancy`, without hashing anyt
 depends only on world data. This is the activity index ADR 0020 assigned to T4.
 
 **Decision points, not every tick.** Each being stores `wake`, the next tick at which something
-changes for it, and its chunk stores the minimum. Only beings with `wake ≤ tick` are processed.
-This refines plan §K.2, which runs L1 every tick while a being is free: a being reacts at the exact
-tick a known condition holds. The conditions are the end of a step, a bite, or an activity; the
-crossing of a need threshold; the wake conditions the brain asks for (need and light thresholds;
-radiance has a closed form in the instant); and a maximum reconsideration interval. Reaction
-latency is bounded and tested.
+changes for it, and its chunk stores the minimum. Only beings with `wake ≤ tick` are processed, each
+once per tick even when it crosses into another chunk. This refines plan §K.2 at its three layers:
+L0 runs in closed form instead of every tick; L1 runs at the exact tick a known condition holds
+instead of every tick while a being is free; and L2 uses one recipe per behavior instead of HTN or
+GOAP. The conditions are the end of a step, a bite, or an activity; the crossing of a need
+threshold; the wake conditions the brain asks for (need and light thresholds; radiance has a closed
+form in the instant); and a maximum reconsideration interval. Reaction latency is therefore
+bounded, and a test pins the bound (T4-6).
 
 **Time in exact simulated seconds.** Laws are rates per simulated second, as ratios `num/den` with
-`num·den ≤ 2^53`. Durations of steps and bites accumulate in integer simulated milliseconds, and
-the step i of a walk arrives at the tick `start + ⌈S_i / (simSecondsPerTick·1000)⌉`, where `S_i` is
-the exact cumulative duration; several steps may fall in one tick. Outcomes therefore do not
-depend on `simSecondsPerTick`, and the search optimizes the time actually walked.
+`num` from 0 to 2^20 and `den` from 1 to 2^32, so that `num·den` and `10^6·den` are safe integers;
+each quantity changes under one rate at a time. Durations of steps and bites accumulate in integer
+simulated milliseconds, and the step i of a walk arrives at the tick
+`start + ⌈S_i / (simSecondsPerTick·1000)⌉`, where `S_i` is the exact cumulative duration; several
+steps may fall in one tick. Laws and arrival instants therefore do not depend on
+`simSecondsPerTick`, and the search optimizes the time actually walked. What does depend on it is
+the integration step: the engine observes an arrival at the first tick at or after it, so an
+activity lasts a whole number of ticks and needs change over whole ticks. A smaller tick makes that
+rounding smaller; it never changes a law.
 
-**Needs in closed form.** A need stores its value and the tick of its anchor. Its value at tick t is
+**Needs in closed form.** A being stores its needs and health with one anchor tick. A need's value
+at tick t is
 `v0 ∓ ⌊num·E/den⌋` with `E = simSeconds(t) − simSeconds(anchor)`, computed as
 `num·⌊E/den⌋ + ⌊num·(E mod den)/den⌋` and saturated before it can exceed its range, so every
-intermediate value is a safe integer. A need is re-anchored only when its rate changes, never
-because a being was processed, so its value does not depend on how often the being was processed.
+intermediate value is a safe integer. When the rate of any of them changes, all of them are re-anchored
+together; never because a being was processed, so their values do not depend on how often the being
+was processed.
 The tick at which it crosses a threshold has an exact formula. Reading a need never writes.
 
 **Senses are bounded, and they are not T5's perception.** At each decision the engine builds a
-square window of (2R+1)² cells around the being (R is a species law, at most 32), with cells
-outside the world marked impassable and empty. It exposes what the observable catalog makes
+square window of (2R+1)² cells around the being (R is a species law, at most 32 and 24 by default),
+with cells outside the world marked impassable and empty. It exposes what the observable catalog makes
 visible at a distance:
 
-- the duration of the step along each of the 8 edges of each cell, from `elevation` and
+- `edgeMs`: the duration of the step along each of the 8 edges of each cell, from `elevation` and
   `liquid.depth` (surface observables), with −1 for an impassable edge or a diagonal that would cut
   a corner;
 - a banded cue of the effective food of the deposit the species eats: none, some, or plenty. The
@@ -119,12 +130,13 @@ provenance on top of these senses.
 
 **The brain is a pure function of its senses.** `Controller.decide(senses) → Intention`. Whatever it
 must remember between decisions (its current behavior, its exploration heading, its recent failed
-targets) is stored in the being as C1 data and returned in the senses. An intention has up to three
+targets) is stored in the being as C1 data and returned in the senses. An intention has one to three
 steps (`walk`, `eat`, `sleep`, `idle`), its wake conditions, and its behavior. The engine copies it
 canonically, reading each member once and refusing accessors as `members.ts` does, then validates
 it. An invalid intention is a rejection that becomes the being's experience (plan §K.5), never a
 fault; a brain that throws is a code error and poisons the world (ADR 0020). A future
-`llm-assisted` controller goes through the same validation (plan §K.1).
+`llm-assisted` controller cannot be a pure function: its proposals enter as commands recorded in the
+log ([0004](0004-ai-proposes-engine-decides.md)) and go through the same validation (plan §K.1).
 
 **Routes are validated once.** A walk has at most 64 steps. When the engine accepts it, it checks
 every step against the window of the same tick and computes its duration. Terrain is permanent and
@@ -155,9 +167,11 @@ version composes the species and their brains in order, for example `s1:utility@
 `ENGINE_VERSION` does not change: the kernel's outputs do not change. The engine adds the `beings`
 namespace and exports `floorDiv` and `floorMod`.
 
-**Classification.** A being's cell, species, stage, visible activity, and heading are C0; its needs,
-health, traits, plan, behavior, wake conditions, outcome, and cooldowns are C1; the laws of life, like
-the genesis, are C3. T6 decides each projection.
+**Classification.** What an observer inside the world could see is C0: a being's cell, species,
+stage, the kind of its activity, and the direction of its current step. The rest of the being is C1:
+its needs, health, traits, the remaining route and targets of its activity, its plan, behavior
+(including the brain's heading), wake conditions, outcome, and cooldowns. The laws of life, like the
+genesis, are C3. T6 decides each projection.
 
 **Randomness.** T4's contests and initial exploration headings are the first kernel draws whose
 outcomes become public once T6 projects positions. This refines ADR 0021: the replacement of
@@ -170,13 +184,15 @@ recommended moment is T7, with snapshot version 2, because the seed changes shap
 
 - Behavior comes from needs, laws, terrain, and food that actually exists: nothing is scripted by
   the hour, and the brain sees only its senses.
+- Events record behaviors, not steps, so a being emits on the order of 50 events per simulated day
+  (plan §I.2.7 estimates 30); the benchmark measures it.
 - A sleeping being in its own chunk costs one read per tick; a chunk that holds no being costs
   nothing. Per-tick work grows with occupied chunks, beings due, changed bytes, and decisions.
 - The global value is rewritten when a chunk becomes occupied and once per simulated day, so the
   genesis seal check is paid rarely.
-- Ceilings, measured in T4's benchmark: a crowded chunk is rehashed whole whenever one of its beings
-  changes (about 18 ms for 1,000 beings in one chunk), and T5's mind data will be rehashed on every
-  step of its being. Both point to the same exit: an entity section with one hash term per entity in
+- Ceilings: a crowded chunk is rehashed whole whenever one of its beings changes (estimated at
+  about 18 ms for 1,000 beings in one chunk from the measured commit cost; T4-8's benchmark measures
+  it), and T5's mind data will be rehashed on every step of its being. Both point to the same exit: an entity section with one hash term per entity in
   snapshot version 2 (T7). The occupancy list is rewritten whole when it changes; the benchmark
   measures from how many occupied chunks it dominates.
 - Interactions are local (a window of at most one chunk of radius, contests per cell), which keeps
