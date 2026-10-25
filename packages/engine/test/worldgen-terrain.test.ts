@@ -597,6 +597,17 @@ describe("order and history (I3)", () => {
     ]);
   });
 
+  test("the history check reports a region that comes back shorter, and each changed cell they share", () => {
+    let calls = 0;
+    // Cells 0 and 2 change within the 3 values both requests give; cells 3 and 4 are gone.
+    const shrinking = () => (calls++ === 0 ? [1, 2, 3, 4, 5] : [7, 2, 8]);
+    expect(requestHistoryProblems(shrinking, cell(0, 0), [])).toEqual([
+      "5 values before the other requests, 3 after",
+      "cell 0: 1 before the other requests, 7 after",
+      "cell 2: 3 before the other requests, 8 after",
+    ]);
+  });
+
   test("a child process, whose modules start fresh, gives the same digests", async () => {
     const keys = [...KEYS.slice(0, 6), ...CHUNK_KEYS_AT_EDGES];
     const geneses = [defaultGenesis(seedWords(1)), maximumGenesis(seedWords(1))];
