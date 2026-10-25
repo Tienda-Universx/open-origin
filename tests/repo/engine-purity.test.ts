@@ -288,6 +288,192 @@ describe("checkEngineSource", () => {
   });
 });
 
+/**
+ * Worldgen's layering and statelessness (ADR 0021, "Kernel additions"): the kernel never imports
+ * worldgen, worldgen imports only an allowlist of kernel modules, and worldgen modules keep no
+ * module-level `let` or `var`. The fixtures need no worldgen module to exist.
+ */
+describe("checkEngineSource: worldgen", () => {
+  const WORLDGEN = `${ENGINE_SRC}/worldgen`;
+  const TERRAIN = `${WORLDGEN}/terrain.ts`;
+
+  const intoWorldgen = (specifier: string) =>
+    `"${specifier}" imports worldgen: the kernel never depends on worldgen, which only ${ENGINE_SRC}/index.ts re-exports (ADR 0021)`;
+  const outOfAllowlist = (specifier: string) =>
+    `"${specifier}" is not a module worldgen may import: it may import int.ts, errors.ts, rng/chacha.ts, time/tick.ts, world/chunk.ts, world/members.ts, world/contracts.ts, and the modules under canonical/, digest/, worldgen/ (ADR 0021)`;
+  const moduleState = (keyword: string) =>
+    `a top-level \`${keyword}\` declares module state: worldgen modules keep no state between calls (ADR 0021)`;
+
+  test.each([
+    ["an import", 'import { cell } from "../worldgen/space.ts";', "../worldgen/space.ts"],
+    [
+      "a type-only import",
+      'import type { G } from "../worldgen/genesis.ts";',
+      "../worldgen/genesis.ts",
+    ],
+    ["a re-export", 'export * from "../worldgen/index.ts";', "../worldgen/index.ts"],
+    ["a side-effect import", 'import "../worldgen/register.ts";', "../worldgen/register.ts"],
+    [
+      "a type-level import",
+      'export type Terrain = typeof import("../worldgen/terrain.ts");',
+      "../worldgen/terrain.ts",
+    ],
+    [
+      "a dynamic import",
+      'export const load = () => import("../worldgen/x.ts");',
+      "../worldgen/x.ts",
+    ],
+    ["an import of the directory", 'import "../worldgen";', "../worldgen"],
+    [
+      "a path that enters worldgen late",
+      'import "../step/../worldgen/a.ts";',
+      "../step/../worldgen/a.ts",
+    ],
+  ])("reports a kernel module that imports worldgen through %s", (_name, content, specifier) => {
+    expect(issues(`export const before = 1;\n${content}\n`)).toEqual([
+      { file: FILE, line: 2, message: intoWorldgen(specifier) },
+    ]);
+  });
+
+  test.each([
+    [`${ENGINE_SRC}/world/index.ts`, "../worldgen/index.ts"],
+    [`${ENGINE_SRC}/index/index.ts`, "../worldgen/index.ts"],
+    [`${ENGINE_SRC}/indexes.ts`, "./worldgen/index.ts"],
+  ])("reports %s, which only looks like the entry point, when it imports worldgen", (path, to) => {
+    expect(messages(`export * from "${to}";\n`, path)).toEqual([intoWorldgen(to)]);
+  });
+
+  test("lets src/index.ts re-export worldgen, and a kernel module import a lookalike directory", () => {
+    const entry = 'export * as worldgen from "./worldgen/index.ts";\n';
+    expect(issues(entry, `${ENGINE_SRC}/index.ts`)).toEqual([]);
+    const lookalikes = [
+      'import { a } from "../worldgenerator/a.ts";',
+      'import { b } from "../worldgen.ts";',
+      'import { c } from "./worldgen/c.ts";',
+      "",
+    ].join("\n");
+    // `./worldgen/c.ts` from world/state.ts is world/worldgen/c.ts, not src/worldgen.
+    expect(issues(lookalikes)).toEqual([]);
+  });
+
+  test("lets worldgen import its allowlist and its own modules, at any depth", () => {
+    const content = [
+      'import { imul } from "../int.ts";',
+      'import { EngineError } from "../errors.ts";',
+      'import { chachaBlock } from "../rng/chacha.ts";',
+      'import type { CanonicalValue } from "../canonical/value.ts";',
+      'import { sortedKeys } from "../canonical/order.ts";',
+      'import { digest } from "../digest/digest.ts";',
+      'import { tickProblem } from "../time/tick.ts";',
+      'import { parseChunkKey } from "../world/chunk.ts";',
+      'import { readText } from "../world/members.ts";',
+      'import type { ReadView } from "../world/contracts.ts";',
+      'import { cell } from "./space.ts";',
+      'export { lattice } from "./noise/lattice.ts";',
+      'export type Genesis = typeof import("./genesis.ts");',
+      "",
+    ].join("\n");
+    expect(issues(content, TERRAIN)).toEqual([]);
+    const nested = 'import { imul } from "../../int.ts";\nimport { cell } from "../space.ts";\n';
+    expect(issues(nested, `${WORLDGEN}/noise/lattice.ts`)).toEqual([]);
+  });
+
+  test.each([
+    ["the world model", 'import { healthyState } from "../world/world.ts";', "../world/world.ts"],
+    ["the host view", 'import { readView } from "../world/view.ts";', "../world/view.ts"],
+    ["the kernel's random streams", 'import { mix32 } from "../rng/mix32.ts";', "../rng/mix32.ts"],
+    ["the step", 'export { step } from "../step/step.ts";', "../step/step.ts"],
+    ["the entry point", 'import "../index.ts";', "../index.ts"],
+    [
+      "a type-level import of the snapshots",
+      'export type S = typeof import("../snapshot/snapshot.ts");',
+      "../snapshot/snapshot.ts",
+    ],
+    ["a module without its extension", 'import { imul } from "../int";', "../int"],
+    [
+      "a lookalike of an allowed module",
+      'import { a } from "../rng/chacha2.ts";',
+      "../rng/chacha2.ts",
+    ],
+    [
+      "a lookalike of an allowed directory",
+      'import { b } from "../digests/b.ts";',
+      "../digests/b.ts",
+    ],
+  ])("reports a worldgen module that imports %s", (_name, content, specifier) => {
+    expect(issues(`export const before = 1;\n${content}\n`, TERRAIN)).toEqual([
+      { file: TERRAIN, line: 2, message: outOfAllowlist(specifier) },
+    ]);
+  });
+
+  test("reports a worldgen import that leaves src with the engine's own rule, once", () => {
+    expect(messages('import { file } from "bun";\nimport "../../../x.ts";\n', TERRAIN)).toEqual([
+      '"bun" is not a relative import: the engine depends on nothing',
+      '"../../../x.ts" resolves outside packages/engine/src',
+    ]);
+  });
+
+  test("reports every top-level let and var of a worldgen module", () => {
+    const content = [
+      // An opening brace in a comment or a string does not hide what follows it.
+      "// The terrain caches {",
+      'export const opening = "{";',
+      "let counter = 0;",
+      "var cache = {};",
+      "export let seed = 1;",
+      "export var legacy = [counter, cache, seed];",
+      "let first = 1,",
+      "  second = 2;",
+      "",
+    ].join("\n");
+    expect(issues(content, TERRAIN)).toEqual([
+      { file: TERRAIN, line: 3, message: moduleState("let") },
+      { file: TERRAIN, line: 4, message: moduleState("var") },
+      { file: TERRAIN, line: 5, message: moduleState("let") },
+      { file: TERRAIN, line: 6, message: moduleState("var") },
+      { file: TERRAIN, line: 7, message: moduleState("let") },
+    ]);
+  });
+
+  test("accepts let and var inside functions, and the words elsewhere", () => {
+    const content = [
+      // A closing brace in a comment or a string does not make a nested `let` look top level.
+      "/* } */",
+      'export const closing = "}";',
+      "export const LIMIT = 3;",
+      "export function count(values: readonly number[]): number {",
+      "  let total = 0;",
+      "  for (let index = 0; index < values.length; index += 1) total += values[index] ?? 0;",
+      "  return total;",
+      "}",
+      "export const sum = (a: number) => {",
+      "  var doubled = a * 2;",
+      "  return doubled;",
+      "};",
+      "export class Field {",
+      "  read(): number {",
+      "    let value = 1;",
+      "    return value;",
+      "  }",
+      "}",
+      'export const words = { let: "let x = 1", var: `var y = 2` };',
+      "export const letter = words.let + words.var;",
+      "// let commented = 1;",
+      "/* var blocked = 1; */",
+      "export const variance = 1;",
+      "",
+    ].join("\n");
+    expect(issues(content, TERRAIN)).toEqual([]);
+  });
+
+  test.each([FILE, `${ENGINE_SRC}/worldgen.ts`, `${ENGINE_SRC}/worldgenerator/a.ts`])(
+    "leaves the module state of %s, outside worldgen, to the kernel's own review",
+    (path) => {
+      expect(issues("let stateOf = 0;\nexport const read = () => stateOf;\n", path)).toEqual([]);
+    },
+  );
+});
+
 describe("isEngineSource", () => {
   test("selects the TypeScript files under packages/engine/src only", () => {
     const paths = [

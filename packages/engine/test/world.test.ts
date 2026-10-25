@@ -3,6 +3,7 @@ import {
   type CanonicalValue,
   chunkHashes,
   createWorld,
+  decodeSnapshot,
   type EngineErrorCode,
   encodeSnapshot,
   fullChecksum,
@@ -564,6 +565,13 @@ describe("the host never holds live state", () => {
 });
 
 describe("readView", () => {
+  test("reads the world's seconds per tick, from createWorld and from decodeSnapshot", () => {
+    const world = createWorld(definitionWith({ simSecondsPerTick: 7 }));
+    expect(readView(world).simSecondsPerTick).toBe(7);
+    const decoded = decodeSnapshot(encodeSnapshot(world), testRuleset());
+    expect(readView(decoded).simSecondsPerTick).toBe(7);
+  });
+
   test("returns undefined for a chunk key without a chunk", () => {
     expect(readView(createWorld(definition())).readChunk("7,7")).toBeUndefined();
   });

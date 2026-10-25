@@ -26,6 +26,9 @@ export function readView<G extends CanonicalValue, C extends CanonicalValue>(
     get tick() {
       return healthyState(world, "view.tick").kernel.tick;
     },
+    get simSecondsPerTick() {
+      return healthyState(world, "view.simSecondsPerTick").kernel.config.simSecondsPerTick;
+    },
     chunkKeys: () => healthyState(world, "view.chunkKeys").chunks.sortedKeys(),
     readChunk: (key) =>
       readState(world, "view.readChunk", "read", ({ chunks }) => {

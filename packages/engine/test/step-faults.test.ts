@@ -249,6 +249,7 @@ describe.each([1, 4])("a fault at tick %d poisons the world", (at) => {
     expect(Object.hasOwn(error, "events")).toBe(false);
     expectPoisoned(world, at, code, issues);
     expect(engineErrorOf(() => view.readGlobal()).code).toBe("world_faulted");
+    expect(engineErrorOf(() => view.simSecondsPerTick).code).toBe("world_faulted");
   });
 });
 
@@ -502,6 +503,7 @@ describe("the tick context is revoked when step returns", () => {
     const view = keptView;
     const uses: (() => unknown)[] = [
       () => ctx.tick,
+      () => ctx.simSecondsPerTick,
       () => ctx.chunkKeys(),
       () => ctx.readChunk("0,0"),
       () => ctx.readGlobal(),
@@ -515,6 +517,7 @@ describe("the tick context is revoked when step returns", () => {
       () => ctx.rejectedCommands(),
       () => ctx.emit("late", 1),
       () => view.tick,
+      () => view.simSecondsPerTick,
       () => view.chunkKeys(),
       () => view.readChunk("0,0"),
       () => view.readGlobal(),

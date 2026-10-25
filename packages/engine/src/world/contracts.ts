@@ -67,6 +67,11 @@ export type DeepReadonly<T> = T extends (...args: never[]) => unknown
  */
 export interface ReadView<G extends CanonicalValue, C extends CanonicalValue> {
   readonly tick: Tick;
+  /**
+   * The simulated seconds each tick lasts, from the world's configuration, which never changes;
+   * simSeconds(tick, simSecondsPerTick) is the simulated second a tick starts at (ADR 0021).
+   */
+  readonly simSecondsPerTick: number;
   /** Every chunk key, sorted by UTF-16 code units, in a fresh array. */
   chunkKeys(): ChunkKey[];
   /** The chunk `key`, or undefined when there is none. */

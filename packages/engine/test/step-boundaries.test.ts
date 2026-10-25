@@ -214,14 +214,17 @@ describe("ruleset code cannot use the world it runs in", () => {
     ]);
   });
 
-  test("a view the host read before the step is refused during it", () => {
+  test.each<[string, (view: ReturnType<typeof readView>) => unknown]>([
+    ["view.readChunk", (view) => view.readChunk("0,0")],
+    ["view.simSecondsPerTick", (view) => view.simSecondsPerTick],
+  ])("%s, on a view the host read before the step: refused during it", (api, use) => {
     let view: ReturnType<typeof readView> | undefined;
     let inner: unknown;
     const world = stepWorld(
       stepRuleset([
         system("peek", () => {
           try {
-            view?.readChunk("0,0");
+            if (view !== undefined) use(view);
           } catch (error) {
             inner = error;
           }
@@ -230,10 +233,7 @@ describe("ruleset code cannot use the world it runs in", () => {
     );
     view = readView(world);
     engineErrorOf(() => step(world, []));
-    expect(inner).toMatchObject({
-      code: "world_busy",
-      issues: [{ message: busy("view.readChunk") }],
-    });
+    expect(inner).toMatchObject({ code: "world_busy", issues: [{ message: busy(api) }] });
   });
 });
 

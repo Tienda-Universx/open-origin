@@ -1,0 +1,212 @@
+# Worldgen
+
+Worldgen is the procedural world generator: the world is a latent field that the engine evaluates
+and never stores, a pure function of the generator version, the genesis, and the cell.
+[ADR 0021](../decisions/0021-procedural-world.md) records that design and why. This document
+specifies what the code implements: space and the sealed genesis. Code: `packages/engine/src/worldgen/`, exported by
+`packages/engine` as the `worldgen` namespace. Tests: `packages/engine/test/` (`worldgen-space` and
+`worldgen-genesis`).
+
+`WORLDGEN_VERSION` is `"worldgen@1"`. The seal of a genesis contains it, so a seal made under any
+other version does not match; [ADR 0021](../decisions/0021-procedural-world.md#decision)
+(Versioning) says when the version changes.
+
+## Space
+
+Code: `worldgen/space.ts`.
+
+### Bounds and indexing
+
+| Quantity | Rule | Constant |
+|---|---|---|
+| Chunk | 32 × 32 cells | `CHUNK_CELLS` |
+| Cell coordinate | An integer from −2^31 to 2^31 − 1 | `MIN_CELL`, `MAX_CELL` |
+| Chunk coordinate | An integer from −2^26 to 2^26 − 1: the chunks of the edge cells, so every cell of the world lies in a chunk of the world | `MIN_CHUNK`, `MAX_CHUNK` |
+| Cell index in a chunk | `y·32 + x`, row by row, from 0 to 1023, for offsets `x` and `y` in [0, 32) | |
+
+Kernel chunk keys stay any safe integers ([chunk keys](determinism.md#chunk-keys)). A ruleset that
+uses worldgen rejects a key outside the world in `check` with `chunkKeyIssues`, as a rejection,
+never as a fault that poisons the world.
+
+### Floor rounding
+
+The helpers round toward negative infinity, with `floorDiv` and `floorMod` from `int.ts`. `|0`
+would round toward zero, putting the cell −1 in the chunk 0; `>>` floors only within int32 and
+wraps beyond it (`2^31 >> 5` is −2^26). The helpers check nothing: they run on hot paths, whose
+callers validate coordinates once.
+
+| Helper | Result | At the cell −33 | Precondition |
+|---|---|---|---|
+| `chunkOfCell(cell)` | ⌊cell / 32⌋ | −2 | `cell` is a safe integer |
+| `cellOffset(cell)` | cell − 32·⌊cell / 32⌋, in [0, 32) | 31 | `cell` is a safe integer |
+| `chunkFirstCell(chunk)` | 32·chunk | | `chunk` is a chunk coordinate, not −0 |
+| `cellIndex(x, y)` | y·32 + x | | `x` and `y` are offsets in [0, 32) |
+
+For every cell, `chunkFirstCell(chunkOfCell(cell)) + cellOffset(cell)` is the cell, and no helper
+returns −0.
+
+### Reading coordinates
+
+| Function | Accepts | Problems |
+|---|---|---|
+| `chunkKeyIssues(key)` | A kernel chunk key whose coordinates lie in [`MIN_CHUNK`, `MAX_CHUNK`] | Its problems, as issues at the path `""`: a malformed key reports only the kernel's format messages, and a well-formed key each coordinate outside the world, as `the x of the chunk key, 67108864, is outside the world: chunk coordinates lie from -67108864 to 67108863` |
+| `readWorldChunkKey(key, path, sink)` | The same key; returns its coordinates | The same, reported to `sink` at `path` |
+| `readCell(value, path, sink)` | Any object that is not an array, with `x` and `y` in [`MIN_CELL`, `MAX_CELL`]; returns a fresh `{ x, y }` | Every problem, reported to `sink` under `path`: a coordinate that is not a safe integer or is `-0`, in `chunkKey`'s words, or `2147483648 is outside the world: cell coordinates lie from -2147483648 to 2147483647` |
+
+`readCell` reads only `x` and `y`, each once, through its own descriptor, as every host object is
+read ([creating a world](determinism.md#creating-a-world)): an inherited coordinate reads as
+missing, an accessor never runs, and an object that throws while read is one issue at `path`. The
+two readers report to an issue sink, so worldgen's own modules can gather their problems with
+others; the `worldgen` namespace does not export them.
+
+## Genesis
+
+Code: `worldgen/genesis.ts`. A world's global value holds `genesis` and `genesisSeal`. The genesis
+is everything the world's terrain and laws derive from; it is written once (ADR 0021).
+
+### Schema
+
+| Member | Content |
+|---|---|
+| `terrainSeed` | Eight u32 words that the host draws from a CSPRNG: the key of terrain randomness |
+| `laws.day` | `length`, in simulated seconds; `daylight`, the share of the day with light, in ‰ |
+| `laws.liquid` | `level`, the equipotential level that liquid fills, in ‰ of the elevation range [−amplitude, +amplitude] |
+| `laws.thermal` | `base`; `spread`, its spatial variation; `lapse`, a signed ratio `{ num, den }` per unit of elevation; `diurnal`, its daily swing |
+| `laws.radiance` | `peak`, during the day; `night`, the floor at night |
+| `terrain.relief` | `wavelength`, of the coarsest octave, in cells; `octaves`; `amplitude` |
+| `terrain.substrate` | `cell`, the size of a Voronoi cell; `weights`, one per substrate class |
+| `terrain.deposits` | A list of fields, each with `wavelength`, `octaves`, `threshold` (in ‰), and `peak` |
+
+Every member is required, every value is an integer, and an unknown member is refused at every
+level, so a misspelled law is reported instead of silently ignored.
+
+### Bounds
+
+The bounds keep every intermediate value of worldgen a safe integer. `GENESIS_BOUNDS` holds them,
+frozen at every level; they may still change until `worldgen@1` is frozen.
+
+| Field | Bounds |
+|---|---|
+| `terrainSeed` | Exactly 8 u32 words |
+| `day.length` | [1, 2^40] simulated seconds |
+| `day.daylight` | [1, 999] ‰ |
+| `liquid.level` | [100, 900] ‰ of the range [−amplitude, +amplitude] |
+| `thermal.base` | [−2^20, 2^20] |
+| `thermal.spread` | [0, 2^20] |
+| `thermal.lapse.num` | [−2^20, 2^20] |
+| `thermal.lapse.den` | [1, 2^20] |
+| `thermal.diurnal` | [0, 2^20] |
+| `radiance.peak` | [1, 2^20] |
+| `radiance.night` | [0, peak] |
+| `relief.octaves` | [1, 12] |
+| `relief.wavelength` | A power of two in [8·2^(octaves − 1), 2^16] |
+| `relief.amplitude` | [1, 2^30] |
+| `substrate.cell` | A power of two in [8, 2^12] |
+| `substrate.weights` | 1 to 16 entries, each in [1, 1000] |
+| `deposits` | 0 to 8 entries |
+| each deposit's `octaves` | [1, 6] |
+| each deposit's `wavelength` | A power of two in [8·2^(octaves − 1), 2^16] |
+| each deposit's `threshold` | [0, 999] ‰ |
+| each deposit's `peak` | [1, 2^20] |
+
+A wavelength's lower bound leaves at least 8 cells to the finest octave. When the octaves are
+invalid, the wavelength is checked for one octave, and when `peak` is invalid, `night` is checked
+against the highest peak, so that one bad value is reported once.
+
+### Reading a genesis
+
+`genesisIssues(value)` and `prepareGenesis(value)` read the value once, through
+`copyCanonicalReported` ([copying at the boundary](determinism.md#copying-at-the-boundary)): a
+getter never runs, and a Proxy cannot show validation one value and the copy another. The schema
+and the bounds are then checked on the copy, which the engine owns.
+
+| Rule | Detail |
+|---|---|
+| Every problem at once | Issues carry JSON Pointers relative to the genesis: first the canonical walk's, in canonical key order, then the schema's, in schema order. At most 50 are kept (`MAX_ISSUES`) |
+| Canonical first | A value that is not canonical (`-0`, a fraction, `null`, a string not in NFC, an accessor, a record that is not plain) is reported once, by the walk, and never again by the schema |
+| No seed in messages | No message prints a word of the terrain seed. The schema's messages name the problem, never the word, and the walk's messages inside `/terrainSeed`, which print numbers, are replaced by `the terrain seed is not canonical here; the details are withheld, as no message prints the terrain seed` |
+
+| Problem | Message |
+|---|---|
+| A value outside its bounds | `0 is out of bounds: it must be from 1 to 999` |
+| A wavelength or cell size | `1000 is not a power of two from 512 to 65536` |
+| A list of the wrong length | `the array has 17 entries: it must have from 1 to 16` |
+| A seed word | `the word is not a u32: terrain seed words are integers from 0 to 4294967295` |
+| A value of the wrong type | `the value must be an integer, not a string`, `the value must be a record { length, daylight }, not an array` |
+| An unknown member | `unknown member: the members here are day, liquid, thermal, radiance` |
+| A missing member | `the member is missing` |
+
+### Defaults
+
+`defaultGenesis(terrainSeed)` returns a fresh genesis with laws unlike Earth's (plan O-13, ADR
+0021), so that an inhabitant who predicts Earth's behavior reveals prior knowledge. It throws
+`invalid_value` when the seed is not 8 u32 words.
+
+| Group | Defaults | Why it is not Earth's |
+|---|---|---|
+| day | `length` 75,600, `daylight` 550 | A day of 21 hours, not 86,400 s, lit for more than half of it |
+| liquid | `level` 450 | Liquid fills one equipotential level, as any fluid under uniform gravity does; the level is the world's own, not Earth's sea level |
+| thermal | `base` 400, `spread` 120, `lapse` 3/1000, `diurnal` 60 | The lapse is positive: the thermal level rises with elevation, the sign opposite to Earth's |
+| radiance | `peak` 1000, `night` 40 | Night keeps 4% of the peak, far brighter than a night on Earth |
+| relief | `wavelength` 2048, `octaves` 7, `amplitude` 60,000 | Generic noise parameters in the world's own units, scaled from nothing on Earth |
+| substrate | `cell` 64, `weights` [5, 3, 2, 1] | Four abstract classes, with no Earth material behind them |
+| deposits | `{ wavelength 256, octaves 3, threshold 600, peak 1000 }`, `{ wavelength 512, octaves 2, threshold 700, peak 1000 }` | Two abstract resources, with no Earth mineral behind them |
+
+### The seal
+
+`genesisSeal(genesis)` is `digest(["genesis", WORLDGEN_VERSION, genesis])`. Every ruleset that uses
+worldgen calls `sealedGenesisIssues(global)` from `validateGlobal`, which the kernel runs at
+creation, at decoding, and at every commit that wrote the global value.
+
+| Guarantee | How |
+|---|---|
+| A sealed global value holds a valid genesis and its seal | `sealedGenesisIssues` requires a record with own data members `genesis` and `genesisSeal`, each read once; other members are ruleset data. Genesis problems sit at `/genesis/...`, and a missing member is one issue at its path |
+| A changed genesis is found wherever `validateGlobal` runs | A seal that does not match is one issue at `/genesisSeal`, under the prefix the kernel adds; what each path gives, from a write through `writeGlobal` to an edited snapshot, is the table in [ADR 0021](../decisions/0021-procedural-world.md#decision) |
+| No message prints a seal | The mismatch message names neither the stored seal nor the expected one |
+| The check never depends on the number of chunks | It copies, validates, and digests the genesis once per call, so a tick pays it only when it writes the global value |
+| Not guaranteed: a deliberate change | Ruleset code that also recomputes the seal is not prevented; it is trusted, so this is outside the threat model (ADR 0021) |
+
+### A prepared genesis
+
+`prepareGenesis(value)` validates and copies a genesis once, for worldgen to reuse. It throws
+`invalid_value` with every problem `genesisIssues` finds.
+
+| Guarantee | How |
+|---|---|
+| No forged prepared genesis is accepted | A `PreparedGenesis` keeps its state in an ES2022 private field. Every function checks the brand, which runs no Proxy trap, and throws `invalid_value` for anything else, a record or an object whose prototype is a prepared genesis included. The constructor and the internal reader throw `invalid_value` unless `genesis.ts` calls them with its private key |
+| The host cannot change a prepared genesis | `prepareGenesis` copies its input; `genesisOf(prepared)` returns a fresh copy on every call |
+| Its seal is computed once | `sealOf(prepared)` returns it; it identifies the genesis, as a cache key would need |
+| Worldgen modules read it without copying | `sharedGenesis(prepared)` returns the genesis itself, frozen at every level; the `worldgen` namespace does not export it |
+| No module state | Worldgen keeps no top-level `let` or `var`; `GENESIS_BOUNDS` is frozen at every level |
+
+The genesis, the terrain seed, and the seal are C3, never projected to a client nor passed to a
+prompt ([data classification](data-classification.md), ADR 0021).
+
+## What the tests check
+
+- the space constants, and the chunk and offset of the cells 0, 31, 32, −1, −32, −33, −2^31, and
+  2^31 − 1, with no −0, and the first cell of the chunks 0, ±1, −2^26, and 2^26 − 1;
+- `cellIndex` maps the 1,024 offsets of a chunk one to one onto 0 to 1023;
+- `chunkKeyIssues` accepts the chunks at both bounds on each axis, rejects one past each bound,
+  both coordinates at once, and every malformed key form;
+- `readCell` accepts the edge cells, rejects one past each bound, non-integers, `-0`, and wrong
+  types, reads an inherited coordinate as missing, never runs an accessor, and reports a revoked
+  Proxy as one issue with its cause;
+- the defaults are pinned and valid, with a day other than 86,400 s and a positive lapse, and
+  `GENESIS_BOUNDS` is pinned and frozen;
+- each bound accepts both of its ends and rejects one past each, wavelengths follow the octaves,
+  night follows peak, and each list accepts and rejects its lengths;
+- wrong types, unknown members, and missing members at every level of the schema, with exact paths
+  and messages, an unknown key escaped as a JSON Pointer, and many problems reported together in
+  their documented order;
+- bad seeds (a wrong length, words that are not u32, non-canonical words, a hole), with no message
+  that prints a word;
+- `prepareGenesis` copies its input, `genesisOf` returns fresh copies, accessors never run,
+  `sharedGenesis` is frozen and not exported, and forged prepared geneses (a record, an object whose
+  prototype is one, a revoked Proxy, a Proxy whose traps count calls, the constructor, the internal
+  reader without its key) are rejected without running a trap;
+- the seal equals its formula, does not depend on key order, and changes with every law, terrain
+  parameter, and seed word tested;
+- `sealedGenesisIssues` accepts a sealed global value with ruleset data, and rejects a tampered
+  genesis with its stale seal, a seal made for another version, missing members, a seal that is not
+  a string, genesis problems under `/genesis`, accessors, and a value that is not a record.

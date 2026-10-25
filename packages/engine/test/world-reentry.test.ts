@@ -245,6 +245,7 @@ describe("functions that read no value of the state run no trap", () => {
     ["versionDifferences", versionDifferences],
     ["view.chunkKeys", (world) => readView(world).chunkKeys()],
     ["view.tick", (world) => readView(world).tick],
+    ["view.simSecondsPerTick", (world) => readView(world).simSecondsPerTick],
   ])("%s", (_name, use) => {
     const { world, hook } = trappedWorld(["chunk", "global"]);
     hook.run = () => {

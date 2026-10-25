@@ -160,6 +160,10 @@
       "plugins": ["./packages/engine/lint/global-math.grit"]
     },
     {
+      "includes": ["packages/engine/src/int.ts"],
+      "plugins": ["./packages/engine/lint/int-math.grit"]
+    },
+    {
       "includes": [
         "packages/engine/src/**",
         "!packages/engine/src/canonical/value.ts",

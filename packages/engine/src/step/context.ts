@@ -201,6 +201,10 @@ function tickView(session: TickSession): ReadView<Value, Value> {
       session.ensureLive();
       return session.tick;
     },
+    get simSecondsPerTick() {
+      session.ensureLive();
+      return session.state.kernel.config.simSecondsPerTick;
+    },
     chunkKeys: () => {
       session.ensureLive();
       return session.state.chunks.sortedKeys();
@@ -219,6 +223,9 @@ export function openTick(session: TickSession): TickHandles {
   const ctx: TickContext<Value, Value> = {
     get tick() {
       return view.tick;
+    },
+    get simSecondsPerTick() {
+      return view.simSecondsPerTick;
     },
     chunkKeys: view.chunkKeys,
     readChunk: view.readChunk,
