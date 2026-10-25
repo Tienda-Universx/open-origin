@@ -3,8 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  AGENTS_SRC,
+  checkAgentsSource,
   checkEngineSource,
   ENGINE_SRC,
+  isAgentsSource,
   isEngineSource,
   type PurityIssue,
 } from "./engine-purity.ts";
@@ -677,6 +680,225 @@ describe("checkEngineSource: beings", () => {
   });
 });
 
+/**
+ * The agents package (ADR 0023): its sources keep the engine's compiler gate, import only relative
+ * paths inside packages/agents/src and exactly the engine's public entry, and keep no module state,
+ * so a brain is a pure function of its senses.
+ */
+describe("checkAgentsSource", () => {
+  const BRAIN = `${AGENTS_SRC}/navigation/search.ts`;
+  const agents = (content: string, path = BRAIN): PurityIssue[] =>
+    checkAgentsSource({ path, content });
+
+  const notAllowed = (specifier: string) =>
+    `"${specifier}" is not a relative import or @open-origin/engine: packages/agents imports only the engine's public entry (ADR 0023)`;
+  const reason =
+    "agents modules keep no state between calls, so a brain stays a pure function of its senses (ADR 0023)";
+  const moduleState = (keyword: string) =>
+    `a top-level \`${keyword}\` declares module state: ${reason}`;
+  const mutableConst = (start: string) =>
+    `a top-level \`const\` bound to \`${start}…\` holds a value that can change: ${reason}; freeze it with Object.freeze, or build it inside a function`;
+
+  test("accepts the engine's public entry and relative imports inside agents src, in every form", () => {
+    const content = [
+      'import { EngineError } from "@open-origin/engine";',
+      'import type { Issue } from "@open-origin/engine";',
+      "import {",
+      "  type Tick,",
+      "  simSeconds,",
+      '} from "@open-origin/engine";',
+      'export { ENGINE_VERSION } from "@open-origin/engine";',
+      'export type Engine = typeof import("@open-origin/engine");',
+      'export const load = () => import("@open-origin/engine");',
+      'import "@open-origin/engine";',
+      'import { heap } from "./heap.ts";',
+      'import { grid } from "../navigation/grid.ts";',
+      'export * from "../index.ts";',
+      'export type Heap = typeof import("./heap.ts");',
+      'import "./register.ts";',
+      "",
+    ].join("\n");
+    expect(agents(content)).toEqual([]);
+    // From a nested module, `../..` still stays inside src.
+    expect(agents('import { a } from "../../index.ts";\n', `${AGENTS_SRC}/a/b/c.ts`)).toEqual([]);
+  });
+
+  test.each([
+    ["a host module", 'import { file } from "bun";', notAllowed("bun")],
+    ["a Node.js module", 'import { readFileSync } from "node:fs";', notAllowed("node:fs")],
+    ["another package", 'import { parse } from "some-package";', notAllowed("some-package")],
+    [
+      "a deep path into the engine",
+      'import { floorDiv } from "@open-origin/engine/src/int.ts";',
+      notAllowed("@open-origin/engine/src/int.ts"),
+    ],
+    [
+      "a re-export of a deep path",
+      'export * from "@open-origin/engine/src/index.ts";',
+      notAllowed("@open-origin/engine/src/index.ts"),
+    ],
+    [
+      "a side-effect import of the entry with a trailing slash",
+      'import "@open-origin/engine/";',
+      notAllowed("@open-origin/engine/"),
+    ],
+    [
+      "an import-equals declaration of a deep path",
+      'import int = require("@open-origin/engine/src/int.ts");',
+      notAllowed("@open-origin/engine/src/int.ts"),
+    ],
+    [
+      "a type-level import of a deep path",
+      'export type Mix = typeof import("@open-origin/engine/src/rng/mix32.ts");',
+      notAllowed("@open-origin/engine/src/rng/mix32.ts"),
+    ],
+    [
+      "a dynamic import of a lookalike",
+      'export const load = () => import("@open-origin/engines");',
+      notAllowed("@open-origin/engines"),
+    ],
+    [
+      "the package by its own name",
+      'import { aStar } from "@open-origin/agents";',
+      notAllowed("@open-origin/agents"),
+    ],
+    [
+      "a dynamic import with a computed specifier",
+      "export const load = (name: string) => import(name);",
+      "a dynamic import with a computed specifier cannot be checked",
+    ],
+    [
+      "a relative path into the engine",
+      'import { floorDiv } from "../../../engine/src/int.ts";',
+      '"../../../engine/src/int.ts" resolves outside packages/agents/src',
+    ],
+    [
+      "a relative path into the agents tests",
+      'import { Sfc32 } from "../../test/support/sfc32.ts";',
+      '"../../test/support/sfc32.ts" resolves outside packages/agents/src',
+    ],
+    [
+      "a reference directive",
+      '/// <reference types="bun" />',
+      "`/// <reference>` directives add declarations the agents tsconfig excludes",
+    ],
+    [
+      "an ambient declaration",
+      "declare const Bun: { nanoseconds(): number };",
+      "`declare const` adds ambient declarations the agents tsconfig excludes",
+    ],
+    [
+      "a declare class field",
+      "export class Brain { declare now: () => number }",
+      "a `declare` field declares a value that no agents code provides",
+    ],
+    [
+      "a ts-expect-error comment",
+      "// @ts-expect-error host API",
+      "`@ts-expect-error` can silently disable the type gate of packages/agents: fix the type error instead",
+    ],
+    [
+      "a ts-nocheck comment",
+      "// @ts-nocheck",
+      "`@ts-nocheck` can silently disable the type gate of packages/agents: fix the type error instead",
+    ],
+    [
+      "a ts-ignore comment",
+      "/* @ts-ignore */",
+      "`@ts-ignore` can silently disable the type gate of packages/agents: fix the type error instead",
+    ],
+    [
+      "a Biome suppression",
+      "// biome-ignore lint/plugin: needed here",
+      "`biome-ignore` can silently disable a purity rule: add a reviewed override in biome.json instead",
+    ],
+  ])("reports %s", (_name, content, message) => {
+    expect(agents(`export const before = 1;\n${content}\n`)).toEqual([
+      { file: BRAIN, line: 2, message },
+    ]);
+  });
+
+  test.each(["brain.d.ts", "navigation/host.d.mts"])("reports the declaration file %s", (name) => {
+    expect(agents("export const n = 1;\n", `${AGENTS_SRC}/${name}`)).toEqual([
+      {
+        file: `${AGENTS_SRC}/${name}`,
+        line: 1,
+        message: "declaration files can declare globals: write a .ts module instead",
+      },
+    ]);
+  });
+
+  test("reports every top-level let, var, and constant bound to a mutable value", () => {
+    const content = [
+      "let expanded = 0;",
+      "export var legacy = 1;",
+      "const scratch = new Int32Array(4225);",
+      "export const DX = [1, 1, 0, -1];",
+      "const memo = {};",
+      "const digits = /[0-7]/g;",
+      "",
+    ].join("\n");
+    expect(agents(content)).toEqual([
+      { file: BRAIN, line: 1, message: moduleState("let") },
+      { file: BRAIN, line: 2, message: moduleState("var") },
+      { file: BRAIN, line: 3, message: mutableConst("new") },
+      { file: BRAIN, line: 4, message: mutableConst("[") },
+      { file: BRAIN, line: 5, message: mutableConst("{") },
+      { file: BRAIN, line: 6, message: mutableConst("/") },
+    ]);
+  });
+
+  test("accepts frozen, primitive, and function constants, and mutable values inside functions", () => {
+    const content = [
+      "export const MAX_SIDE = 65;",
+      'export const DIGITS = "01234567";',
+      "export const DX = Object.freeze([1, 1, 0, -1, -1, -1, 0, 1]);",
+      "export const cells = (side: number): number => side * side;",
+      "export function search(side: number): Float64Array {",
+      "  const durations = new Float64Array(side * side);",
+      "  let expanded = 0;",
+      "  const heap = { size: 0 };",
+      "  return durations.fill(expanded + heap.size);",
+      "}",
+      "",
+    ].join("\n");
+    expect(agents(content)).toEqual([]);
+  });
+
+  test("leaves the engine's own rules to the engine: contracts and layering do not apply", () => {
+    // The same text under the engine breaks the engine's import rule; under agents it is allowed.
+    const entry = 'import { createWorld } from "@open-origin/engine";\n';
+    expect(agents(entry)).toEqual([]);
+    expect(checkEngineSource({ path: `${ENGINE_SRC}/world/x.ts`, content: entry })).toEqual([
+      {
+        file: `${ENGINE_SRC}/world/x.ts`,
+        line: 1,
+        message: '"@open-origin/engine" is not a relative import: the engine depends on nothing',
+      },
+    ]);
+  });
+});
+
+describe("isAgentsSource", () => {
+  test("selects the TypeScript files under packages/agents/src only", () => {
+    const paths = [
+      `${AGENTS_SRC}/index.ts`,
+      `${AGENTS_SRC}/navigation/search.ts`,
+      `${AGENTS_SRC}/host.d.ts`,
+      `${AGENTS_SRC}/data.json`,
+      "packages/agents/test/navigation.test.ts",
+      "packages/agents/package.json",
+      "packages/agents/src-copy/index.ts",
+      `${ENGINE_SRC}/index.ts`,
+    ];
+    expect(paths.filter(isAgentsSource)).toEqual([
+      `${AGENTS_SRC}/index.ts`,
+      `${AGENTS_SRC}/navigation/search.ts`,
+      `${AGENTS_SRC}/host.d.ts`,
+    ]);
+  });
+});
+
 describe("isEngineSource", () => {
   test("selects the TypeScript files under packages/engine/src only", () => {
     const paths = [
@@ -699,19 +921,76 @@ describe("isEngineSource", () => {
   });
 });
 
-describe("packages/engine", () => {
+/** A package whose src keeps the engine's compiler gate, and how its sources are scanned. */
+type PurePackage = {
+  name: string;
+  root: string;
+  src: string;
+  isSource: (path: string) => boolean;
+  check: (file: { path: string; content: string }) => PurityIssue[];
+};
+
+const PURE_PACKAGES: PurePackage[] = [
+  {
+    name: "engine",
+    root: "packages/engine",
+    src: ENGINE_SRC,
+    isSource: isEngineSource,
+    check: checkEngineSource,
+  },
+  {
+    name: "agents",
+    root: "packages/agents",
+    src: AGENTS_SRC,
+    isSource: isAgentsSource,
+    check: checkAgentsSource,
+  },
+];
+
+/** Runs `tsc` with the package's tsconfig over a scratch directory holding `modules`. */
+async function scratchTsc(
+  root: string,
+  modules: Record<string, string>,
+  flags: string[],
+): Promise<{ exitCode: number | null; output: string; scratch: string }> {
+  const config = await Bun.file(`${REPO_ROOT}${root}/tsconfig.json`).json();
+  const scratch = mkdtempSync(join(tmpdir(), "open-origin-tsconfig-"));
+  try {
+    for (const [module, source] of Object.entries(modules)) {
+      mkdirSync(dirname(join(scratch, module)), { recursive: true });
+      writeFileSync(join(scratch, module), source);
+    }
+    writeFileSync(
+      join(scratch, "tsconfig.json"),
+      JSON.stringify({ ...config, extends: `${REPO_ROOT}tsconfig.base.json` }),
+    );
+    const result = Bun.spawnSync(
+      ["bunx", "--no-install", "--bun", "tsc", "-p", scratch, ...flags],
+      {
+        cwd: REPO_ROOT,
+        timeout: 30_000,
+      },
+    );
+    const output = `${result.stdout.toString()}${result.stderr.toString()}`;
+    return { exitCode: result.exitCode, output, scratch };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+describe.each(PURE_PACKAGES)("packages/$name", ({ root, src, isSource, check }) => {
   test("every source file passes the purity scan", async () => {
-    const paths = repoFiles(REPO_ROOT).filter(isEngineSource);
+    const paths = repoFiles(REPO_ROOT).filter(isSource);
     // An empty list would make the scan pass without checking anything.
-    expect(paths).toContain(`${ENGINE_SRC}/index.ts`);
+    expect(paths).toContain(`${src}/index.ts`);
     const files = await Promise.all(
       paths.map(async (path) => ({ path, content: await Bun.file(`${REPO_ROOT}${path}`).text() })),
     );
-    expect(files.flatMap(checkEngineSource)).toEqual([]);
+    expect(files.flatMap(check)).toEqual([]);
   });
 
   test("tsconfig.json checks only src, with ECMAScript libraries and no ambient types", async () => {
-    const config = (await Bun.file(`${REPO_ROOT}packages/engine/tsconfig.json`).json()) as {
+    const config = (await Bun.file(`${REPO_ROOT}${root}/tsconfig.json`).json()) as {
       extends?: string;
       compilerOptions?: { lib?: string[]; types?: string[] };
       include?: string[];
@@ -733,47 +1012,79 @@ describe("packages/engine", () => {
     expect(config.references).toBeUndefined();
   });
 
-  // A module nothing imports is still engine source; if the program skipped it, the type gate
-  // would never see it. The engine's include settings are applied to a scratch src directory.
+  // A module nothing imports is still a source of the package; if the program skipped it, the type
+  // gate would never see it. The package's include settings are applied to a scratch src directory.
   test("tsconfig.json typechecks every TypeScript module under src, imported or not", async () => {
-    const config = await Bun.file(`${REPO_ROOT}packages/engine/tsconfig.json`).json();
-    const scratch = mkdtempSync(join(tmpdir(), "open-origin-engine-tsconfig-"));
-    try {
-      const modules = ["src/plain.ts", "src/nested/esm.mts", "src/nested/cjs.cts"];
-      for (const module of modules) {
-        mkdirSync(dirname(join(scratch, module)), { recursive: true });
-        writeFileSync(join(scratch, module), "export const value = 1;\n");
-      }
-      writeFileSync(
-        join(scratch, "tsconfig.json"),
-        JSON.stringify({ ...config, extends: `${REPO_ROOT}tsconfig.base.json` }),
+    const modules = ["src/plain.ts", "src/nested/esm.mts", "src/nested/cjs.cts"];
+    const { exitCode, output, scratch } = await scratchTsc(
+      root,
+      Object.fromEntries(modules.map((module) => [module, "export const value = 1;\n"])),
+      ["--listFilesOnly"],
+    );
+    expect(exitCode).toBe(0);
+    const listed = output.split("\n");
+    expect(modules.filter((module) => !listed.includes(join(scratch, module)))).toEqual([]);
+  });
+});
+
+// engine-lint.test.ts proves the same of the engine's settings through its lint harness.
+describe("packages/agents compiler settings", () => {
+  test("tsconfig.json rejects host globals and accepts ECMAScript 2024", async () => {
+    const hostGlobals = ["console", "Bun", "process", "TextEncoder", "setTimeout", "crypto"];
+    const { exitCode, output } = await scratchTsc(
+      "packages/agents",
+      {
+        ...Object.fromEntries(
+          hostGlobals.map((name) => [`src/host-${name}.ts`, `export const ref = ${name};\n`]),
+        ),
+        "src/es2024.ts": 'export const wellFormed = "x".isWellFormed();\n',
+      },
+      ["--noEmit"],
+    );
+    expect(exitCode).not.toBe(0);
+    // Each fixture fails on its own global, and nothing else fails (no configuration error).
+    expect(output.match(/error TS\d+: [^\n]*/g) ?? []).toHaveLength(hostGlobals.length);
+    for (const name of hostGlobals) {
+      expect(output).toMatch(
+        new RegExp(`host-${name}\\.ts\\(1,20\\): error TS\\d+: Cannot find name '${name}'`),
       );
-      const result = Bun.spawnSync(
-        ["bunx", "--no-install", "--bun", "tsc", "-p", scratch, "--listFilesOnly"],
-        { cwd: REPO_ROOT, timeout: 30_000 },
-      );
-      expect(result.exitCode).toBe(0);
-      const listed = result.stdout.toString().split("\n");
-      expect(modules.filter((module) => !listed.includes(join(scratch, module)))).toEqual([]);
-    } finally {
-      rmSync(scratch, { recursive: true, force: true });
     }
   });
+});
 
-  test("package.json is private, exports only its entry point, and has no dependencies", async () => {
-    const manifest = (await Bun.file(`${REPO_ROOT}packages/engine/package.json`).json()) as Record<
-      string,
-      unknown
-    >;
+/** The manifest of the workspace package at `root`. */
+async function manifestOf(root: string): Promise<Record<string, unknown>> {
+  return (await Bun.file(`${REPO_ROOT}${root}/package.json`).json()) as Record<string, unknown>;
+}
+
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+];
+
+describe("workspace package manifests", () => {
+  test("packages/engine is private, exports only its entry point, and has no dependencies", async () => {
+    const manifest = await manifestOf("packages/engine");
     expect(manifest.private).toBe(true);
     expect(manifest.type).toBe("module");
     expect(manifest.exports).toEqual({ ".": "./src/index.ts" });
-    for (const field of [
-      "dependencies",
-      "devDependencies",
-      "peerDependencies",
-      "optionalDependencies",
-    ]) {
+    for (const field of DEPENDENCY_FIELDS) {
+      expect(manifest[field]).toBeUndefined();
+    }
+  });
+
+  test("packages/agents is private, exports only its entry point, and depends only on the engine", async () => {
+    const manifest = await manifestOf("packages/agents");
+    expect(manifest.name).toBe("@open-origin/agents");
+    expect(manifest.private).toBe(true);
+    expect(manifest.type).toBe("module");
+    expect(manifest.license).toBe("AGPL-3.0-only");
+    expect(manifest.exports).toEqual({ ".": "./src/index.ts" });
+    // The engine's public entry, from this workspace, never a registry release (ADR 0023).
+    expect(manifest.dependencies).toEqual({ "@open-origin/engine": "workspace:*" });
+    for (const field of DEPENDENCY_FIELDS.filter((name) => name !== "dependencies")) {
       expect(manifest[field]).toBeUndefined();
     }
   });
