@@ -28,6 +28,12 @@ export {
 } from "./contracts.ts";
 export { type Depletion, takenAt } from "./food.ts";
 export {
+  type Accepted,
+  acceptIntention,
+  type IntentionContext,
+  type Refused,
+} from "./intention.ts";
+export {
   checkLife,
   defaultLife,
   LIFE_BOUNDS,
@@ -42,6 +48,7 @@ export {
   sealedLifeIssues,
   sealLife,
 } from "./laws.ts";
+export { minimumSteps, type StepGeometry, stepDuration } from "./locomotion.ts";
 export { insertOccupied, OCCUPANCY_BOUNDS, occupancyIssues, pruneOccupancy } from "./occupancy.ts";
 export {
   ceilDiv,
@@ -53,3 +60,4 @@ export {
   secondsToReach,
   type Trend,
 } from "./rates.ts";
+export { type SenseInput, senseWindow } from "./senses.ts";
