@@ -295,6 +295,38 @@ export function sampleRegion(prepared: PreparedGenesis, rect: CellRect): Terrain
   return terrainRegion(new ChaCha20Key(genesis.terrainSeed), genesis, region);
 }
 
+/** The elevation of a region and the abundance of one of its deposits: what a being senses. */
+export type SurfaceRegion = { readonly elevation: Int32Array; readonly deposit: Int32Array };
+
+/**
+ * The elevation and the deposit `k` of `prepared`'s terrain over `rect`, each equal to the field of
+ * the same name that sampleRegion returns, computed by the same functions without the others: the
+ * senses of beings read only these (ADR 0023). Throws EngineError("invalid_value") with every
+ * problem sampleRegion reports, and at /deposit an index the genesis has no deposit for.
+ */
+export function sampleSurface(prepared: PreparedGenesis, rect: CellRect, k: number): SurfaceRegion {
+  const issues = new IssueList();
+  const genesis = readPreparedGenesis(prepared, issues);
+  const region = readRegion(rect, issues);
+  const deposit = genesis?.terrain.deposits[k];
+  if (genesis !== undefined && (!Number.isSafeInteger(k) || deposit === undefined)) {
+    const count = genesis.terrain.deposits.length;
+    issues.report(
+      "/deposit",
+      `the genesis has ${count} deposits: the index must be from 0 to ${count - 1}`,
+    );
+  }
+  if (genesis === undefined || region === undefined || deposit === undefined || issues.count > 0) {
+    throw issues.toError("invalid_value");
+  }
+  const key = new ChaCha20Key(genesis.terrainSeed);
+  const relief = { purpose: LATTICE_PURPOSES.elevation, ...genesis.terrain.relief };
+  return {
+    elevation: noiseRegion(key, relief, region),
+    deposit: depositField(key, deposit, LATTICE_PURPOSES.deposits[k] as number, region),
+  };
+}
+
 /**
  * The chunk `key` of `prepared`'s terrain: the 32 × 32 region of its cells, with its key. Throws
  * EngineError("invalid_value") with every problem: at /prepared, a value prepareGenesis did not
