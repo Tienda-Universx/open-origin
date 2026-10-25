@@ -32,8 +32,8 @@ packages/ui ── shared by apps/web and apps/admin (presentational)
   subscription, `delta` per tick or every N ticks, `events`. Client → server: `subscribe(chunks)`,
   `follow(beingId)`, `ping`. Clients are read-only in v0.1 (§I.3, §E.4).
 - **One shared universe.** No client message controls time, and a test of the allowlist rejects
-  any that would. Public events reach every client, while region detail follows chunk
-  subscriptions. The plane publishes only durable ticks
+  any that would. The public feed of happenings reaches every client, while everything tied to a
+  place follows chunk subscriptions. The plane publishes only durable ticks
   ([0022](../decisions/0022-single-shared-public-universe.md)).
 - **Admin plane.** Own listener, own routes, own DTOs: `protocol` has `public` and `admin`
   audiences.
@@ -60,7 +60,7 @@ From plan §N (first prototype).
 | Batch | Delivers (plan §M, §L) |
 |---|---|
 | T1 | This architecture, for both interfaces |
-| T8 | Three chained PRs: `packages/ui` (tokens and components with CSS Modules) → public `apps/web` (React + PixiJS only for the universe) → local `apps/admin` (world state, simulation controls, inhabitants (C1), metrics, logs) with its admin plane in the server (`127.0.0.1` + token, audit). Key tests: public bundle without admin code or secrets; admin rejects without token; full keyboard navigation |
+| T8 | Three chained PRs: `packages/ui` (tokens and components with CSS Modules) → public `apps/web` (React + PixiJS only for the universe) → local `apps/admin` (world state, simulation controls, which for the public universe are an audited pause and resume ([0022](../decisions/0022-single-shared-public-universe.md)), inhabitants (C1), metrics, logs) with its admin plane in the server (`127.0.0.1` + token, audit). Key tests: public bundle without admin code or secrets; admin rejects without token; full keyboard navigation |
 | T9 | AI controls in the panel: providers, models, endpoints, encrypted write-only API keys, modes with double key, budgets, and usage. Key test: the admin API never returns a key |
 
 New T8 dependencies: `react`, `react-dom`, `pixi.js`, `pixi-viewport`, `vite`, and the Vite React
