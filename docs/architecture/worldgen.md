@@ -358,8 +358,9 @@ so the last tick of light already reads the night floor.
 - `noiseBound` is exact on small cases, and at most 4·amplitude for every amplitude up to 2^12 and
   every octave count; the genesis bounds stay inside the noise bounds;
 - the Lipschitz bound holds around the origin, across the lattice lines of every octave, and in the
-  two outermost chunks at each edge; a float Perlin with the same draws agrees within its tolerance
-  on random cells and at every edge;
+  two outermost chunks at each edge; a float Perlin with the same draws agrees on random cells and
+  at every edge within Σ_o (14·A_o / S + 1), the integer noise's bound and each octave's floor,
+  plus 2^−10 for its own rounding;
 - a 48×48 region equals its 4 chunks, every 1×1 region equals its chunk's cell over 200 chunks, and
   seams, pooled over 100 worlds, are within ±10% of the interior;
 - 5 permutations of chunk requests and 2,000 other generations change nothing; outputs stay within

@@ -5,10 +5,10 @@ import { CHUNK_CELLS } from "../../src/worldgen/space.ts";
 import { oracleTolerance } from "./noise-oracle.ts";
 
 /**
- * Property checks of worldgen's noise (plan §12, tests 4–7, 9, and 17): each takes what it checks,
- * a region sampler, a fade, or a lattice packer, and returns its problems, empty when there are
- * none. They never compare against golden values, so a broken variant (broken-worldgen.ts) fails
- * them by breaking a property, and the real code passes them by keeping it.
+ * Property checks of worldgen's noise (plan §12, tests 4–7, 9, 10, and 17): each takes what it
+ * checks, a region sampler, a fade, or a lattice packer, and returns its problems, empty when there
+ * are none. They never compare against golden values, so a broken variant (broken-worldgen.ts)
+ * fails them by breaking a property, and the real code passes them by keeping it.
  */
 
 /** Samples the noise `spec` over the cells of `rect`, row by row, as sampleNoiseRegion does. */
@@ -149,6 +149,29 @@ export function compositionProblems(
           problems.push(`at ${x},${y}: the part gives ${value}, the region ${expected}`);
       }
     }
+  }
+  return listed(problems);
+}
+
+/**
+ * Cells of `target` whose value changes once the sampler has served the requests `others`: a
+ * region depends only on the genesis, the spec, and its cells, never on the requests before it.
+ */
+export function historyProblems(
+  sampler: RegionSampler,
+  spec: NoiseSpec,
+  target: CellRect,
+  others: readonly CellRect[],
+): string[] {
+  const before = sampler(spec, target);
+  for (const other of others) sampler(spec, other);
+  const after = sampler(spec, target);
+  const problems: string[] = [];
+  for (let index = 0; index < before.length; index += 1) {
+    if (after[index] !== before[index])
+      problems.push(
+        `cell ${index}: ${before[index]} before the other requests, ${after[index]} after`,
+      );
   }
   return listed(problems);
 }

@@ -183,6 +183,19 @@ function naiveFade(t: number): number {
 }
 
 /**
+ * The real offsets, with the x offset shifted by the number of draws so far. The count lives in a
+ * closure created once, outside the sampler, where module state would live.
+ */
+function driftingOffsets(): NoiseParts["offsets"] {
+  let draws = 0;
+  return (key, field, wavelength) => {
+    draws += 1;
+    const [x, y] = octaveOffsets(key, field, wavelength);
+    return [floorMod(x + draws, wavelength), y];
+  };
+}
+
+/**
  * A broken variant: its name, its parts, and the property check that must catch it, by the name
  * the sensitivity test gives that check.
  */
@@ -254,5 +267,12 @@ export const BROKEN_VARIANTS: readonly BrokenVariant[] = [
     name: "degenerate octave",
     caughtBy: "octaveDetail",
     parts: { ...FAITHFUL_PARTS, wavelength: (base, octave) => base / 4 ** octave },
+  },
+  {
+    // State kept between requests, as a module-level `let` would keep it: every request draws
+    // offsets, so a region changes with the requests served before it.
+    name: "module-level counter",
+    caughtBy: "history",
+    parts: { ...FAITHFUL_PARTS, offsets: driftingOffsets() },
   },
 ];

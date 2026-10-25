@@ -24,7 +24,7 @@
  * - **The fBm**: |v| ≤ noiseBound(spec) = Σ_o ⌈NOISE_PEAK·A_o / S⌉ ≤ 4·A (K = 4), since
  *   Σ_o A_o ≤ 2A − 1, at most ⌊log2 A⌋ + 1 octaves have A_o > 0, and
  *   1.53·(2A − 1) + ⌊log2 A⌋ + 1 ≤ 4A. With A ≤ 2^29 the bound is below 2^31, so every output
- *   fits an Int32Array; at the genesis's 2^30 it does not.
+ *   fits an Int32Array; at 2^30, the genesis's former bound, it does not.
  * - **Intermediates**, all below 2^53: the fade's Horner steps at most 15·2^48; a dot product 3·S;
  *   an interpolation's (b − a)·u at most 6·S²; n·A_o at most NOISE_PEAK·2^30 < 2^47; positions
  *   below 2^31 + 2^16.

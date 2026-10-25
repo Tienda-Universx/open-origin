@@ -55,6 +55,7 @@ import { Sfc32 } from "./support/sfc32.ts";
 import {
   compositionProblems,
   fadeProblems,
+  historyProblems,
   lipschitzBound,
   lipschitzProblems,
   octaveDetailProblems,
@@ -158,7 +159,7 @@ describe("fade", () => {
     expect(fadeProblems(fade)).toEqual([]);
   });
 
-  test("is within 1/2 + 2^-16 of the exact value, which the oracle's tolerance assumes", () => {
+  test("is within 1/2 + 2^-16 of the exact value, inside the 1 the noise's error bound assumes", () => {
     const S4 = BigInt(Q16) ** 4n;
     let worst = 0n;
     for (let t = 0; t <= Q16; t += 1) {
@@ -359,10 +360,11 @@ describe("bounds", () => {
   test("noiseBound of the largest spec fits int32, and every intermediate stays below 2^53", () => {
     expect(noiseBound(LARGEST)).toBeLessThanOrEqual(2 ** 31 - 1);
     expect(noiseBound(LARGEST)).toBeLessThanOrEqual(4 * LARGEST.amplitude);
-    // Why the amplitude stops at 2^29: at the genesis's 2^30, the bound passes int32.
+    // Why the amplitude stops at 2^29: at 2^30, the genesis's former bound, noiseBound passes int32.
     expect(noiseBound({ ...LARGEST, amplitude: 2 ** 30 })).toBeGreaterThan(2 ** 31 - 1);
     // A corner's dot product is at most 3·S; an interpolation multiplies a difference of two by a
-    // fade; an octave multiplies its noise by its amplitude, even at the genesis's 2^30.
+    // fade; an octave multiplies its noise by its amplitude, even at 2^30, the genesis's former
+    // bound.
     expect(6 * Q16 * Q16).toBeLessThan(2 ** 53);
     expect(NOISE_PEAK * 2 ** 30).toBeLessThan(2 ** 53);
   });
@@ -471,7 +473,8 @@ describe("float oracle", () => {
         expect(oracleProblems(SAMPLE, oracle, spec, at)).toEqual([]);
       }
     }
-    expect(oracleTolerance(UNIT)).toBe(9);
+    // 14 Q16 units of integer error, 1 for the floor, and the oracle's own rounding.
+    expect(oracleTolerance(UNIT)).toBe(14 + 1 + 2 ** -10);
   });
 
   test("the fBm agrees within its tolerance near the origin and at every edge", () => {
@@ -835,6 +838,7 @@ describe("sensitivity: property checks catch every broken variant", () => {
         chunk(0, 0),
         cell(-1, 3),
       ]),
+      history: historyProblems(sampler, SMALL, chunk(-1, -1), [chunk(0, 0), cell(-1, 3)]),
       seams: seamProblems(
         SEAM_SPEC,
         SEAM_ORIGINS.map((origin) => ({ sampler, ...origin })),

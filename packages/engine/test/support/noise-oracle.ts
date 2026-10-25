@@ -11,8 +11,9 @@ import type { CellRect, NoiseSpec } from "../../src/worldgen/noise.ts";
  * Its gradient table is its own copy of the 8 vectors (±1, ±2) and (±2, ±1), indexed by the low 3
  * bits of a block's word 0, so a change to noise.ts's table shows as a disagreement.
  *
- * It returns Σ_o A_o · n_o, the exact real fBm whose integer version noise.ts computes; noise.ts
- * stays within 8 Q16 units of each octave's real noise, plus 1 for each octave's floor.
+ * It returns Σ_o A_o · n_o, the real fBm whose integer version noise.ts computes, up to the
+ * rounding of doubles; noise.ts stays within 14 Q16 units of each octave's real noise, plus 1 for
+ * each octave's floor (oracleTolerance).
  */
 
 /** The 8 gradients, indexed by 3 bits of a block's word 0. */
@@ -83,7 +84,7 @@ function realNoise(octave: OracleOctave, x: number, y: number): number {
   return bottom + (top - bottom) * v;
 }
 
-/** The real fBm Σ_o A_o · n_o of `spec` over `rect`, row by row, without any rounding. */
+/** The real fBm Σ_o A_o · n_o of `spec` over `rect`, row by row, with no floor of its own. */
 export function oracleNoise(
   prepared: PreparedGenesis,
   spec: NoiseSpec,
@@ -107,15 +108,34 @@ export function oracleNoise(
 }
 
 /**
+ * How far one octave's integer noise may lie from its real noise, in Q16 units: the bound noise.ts
+ * documents with its Lipschitz bound. Each of the two levels of interpolation multiplies the fade's
+ * error, at most 1, by a difference of at most 6·S, which gives 12, and their floors add 2.
+ */
+const INTEGER_ERROR = 14;
+
+/**
+ * An allowance for the oracle's own rounding, in output units. The fractions and dot products are
+ * exact in doubles, as dyadic values of at most 19 bits; the fade rounds once, and the
+ * interpolations, on values below 8, a few times, so each octave's noise is within 74·2^−53 of
+ * the real one, and its product with A_o within 76·A_o·2^−53 < A_o·2^−46. The sum of at most 12
+ * octaves, whose partial sums stay below 2^31, rounds by at most 2^−22 per addition. With
+ * A ≤ 2^29 the total is below 2A·2^−46 + 12·2^−22 < 2^−15, and the allowance is 32 times that.
+ */
+const ORACLE_ROUNDING = 2 ** -10;
+
+/**
  * The largest difference between noise.ts and the oracle that the error analysis allows for
- * `spec`: 8 Q16 units of each octave's noise, scaled by its amplitude, plus 1 for its floor.
+ * `spec`: Σ_o (INTEGER_ERROR·A_o / S + 1) over the octaves whose amplitude is not 0, since the
+ * floor of n·A_o / S lowers each octave by less than 1, plus ORACLE_ROUNDING. Every partial sum
+ * is a multiple of 2^−16 below 2^18, so the tolerance itself is exact.
  */
 export function oracleTolerance(spec: NoiseSpec): number {
-  let tolerance = 0;
+  let tolerance = ORACLE_ROUNDING;
   for (let octave = 0; octave < spec.octaves; octave += 1) {
     const amplitude = Math.floor(spec.amplitude / 2 ** octave);
     if (amplitude === 0) break;
-    tolerance += (8 * amplitude) / 2 ** 16 + 1;
+    tolerance += (INTEGER_ERROR * amplitude) / 2 ** 16 + 1;
   }
   return tolerance;
 }
