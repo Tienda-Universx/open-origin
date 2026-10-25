@@ -367,7 +367,9 @@ in worlds:
   for, and alertness, which keeps a tired being from wandering by day;
 - the boundaries of its rules: a cooldown exactly SEARCH_RANGE away and one farther, food exactly
   WANDER_SIGHT cells from a target on each side and one farther, a route of exactly 64 steps
-  against one of 65, and cooled cells in the window's last column and last row;
+  against one of 65, cooled cells in the window's last column and last row, a cooldown one cell
+  past the window's east or north side, which maps to no cell of it, and a target exactly on the
+  world's last column;
 - by each of the four edges of the world, a wandering being and a searching one that propose
   nothing outside it, and a world of eight beings by the east edge, some of them heading toward
   it, with no intention refused;
@@ -400,7 +402,9 @@ wander or a search, no alertness, and off-by-one boundaries of the search's rang
 food, of a walk of 64 steps, and of the window's last column. The tests above now make each fail,
 with 4 more off-by-one boundaries of the sight and the window and a wander that aims outside the
 world, and so do the 34 defects before. One defect is equivalent: a search that aims outside the
-world finds no route there, so the check only spares an A*.
+world finds no route there, so the check only spares an A*. The verifier's recheck found one of
+the 11 still passing, a cooldown just past the window's east side mapped onto the next row, and a
+target on the world's last column skipped; the last two tests above make both fail.
 
 ## Navigation
 

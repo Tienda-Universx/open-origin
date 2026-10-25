@@ -91,6 +91,46 @@ describe("the edges of the world", () => {
   );
 });
 
+describe("the last cells", () => {
+  const { MAX_CELL } = worldgen;
+
+  test("aims at a cell exactly on the world's last column", () => {
+    // WANDER_REACH cells from the east edge, heading east: the target is the last column itself.
+    const cell: [number, number] = [MAX_CELL - WANDER_REACH, 0];
+    const outcome = { result: "failed", reason: "no_food" };
+    const senses = sensesOf(edgeWindow(cell, true), {
+      cell,
+      behavior: behavior("explore", 0),
+      outcome,
+    });
+    const intention = decide(senses);
+    const walk = intention.steps[0];
+    if (walk?.kind !== "walk") throw new Error("the being wanders east");
+    expect(walkEnd(walk.dirs)).toEqual([WANDER_REACH, 0]);
+    expect(intention.behavior.heading).toBe(0);
+  });
+
+  test.each([
+    { side: "east", food: [-24, 1], cooled: [25, 0] },
+    { side: "north", food: [1, -24], cooled: [0, 25] },
+  ] as const)(
+    "ignores a cooldown one cell past the window's $side side, which is no cell of it",
+    ({ food, cooled }) => {
+      // The only food in sight sits where an off-by-one would map the cooldown, so the being
+      // forages it: walk there, then eat.
+      const window = windowOf({ radius: 24, cues: [[food[0], food[1], 2]] });
+      const senses = sensesOf(window, {
+        nutrition: 500_000,
+        cooldowns: [{ cell: [cooled[0], cooled[1]], until: 99 }],
+      });
+      const intention = decide(senses);
+      expect(intention.behavior.kind).toBe("forage");
+      expect(intention.steps.map(({ kind }) => kind)).toEqual(["walk", "eat"]);
+      expect(beings.acceptIntention(intention, { tick: 9, window }).kind).toBe("accepted");
+    },
+  );
+});
+
 describe("the orders the brain keeps", () => {
   test("searches around the oldest cooldown near it, not the newest", () => {
     // The oldest, 12 cells west, sends the being north around it; the newest, 12 cells south,
