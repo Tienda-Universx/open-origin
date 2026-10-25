@@ -6,8 +6,11 @@
 import { EngineError, type Issue } from "@open-origin/engine";
 import {
   type CheckedGrid,
+  compass,
+  DIRECTIONS,
   MAX_EDGE_MS,
   MAX_WINDOW_SIDE,
+  neighbor,
   readCell,
   readGrid,
   readInteger,
@@ -71,13 +74,18 @@ function readBounds(value: unknown, issues: Issue[]): StepBounds | undefined {
  * find a shortest walk, since the heuristic could overestimate.
  */
 function reportShortEdges(grid: CheckedGrid, bounds: StepBounds, issues: Issue[]): void {
-  const { edgeMs } = grid;
+  const { edgeMs, side } = grid;
+  const window = compass(side);
   for (let index = 0; index < edgeMs.length; index += 1) {
     const entry = edgeMs[index] as number;
     // Entry index·8 + d has the parity of d: odd entries are diagonal steps.
     const kind = index % 2 === 1 ? "diagonal" : "straight";
     const bound = bounds[kind];
     if (entry < 0 || entry >= bound) continue;
+    // A step that leaves the window is impassable whatever its entry, so it cannot mislead.
+    const cell = (index - (index % DIRECTIONS)) / DIRECTIONS;
+    const at = neighbor(window, cell % side, (cell - (cell % side)) / side, index % DIRECTIONS);
+    if (at < 0) continue;
     issues.push({
       path: `/grid/edgeMs/${index}`,
       message: `${entry} is shorter than the bound of a ${kind} step, ${bound}: the heuristic would overestimate`,

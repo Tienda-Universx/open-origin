@@ -229,7 +229,7 @@ octile heuristic for a single target; ties break by (f, h, cell index).
   diagonal steps of the species (the engine's `minimumSteps`), integers with
   `0 < straight ≤ diagonal ≤ 2·straight` and `straight < 2^31`. The heuristic is octile,
   `straight·(dmax − dmin) + diagonal·dmin` (`octileMs`), admissible and consistent under those
-  bounds; a grid with a passable step shorter than its bound is rejected.
+  bounds; a grid with a step inside the window shorter than its bound is rejected.
 
 Contract and guarantees:
 
@@ -238,13 +238,13 @@ Contract and guarantees:
   window is impassable whatever its entry. Durations add up as doubles, exact below 2^53, so a walk
   of 65² − 1 steps of 2^31 − 1 ms stays exact.
 - Determinism: an indexed binary heap over typed arrays orders cells by (g, cell index) for
-  Dijkstra and by (f, h, cell index) for A*. Each cell is expanded at most once, which bounds the
-  nodes expanded by the window's cell count; a cell keeps the first walk that reached it with its
-  shortest duration, and edges are offered in direction order, so equal-duration alternatives
-  always resolve the same way.
+  Dijkstra and by (f, h, cell index) for A*, a total order, so equal-duration alternatives always
+  resolve the same way. Each cell is expanded at most once, which bounds the nodes expanded by the
+  window's cell count, and a cell keeps the first walk that reached it with its shortest
+  duration.
 - Invalid inputs throw `EngineError("invalid_value")` with every issue at its path: `/grid`,
   `/grid/side`, `/grid/edgeMs`, `/grid/edgeMs/<i>`, `/start`, `/goal`, `/target`,
-  `/bounds/straight`, `/bounds/diagonal`, `/dx`, `/dy`, and `/paths/arrival` when a caller changed
+  `/bounds`, `/bounds/straight`, `/bounds/diagonal`, `/dx`, `/dy`, and `/paths/arrival` when a caller changed
   the arrival directions of a result so that they no longer lead back to its start.
 - Every buffer belongs to one search: no module state, `Map`, `Set`, `Math`, `JSON`, or key
   enumeration.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dijkstra, pathTo } from "../src/index.ts";
+import { aStar, dijkstra, pathTo } from "../src/index.ts";
 import {
   cellAt,
   gridOf,
@@ -106,6 +106,17 @@ describe("dijkstra", () => {
     expect(pathTo(back, cellAt(side, 0, 5))).toBe("44444");
     expect(pathTo(back, cellAt(side, 5, 0))).toBe("66666");
     expect(back.expanded).toBe(20);
+  });
+
+  test("breaks a tie between equal durations by the lower cell index", () => {
+    // A 2 × 2 window with only east and north steps of 10 ms: cells 1 (east) and 2 (north) both
+    // reach cell 3 in 20 ms. Cell 1 has the lower index, so it is expanded first and its walk, east
+    // then north, is the one cell 3 keeps.
+    const edgeMs = new Int32Array(32).fill(-1);
+    for (const entry of [0 * 8 + 0, 0 * 8 + 2, 1 * 8 + 2, 2 * 8 + 0]) edgeMs[entry] = 10;
+    const grid = { side: 2, edgeMs };
+    expect(pathTo(dijkstra(grid, 0), 3)).toBe("02");
+    expect(aStar(grid, 0, 3, { straight: 10, diagonal: 10 })?.path).toBe("02");
   });
 
   test("breaks ties by duration, then by cell index: a pinned path among equal ones", () => {

@@ -20,7 +20,7 @@ export const MAX_WINDOW_SIDE = 65;
 export const DIRECTIONS = 8;
 
 /** The entry of an edge that cannot be walked. */
-export const IMPASSABLE = -1;
+const IMPASSABLE = -1;
 
 /** The longest step an edge can hold, the largest int32: 2^31 − 1 ms. */
 export const MAX_EDGE_MS = 0x7fff_ffff;
