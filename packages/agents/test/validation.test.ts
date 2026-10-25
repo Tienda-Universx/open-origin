@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dijkstra, pathTo, type WindowGrid } from "../src/index.ts";
+import { aStar, dijkstra, octileMs, pathTo, type WindowGrid } from "../src/index.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { uniformGrid } from "./support/grids.ts";
 
@@ -8,6 +8,7 @@ import { uniformGrid } from "./support/grids.ts";
  * JSON Pointer path under the argument's name, in one EngineError("invalid_value").
  */
 
+const BOUNDS = { straight: 10, diagonal: 14 };
 const GRID = uniformGrid(2, 10, 14);
 
 /** The issues of the EngineError that `action` throws, after checking its code. */
@@ -105,6 +106,13 @@ describe("cell indices", () => {
     expect(issuesOf(() => dijkstra(GRID, start as number))).toEqual([{ path: "/start", message }]);
   });
 
+  test("rejects the goal of A* as it rejects the start", () => {
+    expect(issuesOf(() => aStar(GRID, 4, -1, BOUNDS))).toEqual([
+      { path: "/start", message: "4 is out of bounds: it must be from 0 to 3" },
+      { path: "/goal", message: "-1 is out of bounds: it must be from 0 to 3" },
+    ]);
+  });
+
   test("checks a start beside an invalid grid as far as it can", () => {
     const grid = anyGrid({ side: "two", edgeMs: [] });
     expect(issuesOf(() => dijkstra(grid, Number.POSITIVE_INFINITY))).toEqual([
@@ -138,6 +146,90 @@ describe("cell indices", () => {
     paths.arrival[3] = three ?? 0;
     expect(issuesOf(() => pathTo(paths, 3))).toEqual([
       { path: "/paths/arrival", message: "the arrival directions do not lead back to the start" },
+    ]);
+  });
+});
+
+describe("the step bounds of A*", () => {
+  const STRAIGHT = "/bounds/straight";
+  const DIAGONAL = "/bounds/diagonal";
+
+  test.each([
+    [{ straight: 10, diagonal: 21 }, DIAGONAL, "21 is out of bounds: it must be from 10 to 20"],
+    [{ straight: 10, diagonal: 9 }, DIAGONAL, "9 is out of bounds: it must be from 10 to 20"],
+    [{ straight: 0, diagonal: 0 }, STRAIGHT, "0 is out of bounds: it must be from 1 to 2147483647"],
+    [
+      { straight: -3, diagonal: 4 },
+      STRAIGHT,
+      "-3 is out of bounds: it must be from 1 to 2147483647",
+    ],
+    [
+      { straight: 2 ** 31, diagonal: 2 ** 31 },
+      STRAIGHT,
+      "2147483648 is out of bounds: it must be from 1 to 2147483647",
+    ],
+    [{ straight: 2 ** 53, diagonal: 14 }, STRAIGHT, "9007199254740992 is not a safe integer"],
+    [{ straight: 10, diagonal: 2 ** 53 + 2 }, DIAGONAL, "9007199254740994 is not a safe integer"],
+    [{ straight: 1.5, diagonal: 2 }, STRAIGHT, "1.5 is not a safe integer"],
+    [{ straight: 10, diagonal: "14" }, DIAGONAL, "a value of type string is not a safe integer"],
+  ])("rejects %p", (bounds, path, message) => {
+    // A bound outside its range leaves the other unchecked against it, so one issue each time.
+    const grid = uniformGrid(2, 2 ** 31 - 1);
+    expect(issuesOf(() => aStar(grid, 0, 3, bounds as typeof BOUNDS))).toEqual([{ path, message }]);
+  });
+
+  test("accepts diagonal bounds equal to straight and to twice straight", () => {
+    expect(aStar(uniformGrid(2, 10), 0, 3, { straight: 10, diagonal: 10 })?.durationMs).toBe(10);
+    expect(aStar(uniformGrid(2, 10, 20), 0, 3, { straight: 10, diagonal: 20 })?.durationMs).toBe(
+      20,
+    );
+  });
+
+  test("must be a record", () => {
+    expect(issuesOf(() => aStar(GRID, 0, 3, null as unknown as typeof BOUNDS))).toEqual([
+      { path: "/bounds", message: "the bounds must be a record { straight, diagonal }" },
+    ]);
+  });
+
+  test("reports every edge shorter than its bound, which would make the heuristic overestimate", () => {
+    const grid = uniformGrid(2, 10, 14);
+    grid.edgeMs[0] = 9;
+    grid.edgeMs[8 * 3 + 5] = 13;
+    expect(issuesOf(() => aStar(grid, 0, 3, BOUNDS))).toEqual([
+      {
+        path: "/grid/edgeMs/0",
+        message:
+          "9 is shorter than the bound of a straight step, 10: the heuristic would overestimate",
+      },
+      {
+        path: "/grid/edgeMs/29",
+        message:
+          "13 is shorter than the bound of a diagonal step, 14: the heuristic would overestimate",
+      },
+    ]);
+  });
+
+  test("reports problems of every argument together", () => {
+    const grid = anyGrid({ side: 2, edgeMs: new Int32Array(31) });
+    expect(issuesOf(() => aStar(grid, 7, 0.5, { straight: 5, diagonal: 11 }))).toEqual([
+      { path: "/grid/edgeMs", message: "it has 31 entries: a window of side 2 has 32" },
+      { path: "/start", message: "7 is out of bounds: it must be from 0 to 3" },
+      { path: "/goal", message: "0.5 is not a safe integer" },
+      { path: "/bounds/diagonal", message: "11 is out of bounds: it must be from 5 to 10" },
+    ]);
+  });
+});
+
+describe("octileMs", () => {
+  test("validates its bounds and its offset, which must lie inside a window", () => {
+    expect(issuesOf(() => octileMs({ straight: 4, diagonal: 9 }, 65, -65))).toEqual([
+      { path: "/bounds/diagonal", message: "9 is out of bounds: it must be from 4 to 8" },
+      { path: "/dx", message: "65 is out of bounds: it must be from -64 to 64" },
+      { path: "/dy", message: "-65 is out of bounds: it must be from -64 to 64" },
+    ]);
+    expect(issuesOf(() => octileMs(BOUNDS, 0.5, Number.NaN))).toEqual([
+      { path: "/dx", message: "0.5 is not a safe integer" },
+      { path: "/dy", message: "NaN is not a safe integer" },
     ]);
   });
 });
