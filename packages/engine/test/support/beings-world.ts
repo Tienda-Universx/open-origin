@@ -104,11 +104,14 @@ export function chunkOf(cell: readonly [number, number]): string {
   return `${worldgen.chunkOfCell(cell[0])},${worldgen.chunkOfCell(cell[1])}`;
 }
 
-/** The window of the default species around `center` in the test world, before any being ate. */
-export function windowAt(center: readonly [number, number]): beings.SensedWindow {
+/** The window of `species` around `center` in the test world, before any being ate. */
+export function windowAt(
+  center: readonly [number, number],
+  species: beings.Species = SPECIES,
+): beings.SensedWindow {
   return beings.senseWindow({
     prepared: PREPARED,
-    species: SPECIES,
+    species,
     center: [center[0], center[1]],
     view: { readChunk: () => undefined },
     nowSeconds: 0,

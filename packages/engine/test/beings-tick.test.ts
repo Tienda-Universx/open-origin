@@ -23,6 +23,7 @@ import {
   beingsOf,
   beingsWorld,
   brain,
+  centerEdge,
   chunkOf,
   cumulative,
   findCell,
@@ -202,13 +203,13 @@ describe("meals", () => {
       const steps = [{ kind: "eat", untilNutrition: 900_000 }] as const;
       return { steps, wakeWhen: {}, behavior: behavior("eat") };
     }
-    return idleFor(600_000);
+    return idleFor(120_000);
   });
 
   /** A hungry being at the first cell with at least two bites of food, and that food. */
-  function meal(nutrition: number) {
+  function meal(nutrition: number, life?: beings.LifeConfig) {
     const cell = findCell([-128, -128], 256, { food: 2 * SPECIES.diet.biteUnits });
-    const world = beingsWorld({ controllers: { [SPECIES.id]: eater } });
+    const world = beingsWorld({ controllers: { [SPECIES.id]: eater }, ...(life && { life }) });
     const needs = { nutrition, rest: 900_000 };
     return {
       cell,
@@ -270,27 +271,38 @@ describe("meals", () => {
   });
 
   test("find the cell regrown at the law's rate at a later decision, and eat it again", () => {
-    const { cell, food, world, spawned } = meal(100_000);
-    const lastTake = bitesOf(food).at(-1)?.[0] as number;
-    // After the meal the being idles from the next tick, deciding every 50 ticks; it eats again at
-    // the first decision whose senses show `some` food regrown since the last take.
-    const regrown = (tick: number) =>
-      Math.floor(((tick - lastTake) * 12 * SPECIES.regrowth.num) / SPECIES.regrowth.den);
-    let again = mealEnd(food) + 1;
-    while (regrown(again) < SPECIES.diet.cue.some) again += 50;
+    // One unit regrows per tick, so a shift of one tick in regrowth shows in what is left.
+    const perTick = lifeWith((species) => ({ ...species, regrowth: { num: 1, den: 12 } }));
+    const { cell, food, world, spawned } = meal(100_000, perTick);
+    const index = worldgen.cellOffset(cell[1]) * 32 + worldgen.cellOffset(cell[0]);
+    // The first meal, which regrowth lengthens, ends when the cell runs out.
+    let ended = 0;
+    for (let tick = 1; ended === 0; tick += 1) {
+      const events = runTo(world, tick, [spawned]);
+      if (events.some((event) => event.type === "being.finished")) ended = tick;
+    }
+    const entry = readView(world)
+      .readChunk(chunkOf(cell))
+      ?.depletion.find((e) => e.cell === index);
+    if (entry === undefined) throw new Error("the first meal left a depletion entry");
+    // The food at a tick: the deposit less what was taken and has not regrown since.
+    const foodAt = (tick: number) => food - Math.max(0, entry.taken - (tick - entry.since));
+    // The being idles from the next tick, deciding every 10 ticks, and eats again at the first
+    // decision whose senses show `some` food.
+    let again = ended + 1;
+    while (foodAt(again) < SPECIES.diet.cue.some) again += 10;
     const bite = again + SPECIES.diet.biteMs / 12_000;
-    const events = runTo(world, bite, [spawned]);
+    const events = runTo(world, bite);
     const meals = events.filter(
       (event) =>
         event.type === "being.started" &&
         (event.payload as { activity: string }).activity === "eat",
     );
-    expect(meals.map(({ tick }) => tick)).toEqual([2, again]);
-    // The entry of the cell re-anchors at the new bite: what had not regrown, plus what it took.
-    const units = Math.min(SPECIES.diet.biteUnits, regrown(bite));
-    const index = worldgen.cellOffset(cell[1]) * 32 + worldgen.cellOffset(cell[0]);
+    expect(meals.map(({ tick }) => tick)).toEqual([again]);
+    // The entry re-anchors at the new bite: what had not regrown, plus what it took.
+    const units = Math.min(SPECIES.diet.biteUnits, foodAt(bite));
     expect(readView(world).readChunk(chunkOf(cell))?.depletion).toEqual([
-      { cell: index, taken: food - regrown(bite) + units, since: bite },
+      { cell: index, taken: food - foodAt(bite) + units, since: bite },
     ]);
   });
 
@@ -313,9 +325,11 @@ describe("meals", () => {
 describe("sleep", () => {
   test("is forced at exhaustion, without asking the brain until rest is full", () => {
     let decisions = 0;
+    // It idles long, so only the level of rest 0 wakes it, and asks for a condition that the
+    // forced sleep must drop.
     const tireless = brain(() => {
       decisions += 1;
-      return idleFor(12_000);
+      return idleFor(6_000_000, { nutritionBelow: 10 });
     });
     const quickSleep = lifeWith((species) => ({
       ...species,
@@ -329,6 +343,8 @@ describe("sleep", () => {
     expect(
       events.filter((event) => event.type === "being.exhausted").map(({ tick }) => tick),
     ).toEqual([12]);
+    // toMatchObject would accept any conditions for {}: they are compared whole.
+    expect(beingOf(world, 1).wakeWhen).toEqual({});
     expect(beingOf(world, 1)).toMatchObject({
       activity: { kind: "sleep", untilRest: 1_000_000, forced: true },
       anchor: 12,
@@ -486,5 +502,272 @@ describe("resumed worlds", () => {
       expect(step(resumed, []).checksum).toBe(step(original, []).checksum);
     }
     expect(beingsOf(resumed)).toEqual(beingsOf(original));
+  });
+});
+
+describe("the edges of the tick", () => {
+  /** A brain that writes over the window it senses, then walks one step east. */
+  const forger = brain((senses) => {
+    (senses.window.edgeMs as unknown as Int32Array).fill(1);
+    return { steps: [{ kind: "walk", dirs: "0" }], wakeWhen: {}, behavior: behavior("travel") };
+  });
+
+  test("judge a walk against the engine's own window, whatever the brain writes to its copy", () => {
+    const open = findCell([0, 0], 32, {
+      food: 0,
+      accept: (_cell, window) => centerEdge(window, 0) > 0,
+    });
+    const world = beingsWorld({ controllers: { [SPECIES.id]: forger } });
+    runTo(world, 2, [spawn(1, { species: SPECIES.id, cell: open })]);
+    expect(beingOf(world, 1).activity).toMatchObject({
+      kind: "walk",
+      ms: [centerEdge(windowAt(open), 0)],
+    });
+    // A species that climbs nothing: its east step from `closed` is blocked, forged or not.
+    const flatFooted = lifeWith((species) => ({
+      ...species,
+      locomotion: { ...species.locomotion, maxRise: 0 },
+    }));
+    const species = flatFooted.species[0] as beings.Species;
+    const closed = findCell([0, 0], 32, {
+      food: 0,
+      accept: (cell) => centerEdge(windowAt(cell, species), 0) < 0,
+    });
+    const strict = beingsWorld({ controllers: { [SPECIES.id]: forger }, life: flatFooted });
+    const events = runTo(strict, 2, [spawn(1, { species: SPECIES.id, cell: closed })]);
+    expect(
+      events.filter(({ tick }) => tick === 2).map(({ type, payload }) => [type, payload]),
+    ).toEqual([["being.intention_rejected", { id: 1, reason: "walk_blocked" }]]);
+    expect(beingOf(strict, 1).cell).toEqual(closed);
+  });
+
+  test("ask the brain when a wake condition holds, even with planned steps left", () => {
+    let decisions = 0;
+    const planner = brain((senses) => {
+      decisions += 1;
+      if (senses.self.outcome.reason === "wake_condition") return idleFor(6_000_000);
+      const steps = [
+        { kind: "idle", ms: 6_000_000 },
+        { kind: "sleep", untilRest: 1_000_000 },
+      ] as const;
+      return { steps, wakeWhen: { nutritionBelow: 899_000 }, behavior: behavior("wait") };
+    });
+    const world = beingsWorld({ controllers: { [SPECIES.id]: planner } });
+    const needs = { nutrition: 900_000, rest: 900_000 };
+    // Nutrition falls 1000 after ⌈1000·189/1250⌉ = 152 s, at tick 1 + ⌈152/12⌉ = 14.
+    const events = runTo(world, 20, [spawn(1, { species: SPECIES.id, cell: [5, 5], needs })]);
+    const at14 = events
+      .filter(({ tick }) => tick === 14)
+      .map(({ type, payload }) => [type, payload]);
+    expect(at14).toEqual([
+      [
+        "being.finished",
+        { id: 1, activity: "idle", result: "interrupted", reason: "wake_condition" },
+      ],
+      ["being.started", { id: 1, activity: "idle" }],
+    ]);
+    expect(decisions).toBe(2);
+    const being = beingOf(world, 1);
+    expect([being.activity, being.plan, being.wakeWhen]).toEqual([
+      { kind: "idle", start: 14, ms: 6_000_000 },
+      [],
+      {},
+    ]);
+  });
+
+  test("end a sleep whose target is already met at the next tick", () => {
+    const sleeper = brain((senses) =>
+      senses.self.outcome.result === "none"
+        ? {
+            steps: [{ kind: "sleep", untilRest: 500_000 }],
+            wakeWhen: {},
+            behavior: behavior("sleep"),
+          }
+        : idleFor(6_000_000),
+    );
+    const world = beingsWorld({ controllers: { [SPECIES.id]: sleeper } });
+    const needs = { nutrition: 900_000, rest: 900_000 };
+    const events = runTo(world, 3, [spawn(1, { species: SPECIES.id, cell: [5, 5], needs })]);
+    expect(
+      events
+        .filter((event) => event.type === "being.finished")
+        .map(({ tick, payload }) => [tick, payload]),
+    ).toEqual([[3, { id: 1, activity: "sleep", result: "done", reason: "" }]]);
+  });
+
+  test("move the steps due at the tick of exhaustion, and pair the events of the forced sleep", () => {
+    const dirs = "04".repeat(32);
+    let start: [number, number] = [0, 0];
+    let ms: number[] | undefined;
+    for (let x = 0; ms === undefined; x += 1) {
+      start = [x, 3];
+      ms = walkMs(windowAt(start), dirs);
+    }
+    const arrivals = cumulative(ms).map((total) => 2 + Math.ceil(total / 12_000));
+    // Rest falls idle from tick 1 to 2, by ⌊3125·12/378⌋ = 99, then walking at 15625/1512 per
+    // second: the first rest whose exhaustion falls on an arrival other than the last.
+    const { walking } = SPECIES.needs.rest;
+    const exhaustion = (rest: number) =>
+      2 + Math.ceil(Math.ceil(((rest - 99) * walking.den) / walking.num) / 12);
+    let rest = 300;
+    while (!arrivals.slice(0, -1).includes(exhaustion(rest))) rest += 1;
+    const tick = exhaustion(rest);
+    const world = beingsWorld({ controllers: { [SPECIES.id]: walker(dirs) } });
+    const events = runTo(world, tick, [
+      spawn(1, { species: SPECIES.id, cell: start, needs: { nutrition: 900_000, rest } }),
+    ]);
+    const arrived = arrivals.filter((arrival) => arrival <= tick).length;
+    expect(beingOf(world, 1).cell).toEqual([start[0] + (arrived % 2), start[1]]);
+    expect(
+      events.filter((event) => event.tick === tick).map(({ type, payload }) => [type, payload]),
+    ).toEqual([
+      ["being.exhausted", { id: 1 }],
+      ["being.finished", { id: 1, activity: "walk", result: "interrupted", reason: "exhausted" }],
+      ["being.started", { id: 1, activity: "sleep" }],
+    ]);
+  });
+
+  test("interrupt a meal at once when a wake condition holds at a bite, without that bite", () => {
+    const cell = findCell([-128, -128], 256, { food: 2 * SPECIES.diet.biteUnits });
+    // The light falls past noon: a threshold equal to the light of tick 36 is first met there,
+    // at the second bite of a meal that starts at tick 26.
+    const threshold = lightAt(36);
+    expect(lightAt(35)).toBeGreaterThan(threshold);
+    const diner = brain((senses) =>
+      senses.self.outcome.result === "none"
+        ? {
+            steps: [{ kind: "eat", untilNutrition: 1_000_000 }],
+            wakeWhen: { lightBelow: threshold },
+            behavior: behavior("eat"),
+          }
+        : idleFor(6_000_000),
+    );
+    const world = beingsWorld({ controllers: { [SPECIES.id]: diner } });
+    const needs = { nutrition: 500_000, rest: 900_000 };
+    const events = runTo(world, 40, [spawn(25, { species: SPECIES.id, cell, needs })]);
+    expect(events.filter((event) => event.type === "being.ate").map(({ tick }) => tick)).toEqual([
+      31,
+    ]);
+    expect(
+      events
+        .filter((event) => event.type === "being.finished")
+        .map(({ tick, payload }) => [tick, payload]),
+    ).toEqual([[36, { id: 1, activity: "eat", result: "interrupted", reason: "wake_condition" }]]);
+    // The cell gave only the first bite: none was taken, or lost, at the interruption.
+    const index = worldgen.cellOffset(cell[1]) * 32 + worldgen.cellOffset(cell[0]);
+    expect(readView(world).readChunk(chunkOf(cell))?.depletion).toEqual([
+      { cell: index, taken: SPECIES.diet.biteUnits, since: 31 },
+    ]);
+  });
+
+  test("clear the wake conditions of a refused intention", () => {
+    // The first decision waits with a condition; the next one, after the wait, is malformed.
+    const fickle = brain((senses) =>
+      senses.self.behavior.kind === "none"
+        ? { ...idleFor(120_000, { nutritionBelow: 1 }), behavior: behavior("wait") }
+        : ({ steps: [], wakeWhen: {}, behavior: behavior("x") } as never),
+    );
+    const world = beingsWorld({ controllers: { [SPECIES.id]: fickle } });
+    runTo(world, 2, [spawn(1, { species: SPECIES.id, cell: [5, 5] })]);
+    expect(beingOf(world, 1).wakeWhen).toEqual({ nutritionBelow: 1 });
+    runTo(world, 12);
+    expect(beingOf(world, 1).outcome).toMatchObject({ result: "rejected", tick: 12 });
+    expect(beingOf(world, 1).wakeWhen).toEqual({});
+  });
+
+  test("drop a wake condition already met exactly when the brain asks for it", () => {
+    const exact = brain((senses) =>
+      idleFor(6_000_000, { nutritionBelow: senses.self.needs.nutrition }),
+    );
+    const world = beingsWorld({ controllers: { [SPECIES.id]: exact } });
+    runTo(world, 2, [spawn(1, { species: SPECIES.id, cell: [5, 5] })]);
+    expect(beingOf(world, 1).wakeWhen).toEqual({});
+  });
+
+  test("re-anchor at the tick rest passes recoverAbove while it rises, not at the tick it reaches it", () => {
+    // Rest rises from 0 at 25,000 per second in a forced sleep from tick 2: it is exactly
+    // recoverAbove at tick 3, which changes nothing, and passes it at tick 4, where health starts
+    // to rise.
+    const slowSleep = lifeWith((species) => ({
+      ...species,
+      sleep: { recover: { num: 25_000, den: 1 } },
+    }));
+    expect(SPECIES.health.recoverAbove).toBe(300_000);
+    const world = beingsWorld({ controllers: { [SPECIES.id]: idler(6_000_000) }, life: slowSleep });
+    runTo(world, 2, [
+      spawn(1, { species: SPECIES.id, cell: [5, 5], needs: { nutrition: 900_000, rest: 0 } }),
+    ]);
+    expect(beingOf(world, 1)).toMatchObject({ anchor: 2, wake: 3 });
+    runTo(world, 3);
+    expect(beingOf(world, 1)).toMatchObject({ anchor: 2, wake: 4 });
+    runTo(world, 4);
+    expect(beingOf(world, 1).anchor).toBe(4);
+  });
+
+  test("drop a cell's depletion once it fully regrew, when its chunk is written again", () => {
+    const cell = findCell([-128, -128], 256, { food: 2 * SPECIES.diet.biteUnits });
+    const quickGrowth = lifeWith((species) => ({ ...species, regrowth: { num: 1, den: 1 } }));
+    const snack = brain((senses) =>
+      senses.self.outcome.result === "none"
+        ? {
+            steps: [{ kind: "eat", untilNutrition: 900_000 }],
+            wakeWhen: {},
+            behavior: behavior("eat"),
+          }
+        : idleFor(600_000),
+    );
+    const world = beingsWorld({ controllers: { [SPECIES.id]: snack }, life: quickGrowth });
+    const needs = { nutrition: 850_000, rest: 900_000 };
+    // The bites at ticks 7 and 12 sate the being, which decides at tick 13 to idle 50 ticks. At
+    // one unit per second, the cell has regrown long before tick 63, when its chunk is written.
+    runTo(world, 62, [spawn(1, { species: SPECIES.id, cell, needs })]);
+    expect(readView(world).readChunk(chunkOf(cell))?.depletion).toHaveLength(1);
+    runTo(world, 63);
+    expect(readView(world).readChunk(chunkOf(cell))?.depletion).toEqual([]);
+  });
+
+  test("recover from incapacity at the tick health passes recoverAbove, however often processed", () => {
+    // Health falls and recovers at 5,000 per second, and one bite feeds 500,000.
+    const fast = lifeWith((species) => ({
+      ...species,
+      diet: { ...species.diet, nutritionPerUnit: 20_000 },
+      health: { ...species.health, starve: { num: 5000, den: 1 }, recover: { num: 5000, den: 1 } },
+    }));
+    const patient = brain((senses) => {
+      const radius = (senses.window.side - 1) / 2;
+      const cue = senses.window.foodCue[radius * senses.window.side + radius] ?? 0;
+      const { condition, needs, id } = senses.self;
+      if (condition === "incapacitated" && needs.nutrition < 400_000 && cue > 0) {
+        return {
+          steps: [{ kind: "eat", untilNutrition: 400_000 }],
+          wakeWhen: {},
+          behavior: behavior("eat"),
+        };
+      }
+      // Fed, being 1 decides every tick and being 2 every 500 ticks.
+      return idleFor(needs.nutrition >= 400_000 && id === 2 ? 6_000_000 : 12_000);
+    });
+    const first = findCell([-128, -128], 256, { food: SPECIES.diet.biteUnits });
+    const second = findCell([first[0] + 1, first[1]], 128, { food: SPECIES.diet.biteUnits });
+    const world = beingsWorld({ controllers: { [SPECIES.id]: patient }, life: fast });
+    const needs = { nutrition: 0, rest: 900_000 };
+    const events = runTo(world, 140, [
+      spawn(1, { species: SPECIES.id, cell: first, needs }, 0),
+      spawn(1, { species: SPECIES.id, cell: second, needs }, 1),
+    ]);
+    // Health is 0 after 200 s, at tick 18, where both start to eat; the bite at tick 23 lifts
+    // nutrition, and health passes recoverAbove ⌈300,001 / 5000⌉ = 61 s later, at tick 29.
+    const recovery = 23 + Math.ceil(Math.ceil((SPECIES.health.recoverAbove + 1) / 5000) / 12);
+    const recovered = events.filter((event) => event.type === "being.recovered");
+    expect(recovered.map(({ tick, payload }) => [tick, payload])).toEqual([
+      [recovery, { id: 1 }],
+      [recovery, { id: 2 }],
+    ]);
+  });
+
+  test("process a being at least once a simulated day", () => {
+    const world = beingsWorld({ controllers: { [SPECIES.id]: idler(6_000_000) } });
+    runTo(world, 2, [spawn(1, { species: SPECIES.id, cell: [5, 5] })]);
+    expect(beingOf(world, 1).wake).toBe(2 + 100);
   });
 });

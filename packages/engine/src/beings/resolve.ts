@@ -42,7 +42,10 @@ function byPlace(a: Work, b: Work): number {
 /** Grants `units` of food to `work`: nutrition, bites, and the end of a meal the cell cannot feed. */
 function grant(env: BeingsEnv, work: Work, units: number, contested: boolean): void {
   const claim = work.claim;
-  if (claim === undefined || work.activity.kind !== "eat") return;
+  if (claim === undefined) return;
+  // Only a meal claims food; anything else would take food that nobody eats.
+  if (work.activity.kind !== "eat")
+    throw integrity(`the being ${work.old.id} claims food without eating`);
   const nutrition = least(
     work.body.nutrition + units * work.species.diet.nutritionPerUnit,
     NEED_MAX,
@@ -116,9 +119,15 @@ function sameCell(a: Work, b: Work): boolean {
   return a.claim?.chunk === b.claim?.chunk && a.claim?.cell === b.claim?.cell;
 }
 
-/** The wake conditions and activity targets of `work`, as levels its body must not pass unseen. */
+/**
+ * The levels of `work` beyond those of every being, which its body must not pass unseen: the health
+ * at which an incapacitated being recovers, the target of its sleep, and its wake conditions.
+ */
 function extraLevels(work: Work): Level[] {
   const levels: Level[] = [];
+  const { recoverAbove } = work.species.health;
+  if (work.condition === "incapacitated" && recoverAbove < NEED_MAX)
+    levels.push({ of: "health", at: recoverAbove + 1 });
   if (work.activity.kind === "sleep") levels.push({ of: "rest", at: work.activity.untilRest });
   if (work.activity.kind === "sleep" && work.activity.forced) return levels;
   if (work.wakeWhen.nutritionBelow !== undefined)
@@ -135,7 +144,8 @@ function activityTick(env: BeingsEnv, work: Work): Tick | undefined {
   if (activity.kind === "eat")
     return nextBite(activity, { simSecondsPerTick: env.sps, biteMs: work.species.diet.biteMs });
   if (activity.kind === "idle") return idleEnd(activity, env.sps);
-  return undefined;
+  // A sleep whose target rest already holds ends at the next tick; otherwise its level ends it.
+  return work.body.rest >= activity.untilRest ? env.tick + 1 : undefined;
 }
 
 /** The next ticks at which the light reaches the levels the brain asked for. */

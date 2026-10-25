@@ -20,7 +20,7 @@ import type {
   WakeConditions,
 } from "./being.ts";
 import { type Body, bodyAt } from "./body.ts";
-import { DIRECTIONS, type Senses } from "./contracts.ts";
+import { DIRECTIONS, type SensedWindow, type Senses } from "./contracts.ts";
 import type { BeingsEnv } from "./env.ts";
 import { acceptIntention } from "./intention.ts";
 import type { Species } from "./laws.ts";
@@ -90,28 +90,42 @@ function finish(env: BeingsEnv, work: Work, result: string, reason = ""): void {
   work.activity = { kind: "idle", start: env.tick, ms: 1 };
 }
 
+/** Ends the current activity because of `reason`; a walk whose last step arrived is done. */
+function interrupt(env: BeingsEnv, work: Work, reason: string): void {
+  const activity = work.activity;
+  const arrived = activity.kind === "walk" && activity.done === activity.dirs.length;
+  finish(env, work, arrived ? "done" : "interrupted", arrived ? "" : reason);
+}
+
 /** Applies physiology at this tick: incapacity or death at health 0, recovery, and forced sleep. */
 function physiology(env: BeingsEnv, work: Work): void {
+  condition(env, work);
+  if (work.died || work.body.rest > 0 || work.activity.kind === "sleep") return;
+  env.emit("being.exhausted", { id: work.old.id });
+  interrupt(env, work, "exhausted");
+  work.activity = { kind: "sleep", untilRest: NEED_MAX, forced: true };
+  work.plan = [];
+  work.wakeWhen = {};
+  env.emit("being.started", { id: work.old.id, activity: "sleep" });
+}
+
+/** Incapacity or death at health 0, and recovery once health passes `recoverAbove`. */
+function condition(env: BeingsEnv, work: Work): void {
   const { body, species } = work;
-  if (body.health === 0 && work.condition === "ok") {
-    if (env.deathEnabled) {
-      work.died = true;
-      env.emit("being.died", { id: work.old.id, cell: [...work.cell] });
-      return;
-    }
-    work.condition = "incapacitated";
-    env.emit("being.incapacitated", { id: work.old.id });
-    if (work.activity.kind === "walk") finish(env, work, "interrupted", "incapacitated");
-  } else if (work.condition === "incapacitated" && body.health > species.health.recoverAbove) {
+  if (work.condition === "incapacitated" && body.health > species.health.recoverAbove) {
     work.condition = "ok";
     env.emit("being.recovered", { id: work.old.id });
+    return;
   }
-  if (body.rest === 0 && work.activity.kind !== "sleep") {
-    env.emit("being.exhausted", { id: work.old.id });
-    work.activity = { kind: "sleep", untilRest: NEED_MAX, forced: true };
-    work.plan = [];
-    work.wakeWhen = {};
+  if (body.health > 0 || work.condition !== "ok") return;
+  if (env.deathEnabled) {
+    work.died = true;
+    env.emit("being.died", { id: work.old.id, cell: [...work.cell] });
+    return;
   }
+  work.condition = "incapacitated";
+  env.emit("being.incapacitated", { id: work.old.id });
+  if (work.activity.kind === "walk") interrupt(env, work, "incapacitated");
 }
 
 /** Moves the being along the steps of its walk that arrived by this tick; true when it ended. */
@@ -202,9 +216,9 @@ function refuse(env: BeingsEnv, work: Work, reason: string): boolean {
   return false;
 }
 
-/** The senses of the being at this tick: a fresh copy that shares nothing with the world. */
-function sensesOf(env: BeingsEnv, work: Work): Senses {
-  const window = senseWindow({
+/** The window the being senses at this tick, which the engine keeps to judge the intention. */
+function windowOf(env: BeingsEnv, work: Work): SensedWindow {
+  return senseWindow({
     prepared: env.prepared(),
     species: work.species,
     center: work.cell,
@@ -212,6 +226,19 @@ function sensesOf(env: BeingsEnv, work: Work): Senses {
     nowSeconds: env.now,
     simSecondsPerTick: env.sps,
   });
+}
+
+/**
+ * The senses of the being at this tick: fresh copies that share nothing with the world, nor with
+ * `window`, so that a brain that writes to its senses changes nothing the engine judges by.
+ */
+function sensesOf(env: BeingsEnv, work: Work, window: SensedWindow): Senses {
+  const copy: SensedWindow = {
+    origin: [window.origin[0], window.origin[1]],
+    side: window.side,
+    edgeMs: window.edgeMs.slice(),
+    foodCue: window.foodCue.slice(),
+  };
   const self = copyCanonical({
     id: work.old.id,
     species: work.species.id,
@@ -225,7 +252,7 @@ function sensesOf(env: BeingsEnv, work: Work): Senses {
     outcome: copyCanonical(work.outcome),
     cooldowns: copyCanonical(work.cooldowns),
   }) as Senses["self"];
-  return { self, light: env.light(), window, draws: env.draws(work.old.id) };
+  return { self, light: env.light(), window: copy, draws: env.draws(work.old.id) };
 }
 
 /** Drops the wake conditions that already hold, so that each can only fire on a transition. */
@@ -243,9 +270,9 @@ function pending(env: BeingsEnv, work: Work, conditions: WakeConditions): WakeCo
 
 /** Asks the being's brain, judges what it proposes, and starts the accepted first step. */
 function decide(env: BeingsEnv, work: Work): void {
-  const senses = sensesOf(env, work);
-  const proposal = env.controller(work.species.id).decide(senses);
-  const judged = acceptIntention(proposal, { tick: env.tick, window: senses.window });
+  const window = windowOf(env, work);
+  const proposal = env.controller(work.species.id).decide(sensesOf(env, work, window));
+  const judged = acceptIntention(proposal, { tick: env.tick, window });
   if (judged.kind === "rejected") {
     refuse(env, work, judged.reason);
     return;
@@ -282,6 +309,8 @@ function next(env: BeingsEnv, work: Work): void {
 /** Phase 2 for one due being: its Work at this tick, decisions included. */
 export function advance(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Being>): Work {
   const work = workOf(env, from, being);
+  // The steps due by this tick arrived before anything physiology does at it.
+  if (work.activity.kind === "walk") walk(env, work, work.activity);
   const before = work.activity.kind;
   physiology(env, work);
   if (work.died) return work;
@@ -289,9 +318,11 @@ export function advance(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Bein
   const ended = !forced && progress(env, work);
   if (ended && work.activity.kind !== "idle") finish(env, work, "done");
   if (ended) next(env, work);
-  else if (!forced && work.claim === undefined && wakeConditionHolds(env, work)) {
+  else if (!forced && wakeConditionHolds(env, work)) {
+    // The brain decides anew, which replaces the plan; a meal takes no bite at this tick.
+    work.claim = undefined;
     finish(env, work, "interrupted", "wake_condition");
-    next(env, work);
+    decide(env, work);
   }
   return work;
 }

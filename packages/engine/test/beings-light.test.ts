@@ -39,7 +39,9 @@ function scan(
 describe("nextLightTick", () => {
   test.each([
     ["the default day at 12 s per tick", 75_600, 550, 12],
-    ["a short day with an odd light period", 601, 333, 1],
+    ["a short day of odd length", 601, 333, 1],
+    ["a short day whose light period, ⌊1001·333/1000⌋ = 333 s, is odd", 1_001, 333, 1],
+    ["the same day at 2 s per tick", 1_001, 333, 2],
     ["a short day at 7 s per tick", 1_400, 500, 7],
   ])("equals a scan of every tick on %s", (_name, length, daylight, sps) => {
     const clock = clockOf(length, daylight, sps);

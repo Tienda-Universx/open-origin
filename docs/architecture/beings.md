@@ -71,6 +71,10 @@ allows, `stepMs + ⌊rise·maxRise⌋ + ⌊wade·maxWade⌋`, is at most 1,518,7
 factor, so that every step lasts at most 2^31 − 1 ms and fits the senses' Int32 durations. Each quantity changes under one rate at a time: nutrition and rest by
 activity, rest by `sleep.recover` while asleep, health by `starve` or `recover` or not at all.
 
+`life@1` has one food: every species eats the deposit of the first species, with its regrowth. A
+depletion entry records what was taken from a cell, not from which deposit, so two diets on one
+cell could not be told apart. A later version of the laws may give each deposit its own entries.
+
 ### A materialized chunk
 
 `{ beings, depletion, due }`:
@@ -131,9 +135,10 @@ are integer simulated milliseconds.
   number of ticks, and needs change over whole ticks. With 12 or 6 seconds per tick, a walk follows
   the same cells and each arrival tick, read as seconds, lies within one tick after `S_i`.
 - **`wake`** is the minimum of: the next arrival or bite, the end of the activity, nutrition and
-  rest reaching 0 and crossing `recoverAbove` either way, health reaching 0, the targets of the
-  activity, the brain's `wakeWhen` (the light included, computed with `nextLightTick`), and one
-  simulated day after the tick.
+  rest reaching 0 and crossing `recoverAbove` either way, health reaching 0, the health above
+  `recoverAbove` at which an incapacitated being recovers, the targets of the activity, the brain's
+  `wakeWhen` (the light included, computed with `nextLightTick`), and one simulated day after the
+  tick.
 - **Physiology.** Health falls while nutrition is 0 and recovers while nutrition and rest are above
   `recoverAbove`. Rest at 0 forces sleep. Health at 0 incapacitates the being, or kills it when
   `life.deathEnabled` is true (plan O-16).
@@ -235,8 +240,10 @@ array ignores a write there.
   each wakes the being when the quantity reaches the threshold (at or below, or at or above);
 - `behavior`: what the brain wants to find again in its next senses.
 
-The engine copies the intention canonically, reading each member once and refusing accessors, then
-validates its shape and bounds, and every step of a walk against the window of the same tick. A
+The brain receives copies of everything it senses, the window's arrays included, and the engine
+keeps its own window: a brain that writes to its senses changes nothing the engine judges by. The
+engine copies the intention canonically, reading each member once and refusing accessors, then
+validates its shape and bounds, and every step of a walk against its window of the same tick. A
 walk is the first step or none, so its arrivals are computed from that window; the preconditions of
 the other steps (food to eat, a condition that allows walking) are checked when they start. An
 invalid intention is rejected with one of the reasons `malformed`, `walk_not_first`, and
@@ -300,9 +307,18 @@ One system, `beings`, runs three phases:
 
 1. **Collect.** Read `due` of every chunk in `occupancy`, gather the beings with `wake ≤ tick`, and
    sort them by id. Each being is processed once per tick, even when it crosses into another chunk.
-2. **Advance and decide**, by id: bring needs and health to the tick, apply physiology, advance the
-   activity, and when the being is free or a condition holds, build its senses, ask its brain, and
-   copy and validate the intention. Bites that fall due become claims on their cell.
+2. **Advance and decide**, by id: bring needs and health to the tick, move the steps that arrived
+   by it, apply physiology, advance the activity, and when the being is free or a condition holds,
+   build its senses, ask its brain, and copy and validate the intention. Bites that fall due become
+   claims on their cell.
+   - Exhaustion and a collapse act after the steps due at the tick. Exhaustion ends the current
+     activity, `interrupted` with the reason `exhausted` (a walk whose last step arrived is
+     `done`), takes no bite at that tick, drops the plan and the wake conditions, and starts a
+     forced sleep; a collapse ends a walk the same way, with the reason `incapacitated`.
+   - A wake condition that holds ends the current activity, `interrupted` with the reason
+     `wake_condition`, without the bite due at that tick, and asks the brain, whose intention
+     replaces the plan.
+   - A sleep whose target rest already holds ends at the next tick.
 3. **Resolve and apply.** Claimed cells in order of chunk key (UTF-16 code units, the kernel's
    order) and cell index. When the food covers every claim, each claimant takes its bite. Otherwise
    `random.permutation` on the stream `beings.contest`, keyed by the lowest claimant id, orders the
@@ -350,6 +366,31 @@ already met, `since` taken from the brain, a bite of nothing re-anchoring the bo
 without rivals, unforced exhaustion, a short refusal, a late first decision, a strict light
 threshold, taken food ignored when a meal checks its cell, no exhaustion, and regrowth ignored when a
 cell is eaten again.
+
+An independent verifier then found six defects that these tests missed, and 14 deliberate defects
+they let pass. Two of those belong to the contests of the next section, and one, a floored middle
+of the light period in `nextLightTick`, was not reproduced here: in 38,599 days with an odd light
+period, the light at the two middle seconds is the same. The tests added for the rest check that:
+
+- a brain that writes over its senses cannot forge a walk, because the engine judges by its own
+  window;
+- a wake condition that holds with planned steps left asks the brain; a meal it interrupts at a
+  bite takes no bite there; a refused intention clears its conditions; and a condition the body
+  already meets exactly is dropped;
+- a sleep whose target holds ends at the next tick; steps due at the tick of exhaustion arrive, and
+  the forced sleep finishes the walk and starts with its own events;
+- a being recovers at the tick its health passes `recoverAbove`, processed every tick or every 500;
+- rest re-anchors at the tick it passes `recoverAbove`, not at the tick it reaches it; a cell's
+  entry is dropped once it regrew, when its chunk is written; a being is processed at least once a
+  simulated day; and a spawn may stand exactly as deep as the species wades.
+
+Each of 18 more deliberate defects makes them fail: no daily processing, regrown entries kept, a
+condition met exactly kept, no level just above `recoverAbove`, a spawn refused at its wading
+depth, recovery at `recoverAbove` itself, the bite kept at an interruption, the conditions kept by
+a forced sleep and by a refusal, no level at rest 0, regrowth shifted by a tick, the brain's window
+judged, steps due at exhaustion dropped, no event for the interrupted activity or the forced sleep,
+a sleep that waits out a target it met, no wake at recovery, and the next planned step run instead
+of asking the brain.
 
 ## Preregistration
 

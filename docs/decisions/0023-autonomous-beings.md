@@ -148,7 +148,9 @@ and `lifeSeal = digest(["life", LIFE_VERSION, life])`, with the same checks and 
 genesis seal of ADR 0021. Each world may have its own biology without code changes; changing it
 needs a new world or a new epoch. T4 knows two kinds of need, nutrition and rest; a species declares
 its laws for them, its diet (one deposit of the genesis), locomotion, sleep, health, regrowth, and
-senses. Other kinds of need, animals, and pets add species and brains later, with new versions.
+senses. In `life@1` every species eats the same deposit with the same regrowth, because a depletion
+entry does not record which deposit was taken. Other kinds of need, animals, and pets add species
+and brains later, with new versions.
 
 **Contests over food.** Several beings may share a cell in T4: there are no bodies or physics (plan
 O-6), and a capacity law waits for bodies or buildings. Bites that fall due in the same tick and

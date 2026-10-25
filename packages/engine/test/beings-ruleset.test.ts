@@ -20,6 +20,7 @@ import {
   beingsWorld,
   brain,
   idler,
+  lifeWith,
   runTo,
   SPECIES,
   spawn,
@@ -271,6 +272,23 @@ describe("beings.spawn", () => {
     expect(readView(world).chunkKeys()).toEqual([]);
     const events = step(world, [spawn(2, { species: SPECIES.id, cell: [0, 0] })]).events;
     expect(events.map(({ type }) => type)).toEqual(["being.spawned"]);
+  });
+
+  test("accepts a cell exactly as deep as the species may wade, and refuses one deeper", () => {
+    // A cell on the rim of the basin, 12 below the liquid level.
+    const cell = [-57_702, -33_601];
+    const wading = (maxWade: number) =>
+      lifeWith((species) => ({ ...species, locomotion: { ...species.locomotion, maxWade } }));
+    const exact = beingsWorld({ controllers: { [SPECIES.id]: idler(600_000) }, life: wading(12) });
+    const accepted = step(exact, [spawn(1, { species: SPECIES.id, cell })]).events;
+    expect(accepted.map(({ type }) => type)).toEqual(["being.spawned"]);
+    const shallower = beingsWorld({
+      controllers: { [SPECIES.id]: idler(600_000) },
+      life: wading(11),
+    });
+    expect(rejectionOf(shallower, { species: SPECIES.id, cell })).toMatchObject({
+      reason: "invalid_spawn",
+    });
   });
 });
 
