@@ -589,6 +589,14 @@ describe("order and history (I3)", () => {
     expect(requestHistoryProblems(sample, chunk(-1, -1), others)).toEqual([]);
   });
 
+  test("the history check reports a region that comes back longer, even when the cells it had agree", () => {
+    let calls = 0;
+    const growing = () => (calls++ === 0 ? [1, 2] : [1, 2, 3]);
+    expect(requestHistoryProblems(growing, cell(0, 0), [])).toEqual([
+      "2 values before the other requests, 3 after",
+    ]);
+  });
+
   test("a child process, whose modules start fresh, gives the same digests", async () => {
     const keys = [...KEYS.slice(0, 6), ...CHUNK_KEYS_AT_EDGES];
     const geneses = [defaultGenesis(seedWords(1)), maximumGenesis(seedWords(1))];
@@ -793,11 +801,20 @@ describe("substrate", () => {
     expect(bruteForce(smallest, RECTS[0] as CellRect, 4).ties).toBeGreaterThan(1000);
   });
 
+  /** The 12 squares 2 squares away from a cell's own that the search covers, as "a,b". */
+  const OUTER_SQUARES = [
+    ["-1,-2", "0,-2", "1,-2"],
+    ["-2,-1", "2,-1", "-2,0", "2,0", "-2,1", "2,1"],
+    ["-1,2", "0,2", "1,2"],
+  ].flat();
+
   /**
-   * Every cell of the smallest-cell genesis within 4,000 cells of the origin on each axis whose
-   * nearest point lies beyond the 3×3 squares around its own, with that point's square offset, as
-   * a scan with the documented draw found them: a 3×3 search misses about 2 cells in 10^7 at this
-   * size, so random regions almost never reach one.
+   * Cells of the smallest-cell genesis whose nearest point lies 2 squares away, strictly nearer
+   * than every point of the 3×3 squares around their own, with that point's square offset, as a
+   * scan with the documented draw found them: a 3×3 search misses the nearest point of about 4
+   * cells in 10^7 at this size, so random regions almost never reach one. The first 26 rows are
+   * every such cell within 4,000 cells of the origin on each axis, and they reach 8 of the 12 outer
+   * squares; the last 4, from a scan out to 11,000 cells, reach the other 4.
    */
   const BEYOND_3X3 = [
     [-2032, -3897, "-2,1"],
@@ -826,6 +843,10 @@ describe("substrate", () => {
     [-768, 2895, "0,2"],
     [2502, 3032, "0,-2"],
     [-88, 3256, "-2,0"],
+    [9271, 56, "2,-1"],
+    [10744, 1080, "-2,-1"],
+    [8607, 2767, "1,2"],
+    [-10528, -9609, "-1,2"],
   ] as const;
 
   test("where the nearest point lies 2 squares away, beyond a 3×3 search, the cell still takes its class", () => {
@@ -838,8 +859,8 @@ describe("substrate", () => {
       expect(sampleRegion(smallest, cell(x, y)).substrate[0]).toBe(exact(x, y).substrate);
       if (narrow(x, y).substrate !== exact(x, y).substrate) differing.add(offset);
     }
-    // For each side, a cell whose class a search without that side's outer squares would miss.
-    expect([...differing]).toEqual(expect.arrayContaining(["-2,0", "2,0", "0,-2", "0,2"]));
+    // For each of the 12 outer squares, a cell whose class a 3×3 search gets wrong.
+    expect([...differing].sort()).toEqual([...OUTER_SQUARES].sort());
   });
 
   test("classes follow the weights: [5, 3, 2, 1] gives each its share of the cells within 0.03", () => {
@@ -1165,11 +1186,10 @@ describe("golden values (worldgen@1)", () => {
   );
 
   test.each(["default", "maximum"] as const)(
-    "are not vacuous for the %s genesis: varied substrate, liquid above and below, wide relief, deposits, a thermal lapse",
+    "are not vacuous for the %s genesis: liquid above and below, wide relief, deposits, a thermal lapse",
     (name) => {
       const { coverage } = goldenOf(name);
       const amplitude = sharedGenesis(GENESES[name](seedWords(1))).terrain.relief.amplitude;
-      expect(coverage.classes.size).toBeGreaterThanOrEqual(3);
       expect(coverage.below).toBeGreaterThan(0);
       expect(coverage.above).toBeGreaterThan(0);
       expect(coverage.high - coverage.low).toBeGreaterThan(amplitude);
@@ -1177,6 +1197,13 @@ describe("golden values (worldgen@1)", () => {
       expect(coverage.correlation).toBeGreaterThan(0.5);
     },
   );
+
+  test("hold all 4 substrate classes of the default genesis in its region, and 13 of the maximum's 16", () => {
+    expect(defaultGenesis(seedWords(1)).terrain.substrate.weights).toHaveLength(4);
+    expect(goldenOf("default").region.classes.size).toBe(4);
+    expect(maximumGenesis(seedWords(1)).terrain.substrate.weights).toHaveLength(16);
+    expect(goldenOf("maximum").coverage.classes.size).toBe(13);
+  });
 
   test("each default deposit covers at least 1% of the region's cells, pooled over the seeds", () => {
     const { region } = goldenOf("default");

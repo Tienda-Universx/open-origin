@@ -8,16 +8,19 @@ import type { Genesis } from "../../src/worldgen/genesis.ts";
  * They pin behavior; they do not prove it correct, which is the job of the properties, the oracles,
  * and the broken variants.
  *
- * Update policy: worldgen@1 is frozen with these values. Any change that alters one of them alters
- * a world's terrain, so it needs a new WORLDGEN_VERSION ("worldgen@2"), which this file also pins,
- * and new values recorded in the same change; the code of worldgen@1 stays as long as a world uses
- * it. These were recorded on 2026-10-25 with Bun 1.4.4: two runs in separate processes gave the
- * same values, and the tests' child process agrees with the parent.
+ * The golden values are recorded in T3-5; `worldgen@1` is frozen when T3 closes (ADR 0021), and
+ * T3-6 changes no output. Update policy: after the freeze, any change that alters one of these
+ * values alters a world's terrain, so it needs a new WORLDGEN_VERSION ("worldgen@2"), which this
+ * file also pins, and new values recorded in the same change; the code of worldgen@1 stays as long
+ * as a world uses it. These were recorded on 2026-10-25 with Bun 1.4.4: two runs in separate
+ * processes gave the same values, and the tests' child process agrees with the parent.
  *
- * What they cover, pooled over the seeds (worldgen-terrain.test.ts checks it): every substrate
- * class, cells under and above the liquid, an elevation range wider than the amplitude,
- * thermalBase rising with elevation, and, in the region, each default deposit in at least 1% of
- * the cells: 8.4% and 6.7%. Deposits cluster, so most pinned chunks hold none.
+ * What they cover, pooled over the seeds (worldgen-terrain.test.ts checks it): all 4 substrate
+ * classes of the default genesis, in its region alone, and 13 of the maximum genesis's 16, whose
+ * squares of 2^12 cells give its region one class per seed; cells under and above the liquid; an
+ * elevation range wider than the amplitude; thermalBase rising with elevation; and, in the region,
+ * each default deposit in at least 1% of the cells: 8.4% and 6.7%. Deposits cluster, so most
+ * pinned chunks hold none.
  */
 
 /** Three terrain seeds: all zeros, all ones, and a mixed pattern. */

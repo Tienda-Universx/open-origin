@@ -169,8 +169,9 @@ export function historyProblems(
 }
 
 /**
- * Cells of `target` whose value changes once `sample` has served the requests `others`, for any
- * sampler of cells: noise with a fixed spec, or terrain's fields laid end to end.
+ * Cells of `target` whose value changes once `sample` has served the requests `others`, and a
+ * change in how many values it gives, for any sampler of cells: noise with a fixed spec, or
+ * terrain's fields laid end to end.
  */
 export function requestHistoryProblems(
   sample: (rect: CellRect) => ArrayLike<number>,
@@ -181,7 +182,10 @@ export function requestHistoryProblems(
   for (const other of others) sample(other);
   const after = sample(target);
   const problems: string[] = [];
-  for (let index = 0; index < before.length; index += 1) {
+  if (after.length !== before.length) {
+    problems.push(`${before.length} values before the other requests, ${after.length} after`);
+  }
+  for (let index = 0; index < Math.min(before.length, after.length); index += 1) {
     if (after[index] !== before[index])
       problems.push(
         `cell ${index}: ${before[index]} before the other requests, ${after[index]} after`,

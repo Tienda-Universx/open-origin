@@ -19,12 +19,13 @@
  *   `lightNearLimit` lies in the light within one day of the last safe tick; and `lastSafe` is the
  *   last tick whose simulated second is a safe integer.
  *
- * Update policy: worldgen@1 is frozen with these values when T3 closes. Until then, a change that
- * alters one of them records the new values here in the same change; after that, it also needs a
- * new WORLDGEN_VERSION ("worldgen@2"), which this file pins. These were recorded on 2026-10-25 with
- * Bun 1.4.4 by a script outside the repository that computed each value from its definition, with
- * sampleRegion, liquidLevel, diurnal, and radiance, before observables.ts existed; two runs in
- * separate processes printed identical values, and observe reproduced them.
+ * The golden values are recorded in T3-5; `worldgen@1` is frozen when T3 closes (ADR 0021), and
+ * T3-6 changes no output. Update policy: after the freeze, any change that alters one of these
+ * values needs a new WORLDGEN_VERSION ("worldgen@2"), which this file pins, and new values recorded
+ * in the same change. These were recorded on 2026-10-25 with Bun 1.4.4 by a script outside the
+ * repository that computed each value from its definition, with sampleRegion, liquidLevel,
+ * diurnal, and radiance, before observables.ts existed; two runs in separate processes printed
+ * identical values, and observe reproduced them.
  */
 export const GOLDEN_OBSERVATIONS = {
   worldgenVersion: "worldgen@1",

@@ -72,8 +72,9 @@ import {
 /**
  * Integer gradient noise (ADR 0021, noise; plan §5 D4 and D6, §12 tests 5–7, 9, 10, and 17): the
  * Horner fade, exact interpolation, per-octave offsets, the fBm's bounds, and sampleNoiseRegion,
- * whose regions must equal the composition of their chunks and cells. No value here is golden: the
- * plan freezes them in T3-5, so every check is a property.
+ * whose regions must equal the composition of their chunks and cells. No value here is golden, so
+ * every check is a property: the terrain's golden values, recorded in T3-5, pin the noise through
+ * the fields it makes (golden-worldgen.ts).
  */
 
 /** Eight seed words from `seed`, through sfc32. */

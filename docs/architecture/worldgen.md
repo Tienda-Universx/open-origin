@@ -84,7 +84,9 @@ level, so a misspelled law is reported instead of silently ignored.
 ### Bounds
 
 The bounds keep every intermediate value of worldgen a safe integer. `GENESIS_BOUNDS` holds them,
-frozen at every level; they may still change until `worldgen@1` is frozen.
+frozen at every level. They belong to the genesis schema, which `worldgen@1` covers. The golden
+values are recorded in T3-5; `worldgen@1` is frozen when T3 closes (ADR 0021), and T3-6 changes no
+output. After the freeze, changing a bound needs `worldgen@2`.
 
 | Field | Bounds |
 |---|---|
@@ -297,8 +299,8 @@ A cell takes the class of its exact nearest point by squared integer distance. T
 the 5 × 5 squares around the cell minus the 4 corners, 21 squares, which is enough for exactness:
 the cell's own point is less than √2·cell away, and every point outside those squares is farther.
 Ties go to the lowest square y, then x. A 3 × 3 search would miss the nearest point in only about
-2·10⁻⁷ to 2·10⁻⁶ of the cells, so the tests pin such cells in all eight directions instead of relying
-on random regions.
+2·10⁻⁷ to 2·10⁻⁶ of the cells, so the tests pin such cells in all 12 outer squares of the search,
+the ring of the 5 × 5 without its corners, instead of relying on random regions.
 
 ### Bounds
 
@@ -347,8 +349,9 @@ No seed and no instant enter it.
 its −1 neighbors, a far chunk, the four edge midpoints, and the four corners at ±2^26), plus the
 digest of a 16×16-chunk region, under both the default and a maximum genesis. The region is chunks
 0 to 15 on each axis, the first candidate in which each default deposit covers at least 1% of the
-cells pooled over the seeds (8.4% and 6.7%). Two processes recorded identical values. Any later
-change to these values needs `worldgen@2`.
+cells pooled over the seeds (8.4% and 6.7%). Two processes recorded identical values. The golden
+values are recorded in T3-5; `worldgen@1` is frozen when T3 closes (ADR 0021), and T3-6 changes no
+output. After the freeze, any change to these values needs `worldgen@2`.
 
 ## Time
 
@@ -440,6 +443,9 @@ measures one as an integer.
   noise bounds, never from sampled values.
 - The catalog lists the five fixed ids, then one `deposit.<k>` per deposit, in order. It is frozen
   at every level and canonical, and a category has no `unit`.
+- Every entry belongs to `WORLDGEN_VERSION`, which versions its definition: the version that
+  ADR 0021 lists among the observable data is the generator's, not a field of each entry. After the
+  freeze, a change to an id, a unit, a range, or a value needs `worldgen@2`.
 - The catalog does not depend on the terrain seed. Its ranges derive from the laws and terrain
   parameters, which are C3, so T6 decides each projection.
 - Ids, units, and every other text of the catalog are engineering names. Perception never passes
