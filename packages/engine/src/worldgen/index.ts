@@ -4,6 +4,17 @@
  * modules, so they are not exported here.
  */
 export {
+  CURVE_SCALE,
+  type DayPosition,
+  dayCurve,
+  dayPosition,
+  diurnal,
+  type Instant,
+  instantOf,
+  radiance,
+  timeLawIssues,
+} from "./calendar.ts";
+export {
   type DayLaw,
   type Deposit,
   defaultGenesis,
@@ -15,6 +26,7 @@ export {
   type IntRange,
   type Laws,
   type LiquidLaw,
+  lightPeriod,
   PreparedGenesis,
   prepareGenesis,
   type RadianceLaw,

@@ -3,9 +3,10 @@
 Worldgen is the procedural world generator: the world is a latent field that the engine evaluates
 and never stores, a pure function of the generator version, the genesis, and the cell.
 [ADR 0021](../decisions/0021-procedural-world.md) records that design and why. This document
-specifies what the code implements: space and the sealed genesis. Code: `packages/engine/src/worldgen/`, exported by
-`packages/engine` as the `worldgen` namespace. Tests: `packages/engine/test/` (`worldgen-space` and
-`worldgen-genesis`).
+specifies what the code implements: space, the sealed genesis, noise, and time. Code:
+`packages/engine/src/worldgen/`, exported by `packages/engine` as the `worldgen` namespace. Tests:
+`packages/engine/test/` (`worldgen-space`, `worldgen-genesis`, `worldgen-lattice`, `worldgen-noise`,
+and `worldgen-calendar`).
 
 `WORLDGEN_VERSION` is `"worldgen@1"`. The seal of a genesis contains it, so a seal made under any
 other version does not match; [ADR 0021](../decisions/0021-procedural-world.md#decision)
@@ -88,7 +89,7 @@ frozen at every level; they may still change until `worldgen@1` is frozen.
 | Field | Bounds |
 |---|---|
 | `terrainSeed` | Exactly 8 u32 words |
-| `day.length` | [1, 2^40] simulated seconds |
+| `day.length` | [1, 2^36] simulated seconds, with a light period of at least one second |
 | `day.daylight` | [1, 999] ‰ |
 | `liquid.level` | [100, 900] ‰ of the range [−amplitude, +amplitude] |
 | `thermal.base` | [−2^20, 2^20] |
@@ -100,7 +101,7 @@ frozen at every level; they may still change until `worldgen@1` is frozen.
 | `radiance.night` | [0, peak] |
 | `relief.octaves` | [1, 12] |
 | `relief.wavelength` | A power of two in [8·2^(octaves − 1), 2^16] |
-| `relief.amplitude` | [1, 2^30] |
+| `relief.amplitude` | [1, 2^29], so that the noise of the largest relief fits an `Int32Array` |
 | `substrate.cell` | A power of two in [8, 2^12] |
 | `substrate.weights` | 1 to 16 entries, each in [1, 1000] |
 | `deposits` | 0 to 8 entries |
@@ -135,6 +136,7 @@ and the bounds are then checked on the copy, which the engine owns.
 | A value of the wrong type | `the value must be an integer, not a string`, `the value must be a record { length, daylight }, not an array` |
 | An unknown member | `unknown member: the members here are day, liquid, thermal, radiance` |
 | A missing member | `the member is missing` |
+| A day without light | `the day has no light period: 999‰ of a day of 1 seconds is less than one second, and the light period and the night must each last at least one second` |
 
 ### Defaults
 
@@ -182,6 +184,145 @@ creation, at decoding, and at every commit that wrote the global value.
 The genesis, the terrain seed, and the seal are C3, never projected to a client nor passed to a
 prompt ([data classification](data-classification.md), ADR 0021).
 
+## Noise
+
+Code: `worldgen/lattice.ts` and `worldgen/noise.ts`. Terrain's fields are 2D gradient noise summed
+over octaves (fBm), computed with safe-integer doubles, `floorDiv`, and `floorMod`, never `|0`,
+`>>`, `imul`, or `%` ([ADR 0021](../decisions/0021-procedural-world.md#decision), Noise). The noise is
+a building block of worldgen's own modules: the `worldgen` namespace does not export it, and terrain
+exposes its regions instead.
+
+### Pseudorandom inputs
+
+Every draw is one ChaCha20 block of the terrain seed (`rng/chacha.ts`). Its 4 input words name the
+use, so no two uses share a block:
+
+| Use | Word 0 | Word 1 | Word 2 | Word 3 |
+|---|---|---|---|---|
+| A lattice point of a field | purpose | octave | lattice x | lattice y |
+| The offsets of a field's octave | 0 (`octaveOffset`) | octave | the field's purpose | 0 |
+
+| Purpose (`LATTICE_PURPOSES`) | Value | Draws |
+|---|---|---|
+| `octaveOffset` | 0 | the offsets of every field's octaves |
+| `elevation`, `thermal` | 1, 2 | noise |
+| `substrate` | 3 | the points of the substrate's Voronoi regions |
+| `deposits[k]` | 4 + k, for k from 0 to 7 | noise |
+
+The packing is injective: word 0 tells offsets from lattice points, and the other words hold each
+value whole. Lattice coordinates lie in [−2^28, 2^28 + 1] at every octave, so each is an int32, and
+it becomes a u32 word with `>>> 0` in `lattice.ts` only. Noise accepts only `NOISE_PURPOSES`, so no
+noise draw shares a block with an offset or a substrate draw.
+
+### One octave
+
+For a cell c on each axis, an octave of wavelength W (a power of two, at least 8):
+
+| Step | Rule |
+|---|---|
+| Offset | o = word 0 (x) or 1 (y) of the octave's offset block, mod W: in [0, W) |
+| Lattice cell | ⌊(c + o) / W⌋; c + o is a double, so the top edge never wraps |
+| Fraction | ⌊((c + o) mod W)·S / W⌋ with S = 2^16, in [0, S) |
+| Gradient | the low 3 bits of word 0 of the lattice point's block choose (1, 2), (−1, 2), (1, −2), (−1, −2), (2, 1), (−2, 1), (2, −1), or (−2, −1) |
+| Fade | 6t⁵ − 15t⁴ + 10t³ in Horner form, in Q32, rounded once to Q16: monotonic, exact at 0, S/2, and S, within 1/2 + 2^−16 of the exact value |
+| Noise n | the corners' dot products, interpolated as a + ⌊(b − a)·u / S⌋ along x, then along y |
+
+Octave o has wavelength W0 / 2^o and amplitude A_o = ⌊A / 2^o⌋. The field is Σ_o ⌊n_o·A_o / S⌋, and
+an octave whose amplitude is 0 is skipped.
+
+### Bounds
+
+| Quantity | Bound | Why |
+|---|---|---|
+| A spec (`NOISE_BOUNDS`) | purpose in `NOISE_PURPOSES`; octaves [1, 12]; wavelength a power of two in [8·2^(octaves − 1), 2^16]; amplitude [1, 2^29] | the finest octave spans 8 cells or more; every output fits an `Int32Array`; a test keeps the genesis bounds inside these |
+| A region | each side in [1, 256]; every cell inside the world | |
+| One octave's noise | \|n\| ≤ `NOISE_PEAK` = ⌊73·S / 48⌋ + 2 = 99,671 | a corner's dot product is at most \|dx\| + \|dy\| + max(\|dx\|, \|dy\|); the fade's weights bound their mean by 73/48; the floors add less than 2 |
+| Output | \|v\| ≤ `noiseBound(spec)` = Σ_o ⌈NOISE_PEAK·A_o / S⌉ ≤ 4·A | Σ_o A_o ≤ 2A − 1 |
+| Neighbors | \|Δv\| ≤ Σ_o (137·A_o / (16·W_o) + 28·A_o / S + 1) | the real noise's slope is at most 137/16; the integer noise stays within 14 units of it; each floor adds 1 |
+| Intermediates | below 2^53 | fade steps ≤ 15·2^48; interpolation ≤ 6·S²; n·A_o < 2^47 |
+
+### Sampling a region
+
+`sampleNoiseRegion(prepared, spec, rect)` returns `rect.width × rect.height` values in an
+`Int32Array`, row by row: the cell (x + i, y + j) is at index j·width + i. With the default relief it
+costs about 0.16 ms for a 32×32 region and 13.5 µs for one cell (Bun 1.4.4, two-core Codespace,
+indicative).
+
+| Guarantee | How |
+|---|---|
+| A chunk is a 32×32 region, and a cell a 1×1 region | A cell's value depends only on the genesis, the spec, and the cell. Lattice points are cached for one call only, so any region equals the composition of its chunks and cells |
+| Order and history never matter | There is no module state, and each call builds its key from the terrain seed and returns a fresh array |
+| Every problem at once | `invalid_value` with issues at `/prepared`, `/spec/...` (purpose, octaves, wavelength, amplitude), and `/rect/...`. Host objects are read once, member by member, and the last cell is checked once the first cell and the sides are valid |
+| No seed in messages | No message prints a seed word |
+
+## Time
+
+Code: `worldgen/calendar.ts`. The temporal layer depends on the generator version, the laws, and an
+instant, never on a cell or the terrain seed ([ADR 0021](../decisions/0021-procedural-world.md)).
+Every function is pure, O(1), and exact in safe integers, with no implicit clock and no default
+instant.
+
+### Instants
+
+An `Instant` is `{ tick, simSecondsPerTick }`; its simulated second is their product, the kernel's
+`simSeconds`. Inside the `step` that computes tick T, `instantOf(ctx)` is the instant that
+`instantOf(readView(world))` gives outside on the world at tick T, so a measurement taken inside
+tick T equals one taken outside at tick T. The measurements reject an invalid instant as
+`simSeconds` does: `invalid_value` with every problem, and `tick_overflow` for the product.
+
+| Problem | Path | Message |
+|---|---|---|
+| A tick that is not a tick | `/tick` | `-1 is not a tick: ticks are safe integers from 0` |
+| Seconds per tick that are not a positive safe integer | `/simSecondsPerTick` | `0 seconds per tick is not a positive safe integer` |
+| A value that is not a record | `""` | `the instant must be a record { tick, simSecondsPerTick }` |
+| A product beyond the safe integers | `""` | `tick 750599937895083 at 12 seconds per tick is beyond the largest safe integer` |
+
+`readInstant(value, path, sink)` reads an instant from a host value for worldgen's own modules, as
+`readCell` reads a cell; the `worldgen` namespace does not export it.
+
+### The day
+
+| Quantity | Rule |
+|---|---|
+| Day | `dayIndex = ⌊second / length⌋`, from 0 |
+| Phase | `secondOfDay = second mod length`, from 0 at dawn |
+| Light period | `lightPeriod(day) = ⌊length × daylight / 1000⌋` seconds from dawn; the night is the rest, and lasts at least one second, as daylight is at most 999‰ |
+| Day curve, in Q16 (`CURVE_SCALE`, 2^16, is 1) | 0 at night; in the light period, with `s = ⌊secondOfDay × 2^16 / lightPeriod⌋`: `v = ⌊4s(2^16 − s) / 2^16⌋` and `curve = ⌊v² / 2^16⌋`, which is 16s²(1 − s)²: C1 at dawn and dusk, exactly 2^16 at mid-light |
+| `radiance` | `night + ⌊(peak − night) × curve / 2^16⌋`, in [night, peak] |
+| `diurnal` | `⌊thermal.diurnal × curve / 2^16⌋`, in [0, diurnal], 0 at night; `thermal = thermalBase + diurnal` |
+
+`dayPosition`, `dayCurve`, `radiance`, and `diurnal` take a prepared genesis and an instant, and a
+forged prepared genesis is `invalid_value`. Within `GENESIS_BOUNDS` no intermediate reaches 2^53:
+`secondOfDay × 2^16` stays below 2^52 because a day lasts at most 2^36 seconds, `4s(2^16 − s)` and
+`v²` are at most 2^32, and a span times the curve is at most 2^36.
+
+### Time laws
+
+`timeLawIssues(laws, simSecondsPerTick)` returns the problems of the pair, as JSON Pointers into
+`{ laws, simSecondsPerTick }`. `validateGlobal` cannot see the seconds per tick, so the host calls it
+before `createWorld` (ADR 0021); decoding does not repeat it. The genesis itself requires a light
+period of at least one second, so the curve never divides by zero even when the host skips it.
+
+| Rule | Path | Message |
+|---|---|---|
+| Positive safe seconds per tick; otherwise nothing else is checked | `/simSecondsPerTick` | `0 seconds per tick is not a positive safe integer` |
+| A day of at least 16 ticks | `/laws/day/length` | `a day of 191 seconds is shorter than 16 ticks of 12 seconds: it must last at least 16 ticks, so that every day has at least 16 distinct phases` |
+| A light period and a night of at least one tick each | `/laws/day` | `the night lasts 11 seconds, shorter than one tick of 12 seconds: a day of 1200 seconds with 991‰ of daylight must have a light period and a night of at least one tick each` |
+
+### Golden time values
+
+`test/fixtures/golden-time.ts` pins the day position, the curve, radiance, and the diurnal term of the
+default laws at a set of instants:
+
+- dawn, a quarter and half of the light period;
+- the last tick before dusk and the first at or past it;
+- the last tick of day 0 and the first of day 1;
+- the last safe tick.
+
+It does so at 12, 7, and 13 seconds per tick, and 13 divides neither the day nor its light period,
+so its phase drifts. The values are equal under any terrain seed. Near dusk the curve is flat (C1),
+so the last tick of light already reads the night floor.
+
 ## What the tests check
 
 - the space constants, and the chunk and offset of the cells 0, 31, 32, −1, −32, −33, −2^31, and
@@ -210,3 +351,30 @@ prompt ([data classification](data-classification.md), ADR 0021).
 - `sealedGenesisIssues` accepts a sealed global value with ruleset data, and rejects a tampered
   genesis with its stale seal, a seal made for another version, missing members, a seal that is not
   a string, genesis problems under `/genesis`, accessors, and a value that is not a record.
+- the purposes are pinned and frozen; the packing writes the documented words, has a left inverse
+  over 6,600 uses at the int32 edges, and gives no two uses the same block;
+- the fade over all 65,537 inputs: monotonic, exact at 0, S/2, and S, within 1/2 + 2^−16 of the
+  exact value;
+- `noiseBound` is exact on small cases, and at most 4·amplitude for every amplitude up to 2^12 and
+  every octave count; the genesis bounds stay inside the noise bounds;
+- the Lipschitz bound holds around the origin, across the lattice lines of every octave, and in the
+  two outermost chunks at each edge; a float Perlin with the same draws agrees on random cells and
+  at every edge within Σ_o (14·A_o / S + 1), the integer noise's bound and each octave's floor,
+  plus 2^−10 for its own rounding;
+- a 48×48 region equals its 4 chunks, every 1×1 region equals its chunk's cell over 200 chunks, and
+  seams, pooled over 100 worlds, are within ±10% of the interior;
+- 5 permutations of chunk requests and 2,000 other generations change nothing; outputs stay within
+  `noiseBound` under a fuzz of geneses and specs; elevation and thermal are uncorrelated;
+- each broken variant of `support/broken-worldgen.ts` fails its property check, and the faithful
+  composition equals `sampleNoiseRegion`;
+- dawn, dusk, and the day rollover fall on exact seconds, and the night floor holds;
+- the day curve, swept over every s, rises on one half and falls on the other, is symmetric, 0 at
+  both ends and 2^16 at mid-light, and steps by at most 1 within 1/64 of dawn or dusk and at most 6
+  anywhere;
+- radiance and the diurnal term stay in range over seeded random laws, and agree with a BigInt
+  reference, including at the largest genesis, whose intermediates stay below 2^53;
+- an invalid instant is rejected with its paths, and an overflowing product as `simSeconds` reports
+  it; the instant taken inside a tick equals the one taken outside at the same tick;
+- `timeLawIssues` accepts each edge and rejects one past it, and the genesis rejects a day without a
+  light period;
+- the golden time values hold under two terrain seeds.
