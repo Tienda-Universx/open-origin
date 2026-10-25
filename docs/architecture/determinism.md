@@ -198,8 +198,11 @@ What the generator does not do:
   back that state, which predicts every draw of every stream, and a quantized draw takes a search
   over 2^32 states. The 64-bit seed is worth 32 bits. One public outcome therefore makes every draw
   predictable. That is acceptable only while nobody can act on a prediction: the generator is
-  replaced by a keyed pseudorandom function before any public world with players, and terrain
-  already uses a separate seed and ChaCha20 ([ADR 0021](../decisions/0021-procedural-world.md)).
+  replaced by a keyed pseudorandom function before the first public deployment of any world, with
+  players or not ([ADR 0023](../decisions/0023-autonomous-beings.md)), and terrain already uses a
+  separate seed and ChaCha20 ([ADR 0021](../decisions/0021-procedural-world.md)). The beings of T4
+  are the first whose draws have outcomes that projections will make public: who wins a contested
+  bite and the first heading of an exploration.
 - **Pass a statistical battery.** The checks above are smoke tests on fixed samples; no PractRand
   or TestU01 battery has been run.
 - **Keep counters across calls by itself.** A `DrawSequence` keeps its own counter; the tick

@@ -211,7 +211,8 @@ This ADR refines five earlier ones:
   version at a time.
 - `ctr-mix32@1` stays predictable from any public outcome of a draw. Before any public world with
   players, it is replaced by a keyed pseudorandom function; that changes the engine version for new
-  worlds only.
+  worlds only. Refined by [0023](0023-autonomous-beings.md): the replacement is required before the
+  first public deployment of any world, with players or not, and is recommended for T7.
 - The seal stops accidents, not deliberate changes, and a write behind the barrier in production is
   found at the next snapshot or the next write of the global value. When T7 introduces snapshot
   version 2, moving the genesis into an immutable kernel section makes the seal unnecessary.

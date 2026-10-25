@@ -15,6 +15,10 @@ C3 items detailed elsewhere in the plan:
 - Observation exposure telemetry: a C3 table the simulation cannot read (§K.6, control 3).
 - Reference truth for hypotheses: used only for research metrics (§K.8).
 
+The fields of a being and their classes (C0 what an observer inside the world could see, C1 the
+rest of the being, C3 the laws of life) are listed in [Beings](beings.md#a-being)
+([0023](../decisions/0023-autonomous-beings.md)).
+
 ## Access by interface
 
 | Interface | Classes (plan §E.6) |
@@ -62,8 +66,8 @@ Each mechanism and the leak it guards against. The mechanisms are decided in
 - `mix32` also gives its seed away: one draw whose inputs are known reveals the 32-bit state that
   predicts every other draw ([determinism](determinism.md#randomness)). One public outcome
   therefore makes every draw predictable: acceptable only while nobody can act on a prediction,
-  and the generator is replaced before any public world with players
-  ([0021](../decisions/0021-procedural-world.md)).
+  and the generator is replaced before the first public deployment of any world, with players or
+  not ([0021](../decisions/0021-procedural-world.md), [0023](../decisions/0023-autonomous-beings.md)).
 - Terrain and resources come from a separate terrain seed, through ChaCha20, never from the world
   seed. Whoever knows the terrain seed predicts all terrain, so it is C3 as well
   ([0021](../decisions/0021-procedural-world.md)).

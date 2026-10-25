@@ -127,8 +127,8 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `apps/web/` | T8 | Public interface (React + PixiJS) |
 | `apps/admin/` | T8, T9 | Local admin panel; AI controls in T9 |
 | `packages/ui/` | T8 | Design system: tokens + components (CSS Modules) |
-| `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 adds worldgen in `src/worldgen` (space, the sealed genesis, terrain, the calendar, and primitive observables) and the ChaCha20 function terrain draws from: pure functions that rulesets call inside `step`, proven by a probe ruleset in the determinism suite ([0021](../decisions/0021-procedural-world.md)). T4 adds beings, needs, actions, perception, and the activity index, and its first ruleset runs the suite with worldgen inside `step`. T7 adds the migration chain of snapshot versions (plan §5.2) |
-| `packages/agents/` | T4 | Policies, memory, prompts, provenance |
+| `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 adds worldgen in `src/worldgen` (space, the sealed genesis, terrain, the calendar, and primitive observables) and the ChaCha20 function terrain draws from: pure functions that rulesets call inside `step`, proven by a probe ruleset in the determinism suite ([0021](../decisions/0021-procedural-world.md)). T4 adds `src/beings`, a layer above worldgen with the body of the beings: needs and health in closed form, bounded senses, actions validated and executed, contests over food, the occupancy index, and sealed laws of life; its ruleset runs the suite with worldgen inside `step` ([0023](../decisions/0023-autonomous-beings.md), [beings](beings.md)). T7 adds the migration chain of snapshot versions (plan §5.2) |
+| `packages/agents/` | T4, T5 | T4: the deterministic brain behind the engine's controller port (Utility AI, Dijkstra and A*), a pure function of the senses the engine builds ([0023](../decisions/0023-autonomous-beings.md)); T5: memory, prompts, provenance |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
 | `tests/` | T1, T6, T7 | T1: repository checks in `tests/repo/` (see `AGENTS.md`, Automated controls); T6: end-to-end synchronization and observer-invariance tests; T7: crash-recovery tests ([0019](../decisions/0019-end-to-end-testing-strategy.md)) |
@@ -163,6 +163,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0020](../decisions/0020-deterministic-core-design.md) | Deterministic core design: state ownership, failure model, 128-bit digests, counter-based randomness |
 | [0021](../decisions/0021-procedural-world.md) | Procedural world: latent terrain, a sealed genesis, ChaCha20 for terrain, primitive observables |
 | [0022](../decisions/0022-single-shared-public-universe.md) | A single public universe, shared and synchronized in real time: one clock, fixed speed, no time controls for users |
+| [0023](../decisions/0023-autonomous-beings.md) | Autonomous beings: a body in the engine, a brain in `agents` that only proposes, decision points, exact time, sealed laws of life |
 
 ## Related
 
@@ -171,6 +172,8 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 - [Worldgen](worldgen.md): space, the sealed genesis, noise, terrain, time, the observables, the
   probe ruleset that runs them inside `step`, their measured cost, and what the worldgen tests
   check ([0021](../decisions/0021-procedural-world.md)).
+- [Beings](beings.md): the body, senses, brain port, tick, and the preregistration of T4's
+  scenarios ([0023](../decisions/0023-autonomous-beings.md)).
 - [Interfaces](interfaces.md): planes, message flow, acceptance criteria, and roadmap of both
   interfaces.
 - [Data classification](data-classification.md): access by interface, enforcement map, and tests
