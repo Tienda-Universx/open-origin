@@ -474,6 +474,209 @@ describe("checkEngineSource: worldgen", () => {
   );
 });
 
+describe("checkEngineSource: beings", () => {
+  const BEINGS = `${ENGINE_SRC}/beings`;
+  const BODY = `${BEINGS}/body.ts`;
+  const TERRAIN = `${ENGINE_SRC}/worldgen/terrain.ts`;
+
+  const intoBeings = (specifier: string) =>
+    `"${specifier}" imports the beings layer: the kernel never depends on it, which only ${ENGINE_SRC}/index.ts re-exports (ADR 0023)`;
+  const outOfAllowlist = (specifier: string) =>
+    `"${specifier}" is not a module the beings layer may import: it may import int.ts, errors.ts, time/tick.ts, world/chunk.ts, world/members.ts, world/contracts.ts, worldgen/index.ts, and the modules under canonical/, digest/, beings/ (ADR 0023)`;
+  const outOfWorldgen = (specifier: string) =>
+    `"${specifier}" is not a module worldgen may import: it may import int.ts, errors.ts, rng/chacha.ts, time/tick.ts, world/chunk.ts, world/members.ts, world/contracts.ts, and the modules under canonical/, digest/, worldgen/ (ADR 0021)`;
+  const TYPES_ONLY =
+    "world/contracts.ts holds only types: import it with `import type` or re-export it with `export type`";
+  const reason =
+    "beings modules keep no state between calls, so the worlds that share a ruleset stay independent (ADR 0023)";
+  const moduleState = (keyword: string) =>
+    `a top-level \`${keyword}\` declares module state: ${reason}`;
+  const mutableConst = (start: string) =>
+    `a top-level \`const\` bound to \`${start}…\` holds a value that can change: ${reason}; freeze it with Object.freeze, or build it inside a function`;
+
+  test.each([
+    ["an import", 'import { body } from "../beings/body.ts";', "../beings/body.ts"],
+    ["a type-only import", 'import type { B } from "../beings/being.ts";', "../beings/being.ts"],
+    ["a re-export", 'export * from "../beings/index.ts";', "../beings/index.ts"],
+    ["a side-effect import", 'import "../beings/register.ts";', "../beings/register.ts"],
+    [
+      "a type-level import",
+      'export type Body = typeof import("../beings/body.ts");',
+      "../beings/body.ts",
+    ],
+    ["a dynamic import", 'export const load = () => import("../beings/x.ts");', "../beings/x.ts"],
+    [
+      "a path that enters the layer late",
+      'import "../step/../beings/a.ts";',
+      "../step/../beings/a.ts",
+    ],
+  ])(
+    "reports a kernel module that imports the beings layer through %s",
+    (_name, content, specifier) => {
+      expect(issues(`export const before = 1;\n${content}\n`)).toEqual([
+        { file: FILE, line: 2, message: intoBeings(specifier) },
+      ]);
+    },
+  );
+
+  test("reports worldgen importing the beings layer with worldgen's own rule", () => {
+    expect(messages('import { body } from "../beings/body.ts";\n', TERRAIN)).toEqual([
+      outOfWorldgen("../beings/body.ts"),
+    ]);
+  });
+
+  test("lets src/index.ts re-export the layer, and a kernel module import a lookalike directory", () => {
+    const entry = 'export * as beings from "./beings/index.ts";\n';
+    expect(issues(entry, `${ENGINE_SRC}/index.ts`)).toEqual([]);
+    const lookalikes = [
+      'import { a } from "../beingsx/a.ts";',
+      'import { b } from "../beings.ts";',
+      'import { c } from "./beings/c.ts";',
+      "",
+    ].join("\n");
+    // `./beings/c.ts` from world/state.ts is world/beings/c.ts, not src/beings.
+    expect(issues(lookalikes)).toEqual([]);
+  });
+
+  test("lets the layer import its allowlist and its own modules, at any depth", () => {
+    const content = [
+      'import { floorDiv } from "../int.ts";',
+      'import { EngineError } from "../errors.ts";',
+      'import { simSeconds } from "../time/tick.ts";',
+      'import { chunkKey } from "../world/chunk.ts";',
+      'import { readMember } from "../world/members.ts";',
+      'import type { TickContext } from "../world/contracts.ts";',
+      'import { sampleRegion } from "../worldgen/index.ts";',
+      'import { copyCanonical } from "../canonical/copy.ts";',
+      'import { digest } from "../digest/digest.ts";',
+      'import { needAt } from "./needs.ts";',
+      'export { senses } from "./senses/window.ts";',
+      "",
+    ].join("\n");
+    expect(issues(content, BODY)).toEqual([]);
+    const nested = 'import { imul } from "../../int.ts";\nimport { needAt } from "../needs.ts";\n';
+    expect(issues(nested, `${BEINGS}/senses/window.ts`)).toEqual([]);
+  });
+
+  test.each([
+    ["the kernel's random streams", 'import { mix32 } from "../rng/mix32.ts";', "../rng/mix32.ts"],
+    ["the draw sequences", 'import { DrawSequence } from "../rng/random.ts";', "../rng/random.ts"],
+    [
+      "the terrain's cipher",
+      'import { chacha20Block } from "../rng/chacha.ts";',
+      "../rng/chacha.ts",
+    ],
+    ["the tick context", 'import { openTick } from "../step/context.ts";', "../step/context.ts"],
+    [
+      "the snapshots",
+      'export { encodeSnapshot } from "../snapshot/snapshot.ts";',
+      "../snapshot/snapshot.ts",
+    ],
+    ["the world model", 'import { healthyState } from "../world/world.ts";', "../world/world.ts"],
+    ["world creation", 'import { createWorld } from "../world/create.ts";', "../world/create.ts"],
+    ["the host view", 'import { readView } from "../world/view.ts";', "../world/view.ts"],
+    ["the entry point", 'import "../index.ts";', "../index.ts"],
+    [
+      "a worldgen module behind its index",
+      'import { liquidLevel } from "../worldgen/terrain.ts";',
+      "../worldgen/terrain.ts",
+    ],
+    ["a module without its extension", 'import { floorDiv } from "../int";', "../int"],
+    [
+      "a lookalike of an allowed directory",
+      'import { b } from "../digests/b.ts";',
+      "../digests/b.ts",
+    ],
+  ])("reports a beings module that imports %s", (_name, content, specifier) => {
+    expect(issues(`export const before = 1;\n${content}\n`, BODY)).toEqual([
+      { file: BODY, line: 2, message: outOfAllowlist(specifier) },
+    ]);
+  });
+
+  test.each([
+    ["beings", BODY, "../world/contracts.ts"],
+    ["worldgen", TERRAIN, "../world/contracts.ts"],
+  ])("makes %s import the kernel's contracts as types only", (_layer, path, specifier) => {
+    const allowed = [
+      `import type { ReadView } from "${specifier}";`,
+      `export type { Command } from "${specifier}";`,
+      `export type View = typeof import("${specifier}");`,
+      "",
+    ].join("\n");
+    expect(issues(allowed, path)).toEqual([]);
+    const rejected = [
+      `import { ReadView } from "${specifier}";`,
+      `import { type Command } from "${specifier}";`,
+      `export { type Ruleset } from "${specifier}";`,
+      `import "${specifier}";`,
+      `export const load = () => import("${specifier}");`,
+      "",
+    ].join("\n");
+    expect(issues(rejected, path)).toEqual(
+      [1, 2, 3, 4, 5].map((line) => ({ file: path, line, message: TYPES_ONLY })),
+    );
+  });
+
+  test("lets kernel modules import the contracts as they like", () => {
+    expect(
+      issues('import { ReadView } from "./contracts.ts";\n', `${ENGINE_SRC}/world/view.ts`),
+    ).toEqual([]);
+  });
+
+  test("reports every top-level let, var, and constant bound to a mutable value", () => {
+    const content = [
+      "let counter = 0;",
+      "export var legacy = 1;",
+      "const cache = {};",
+      "export const STEPS = [1, 2, 3];",
+      "const scratch = new Int32Array(64);",
+      "const pattern = /a+/g;",
+      "const typed: number[] = [];",
+      "const LAWS = { awake: 3 } as const;",
+      "",
+    ].join("\n");
+    expect(issues(content, BODY)).toEqual([
+      { file: BODY, line: 1, message: moduleState("let") },
+      { file: BODY, line: 2, message: moduleState("var") },
+      { file: BODY, line: 3, message: mutableConst("{") },
+      { file: BODY, line: 4, message: mutableConst("[") },
+      { file: BODY, line: 5, message: mutableConst("new") },
+      { file: BODY, line: 6, message: mutableConst("/") },
+      { file: BODY, line: 7, message: mutableConst("[") },
+      { file: BODY, line: 8, message: mutableConst("{") },
+    ]);
+  });
+
+  test("accepts frozen, primitive, and function constants, and mutable values inside functions", () => {
+    const content = [
+      "export const LIMIT = 64;",
+      'export const STREAM = "beings.contest";',
+      "export const RATE = LIMIT / 2;",
+      "export const DIRECTIONS = Object.freeze([0, 1, 2]);",
+      "export const BOUNDS = Object.freeze({ min: 0, max: 1 });",
+      "export const double = (value: number) => value * 2;",
+      "export const scale = Math2(LIMIT);",
+      "export function window(side: number): Int32Array {",
+      "  const cells = new Int32Array(side * side);",
+      "  const seen = { count: 0 };",
+      "  const queue: number[] = [];",
+      "  return cells.fill(seen.count + queue.length);",
+      "}",
+      "const { a, b } = BOUNDS_PAIR;",
+      "// const commented = [];",
+      'export const text = "const x = []";',
+      "",
+    ].join("\n");
+    expect(issues(content, BODY)).toEqual([]);
+  });
+
+  test("leaves worldgen's constant tables to review, as ADR 0021 promises only let and var", () => {
+    expect(issues("const TABLE = [1, 2];\nexport const read = () => TABLE;\n", TERRAIN)).toEqual(
+      [],
+    );
+  });
+});
+
 describe("isEngineSource", () => {
   test("selects the TypeScript files under packages/engine/src only", () => {
     const paths = [
