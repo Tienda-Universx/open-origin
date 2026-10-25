@@ -12,7 +12,8 @@ requests implement, and the preregistration of its scenarios.
 | State, laws, and exact arithmetic | `packages/engine/src/beings`: `rates.ts`, `food.ts`, `laws.ts`, `being.ts`, `chunk.ts`, `occupancy.ts`, `contracts.ts` | T4-2 |
 | Senses and validation of intentions | `packages/engine/src/beings`: `senses.ts`, `locomotion.ts`, `intention.ts`; `sampleSurface` in `worldgen/terrain.ts` | T4-3 |
 | Navigation | `packages/agents/src/navigation` | T4-4 |
-| The tick, actions, and contests | `packages/engine/src/beings` | T4-5 (*planned*) |
+| The tick, actions, spawn, and occupancy | `packages/engine/src/beings`: `body.ts`, `light.ts`, `activity.ts`, `env.ts`, `advance.ts`, `resolve.ts`, `system.ts`, `ruleset.ts` | T4-5a |
+| Contests, incapacity, fuzz, and call counts | tests of the same modules | T4-5b (*planned*) |
 | The brain `utility@1` | `packages/agents` | T4-6 (*planned*) |
 | Scenarios, survival, and controls | `packages/agents/test`, `bench` | T4-7 (*planned*) |
 
@@ -99,7 +100,7 @@ C0 fields each projection carries.
 | `traits` | C1 | `appetite`, `sleepiness`, `curiosity`, in permille |
 | `condition` | C1 | `ok` or `incapacitated` |
 | `plan` | C1 | Up to two steps pending after the current activity |
-| `behavior` | C1 | What the brain stored: its behavior, since when, and its heading |
+| `behavior` | C1 | What the brain stored, its behavior and heading, and since when, which the engine stamps |
 | `wakeWhen` | C1 | Need and light thresholds the brain asked to be woken at |
 | `wake` | C1 | The next tick at which the being is processed |
 | `outcome`, `cooldowns` | C1 | The result of the last step, and up to four recently failed targets |
@@ -114,8 +115,9 @@ are integer simulated milliseconds.
   `num·⌊E/den⌋ + ⌊num·(E mod den)/den⌋`, and saturates before multiplying once the change would
   pass the clamp, so every intermediate value is a safe integer for any `simSecondsPerTick`.
 - **Re-anchoring.** Needs and health share one anchor. When the rate of any of them changes, all of
-  them are brought to the tick and re-anchored there; nothing is re-anchored because a being was
-  processed.
+  them are brought to the tick and re-anchored there, and so are they when food moves the body;
+  nothing is re-anchored because a being was processed. `bodyAt` gives the values at any tick from
+  the anchor, and reading them writes nothing.
 - **Reaching a level θ** means being at or below θ for a falling quantity and at or above θ for a
   rising one. It happens at the first tick t with `E ≥ ⌈d·den / num⌉`, where d is `v0 − θ` when
   falling and `θ − v0` when rising; that is `t = anchor + ⌈⌈d·den / num⌉ / simSecondsPerTick⌉`. A
@@ -129,8 +131,9 @@ are integer simulated milliseconds.
   number of ticks, and needs change over whole ticks. With 12 or 6 seconds per tick, a walk follows
   the same cells and each arrival tick, read as seconds, lies within one tick after `S_i`.
 - **`wake`** is the minimum of: the next arrival or bite, the end of the activity, nutrition and
-  rest reaching 0 and `recoverAbove`, the targets of the activity, the brain's `wakeWhen`, critical
-  hunger, and the anchor plus the maximum reconsideration interval.
+  rest reaching 0 and crossing `recoverAbove` either way, health reaching 0, the targets of the
+  activity, the brain's `wakeWhen` (the light included, computed with `nextLightTick`), and one
+  simulated day after the tick.
 - **Physiology.** Health falls while nutrition is 0 and recovers while nutrition and rest are above
   `recoverAbove`. Rest at 0 forces sleep. Health at 0 incapacitates the being, or kills it when
   `life.deathEnabled` is true (plan O-16).
@@ -305,14 +308,48 @@ One system, `beings`, runs three phases:
    `random.permutation` on the stream `beings.contest`, keyed by the lowest claimant id, orders the
    claimants, and each takes its bite or what is left, whichever is smaller. A claimant that takes
    less than a full bite has eaten what there was and ends its meal; one that takes nothing lost the
-   contest. Both get an outcome and are processed again at the next tick, without a second decision
-   in this phase. Then consumption, chunk crossings, `due`, `occupancy` with its daily prune, and
+   contest. A being alone at a cell takes what there is, without a draw: when nothing is left its
+   meal fails with the reason `food_gone`. Each gets an outcome and is processed again at the next
+   tick, without a second decision in this phase. Then consumption, chunk crossings, `due`, `occupancy` with its daily prune, and
    events. At most one write of the global value per tick.
 
 Commands: `beings.spawn`, from an admin, with `{ species, cell, needs?, traits? }` and no draws.
 Events, one per behavior rather than per step, on the order of 50 per being and simulated day:
-`being.spawned`, `started`, `finished`, `ate`, `slept`, `woke`, `contested`, `exhausted`,
-`incapacitated`, `recovered`, `died`, `intention_rejected`.
+`being.spawned`, `started`, `finished`, `ate`, `contested`, `exhausted`, `incapacitated`,
+`recovered`, `died`, `intention_rejected`. A sleep starts and finishes as every activity does, so
+it has no events of its own; an idle that runs out ends without one.
+
+The brain does not sense the tick, so the engine keeps `behavior.since`: the tick at which the
+brain first named a behavior of that kind, kept while it names the same kind.
+
+### What the tests check (tick)
+
+`packages/engine/test/beings-ruleset.test.ts` and `beings-tick.test.ts`, over a test genesis whose
+day lasts 100 ticks:
+
+- the ruleset's brain version, its refusal of every bad brain at once, and that it captured its
+  brains; a species without a brain; and an occupancy index that lists a chunk that does not exist;
+- `beings.spawn`: the record it creates, in the chunk of its cell at negative coordinates, omitted
+  needs and traits, sorted beings and occupancy, every problem of a bad spawn, traits bounded by the
+  species, and a cell under liquid deeper than the species wades;
+- walks arriving at the tick their milliseconds give, across a chunk edge, at 12 and at 6 seconds
+  per tick, and the chunk they left pruned from the occupancy index at the next day;
+- needs equal to an integer oracle whether a being is processed every tick or every 50, re-anchored
+  at the tick nutrition crosses `recoverAbove`, and read without writing;
+- each bite at its tick, the cell's depletion, a meal that ends when the cell is empty, the cell
+  regrown at the law's rate and eaten again, and a meal that cannot start on an empty cell;
+- forced sleep at the tick rest reaches 0, with no decision until rest is full;
+- wake conditions on the light and on nutrition at the exact tick, and conditions already met
+  dropped; `behavior.since` stamped by the engine;
+- each reason of a refused intention, and a brain that throws poisoning the world;
+- a world resumed from a snapshot that continues with the original's checksums.
+
+When these tests were written, each of 15 deliberate defects made them fail: floored arrivals,
+re-anchoring at every processing, no wakes at levels, a prune at every tick, conditions kept when
+already met, `since` taken from the brain, a bite of nothing re-anchoring the body, a contest
+without rivals, unforced exhaustion, a short refusal, a late first decision, a strict light
+threshold, taken food ignored when a meal checks its cell, no exhaustion, and regrowth ignored when a
+cell is eaten again.
 
 ## Preregistration
 
