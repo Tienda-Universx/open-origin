@@ -373,8 +373,10 @@ describe("engine purity controls (packages/engine/src)", () => {
  * Biome adds up the plugins of every override that matches a file and cannot take one away:
  * canonical/order.ts may enumerate keys through `Object` (key-order.grit), canonical/encode.ts may
  * use the global `JSON` (global-json.grit), canonical/value.ts and step/context.ts the global `Map`
- * (global-map.grit), and int.ts the global `Math` (global-math.grit). Each exception covers its
- * exact file, and every other purity rule still applies to it.
+ * (global-map.grit), and int.ts the global `Math` (global-math.grit), but only through
+ * `Math.imul` and `Math.floor`, which int-math.grit, registered for int.ts alone, enforces there
+ * (ADR 0021). Each exception covers its exact file, and every other purity rule still applies to
+ * it.
  */
 const ORDER_TS = `${ENGINE_SRC}/canonical/order.ts`;
 const ENCODE_TS = `${ENGINE_SRC}/canonical/encode.ts`;
@@ -421,13 +423,26 @@ function pluginProbe(name: string): Probe {
   return probe;
 }
 
-/** Each excepted file and the one rule it may break. */
-const EXCEPTIONS: { file: string; probe: Probe }[] = [
+/** Starts the diagnostic of int-math.grit, which no other rule's diagnostic contains. */
+const INT_MATH_MESSAGE = "int.ts may use only Math.imul and Math.floor";
+
+/** int-math.grit: in int.ts, binding `Math` to a name is rejected, as is any other use of it. */
+const INT_MATH_PROBE: Probe = {
+  name: "Math in int.ts",
+  source: pluginProbe("Math").source,
+  message: INT_MATH_MESSAGE,
+};
+
+/**
+ * Each excepted file, the one rule it may break, and the narrower rule that replaces it there, if
+ * any: int.ts is excepted from global-math.grit and held to int-math.grit instead.
+ */
+const EXCEPTIONS: { file: string; probe: Probe; narrower?: Probe }[] = [
   { file: ORDER_TS, probe: KEY_ENUMERATION_PROBE },
   { file: ENCODE_TS, probe: pluginProbe("JSON") },
   { file: VALUE_TS, probe: pluginProbe("Map") },
   { file: CONTEXT_TS, probe: pluginProbe("Map") },
-  { file: INT_TS, probe: pluginProbe("Math") },
+  { file: INT_TS, probe: pluginProbe("Math"), narrower: INT_MATH_PROBE },
 ];
 
 /** Two rules reject this import, so two probes share it; a fixture holds it once. */
@@ -547,6 +562,7 @@ describe("reviewed exceptions in packages/engine/src", () => {
         "./packages/engine/lint/key-order.grit",
         "./packages/engine/lint/global-json.grit",
         "./packages/engine/lint/global-math.grit",
+        "./packages/engine/lint/int-math.grit",
         "./packages/engine/lint/global-map.grit",
       ]),
     );
@@ -562,19 +578,88 @@ describe("reviewed exceptions in packages/engine/src", () => {
     expect(PLUGIN_GLOBALS.filter(({ name }) => denied.includes(name))).toEqual([]);
   });
 
+  test("int-math.grit is registered in one override, for int.ts alone", () => {
+    const overrides = (biomeConfig.overrides ?? []).filter((override) =>
+      pluginPaths({ overrides: [override] }).includes("./packages/engine/lint/int-math.grit"),
+    );
+    expect(overrides.map((override) => override.includes)).toEqual([[INT_TS]]);
+  });
+
   test.each(EXCEPTIONS)(
     "$file may break only its own rule, and every other one applies",
-    ({ file, probe }) => {
-      expect(probeCounts(file, EVERY_RULE)).toEqual(expectedCounts(EVERY_RULE, probe.name));
+    ({ file, probe, narrower }) => {
+      expect(probeCounts(file, [...EVERY_RULE, INT_MATH_PROBE])).toEqual({
+        ...expectedCounts(EVERY_RULE, probe.name),
+        [INT_MATH_PROBE.name]: narrower === INT_MATH_PROBE ? 1 : 0,
+      });
     },
   );
 
   test("each exception covers its exact path and no other file", () => {
     const counts = Object.fromEntries(
-      NEAR_MISSES.map((path) => [path, probeCounts(path, EXEMPTABLE)]),
+      NEAR_MISSES.map((path) => [path, probeCounts(path, [...EXEMPTABLE, INT_MATH_PROBE])]),
     );
-    const allRejected = expectedCounts(EXEMPTABLE, "");
+    // global-math.grit, not int-math.grit, governs the paths that only look like int.ts.
+    const allRejected = { ...expectedCounts(EXEMPTABLE, ""), [INT_MATH_PROBE.name]: 0 };
     expect(counts).toEqual(Object.fromEntries(NEAR_MISSES.map((path) => [path, allRejected])));
+  });
+});
+
+/**
+ * int-math.grit (ADR 0021): int.ts may use only `Math.imul` and `Math.floor`, the members of `Math`
+ * that ECMA-262 defines exactly, as calls or as values. Every other reference to `Math` there is
+ * rejected, including the ones that would hide which member is used.
+ */
+describe("int.ts may use only Math.imul and Math.floor", () => {
+  /** Each line references `Math` once outside an allowed member access: its last `Math`. */
+  const REJECTED = [
+    "export const sine = Math.sin(1);",
+    "export const random = Math.random;",
+    'export const computed = Math["imul"];',
+    "export const quoted = Math[`floor`];",
+    "export const alias = Math;",
+    "export const { sin } = Math;",
+    "export const kind = typeof Math;",
+    "export const argument = String(Math);",
+    "export const shorthand = { Math };",
+    "export const cast = (Math as unknown) ?? 0;",
+    "export const deep = Math.sin.floor;",
+    "export const inside = Math.floor(Math.round(1.5));",
+    "export const receiver = Math.imul.call(Math, 2, 3);",
+    "export default Math;",
+  ];
+
+  test("rejects every other reference to Math in int.ts, and only with its own diagnostic", () => {
+    // Biome's useLiteralKeys only informs about the computed keys, so the plugin is the gate.
+    const { exitCode, output } = run("biome", { [INT_TS]: `${REJECTED.join("\n")}\n` });
+    const plugin = biomeDiagnostics(output).filter(
+      ({ file, category }) => file === INT_TS && category === "plugin",
+    );
+    expect(exitCode).toBe(1);
+    // One diagnostic at each rejected reference, as `line:column`, and none at an allowed one.
+    expect(plugin.map(({ text }) => /^\S+:(\d+:\d+) /.exec(text)?.[1]).sort()).toEqual(
+      REJECTED.map((line, index) => `${index + 1}:${line.lastIndexOf("Math") + 1}`).sort(),
+    );
+    expect(plugin.filter(({ text }) => text.includes(INT_MATH_MESSAGE))).toHaveLength(
+      REJECTED.length,
+    );
+  });
+
+  test("accepts Math.imul and Math.floor, as calls and as values, and Math in types", () => {
+    const summary = lintSummary({
+      [INT_TS]: [
+        "export const imul: (a: number, b: number) => number = Math.imul;",
+        "export const floor = Math.floor;",
+        "export const product = Math.imul(3, 5);",
+        "export function half(value: number): number {",
+        "  return Math.floor(Math.imul(value, 3) / 2) >>> 0;",
+        "}",
+        "export type Types = [Math, typeof Math, typeof Math.sin];",
+        "export const holder = { Math: 1 };",
+        "export const field = holder.Math;\n",
+      ].join("\n"),
+    });
+    expect(summary).toEqual({ exitCode: 0, checked: 1, diagnostics: [] });
   });
 });
 

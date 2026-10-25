@@ -1,0 +1,20 @@
+// The global `Math` in packages/engine/src/int.ts (ADR 0021, ADR 0003). int.ts is excepted from
+// global-math.grit, so this plugin narrows that exception: biome.json registers it for int.ts
+// alone, where it reports every reference to `Math` outside a type unless it is the object of the
+// member access `Math.imul` or `Math.floor`, called or used as a value. Those are the functions
+// ECMA-262 defines exactly. Other members, computed members (`Math["imul"]`), aliasing,
+// destructuring, `typeof Math`, and passing `Math` as an argument are reported, since they use an
+// approximated function or hide which member is used. Its diagnostic does not start like
+// global-math.grit's, so tests/repo/engine-lint.test.ts can tell them apart; it proves both sides
+// and the exact extent of the rule.
+language js
+
+JsReferenceIdentifier() as $reference where {
+  $reference <: r"^Math$",
+  not $reference <: within or {
+    TsReferenceType(),
+    TsTypeofType(),
+    JsStaticMemberExpression(object=`Math`, member=r"^(?:imul|floor)$")
+  },
+  register_diagnostic(span=$reference, message="int.ts may use only Math.imul and Math.floor, the members of `Math` that ECMA-262 defines exactly: the others are implementation-approximated (sin, exp, pow) or host-seeded (random), and aliasing or passing `Math` hides which member is used (ADR 0003, ADR 0021).")
+}
