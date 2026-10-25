@@ -72,14 +72,16 @@ integers.
 
 | Path | Result |
 |---|---|
-| Ruleset code changes the genesis through `writeGlobal` | The commit of that tick fails at `/genesisSeal`; the world is poisoned and nothing is saved |
+| Ruleset code changes the genesis through `writeGlobal` | The commit of that tick fails with an issue at the seal; the world is poisoned and nothing is saved |
 | Ruleset code changes it through a live read, behind the barrier | Audit finds it at that tick in tests; in production `encodeSnapshot` refuses the snapshot, and the next commit that writes the global value fails at the seal |
 | A snapshot with an edited genesis and its old seal | `decodeSnapshot` fails with `invalid_snapshot` |
 | The host | It holds no reference to the state ([0020](0020-deterministic-core-design.md)) |
 | Ruleset code that also recomputes the seal | Not prevented: ruleset code is trusted, so this is outside the threat model |
 
-The check costs one digest of the genesis on ticks that write the global value, and nothing on the
-others; it never depends on the number of chunks.
+The issue sits at `/genesisSeal` of the global value, under the prefix the kernel adds to every
+validator issue: `/init/global` at creation, `/global` at a commit, and `/world/global` at
+decoding. The check costs one digest of the genesis on ticks that write the global value, and
+nothing on the others; it never depends on the number of chunks.
 
 **Randomness for terrain.** Terrain never draws from `ctr-mix32@1`, nor from anything derived from
 the world seed. It uses the ChaCha20 block function of RFC 8439, with 20 fixed rounds, keyed by the
@@ -92,14 +94,18 @@ no two uses share a block. What this gives, and what it does not:
 - **Unpredictability.** Without the terrain seed, lattice values nobody observed cannot be computed
   from observed ones, under the standard assumption that ChaCha20 is a pseudorandom function with a
   256-bit key. Public cryptanalysis supports that assumption; nothing proves it.
-- **Limits.** Observed terrain still reveals the dominant shape within the coarsest lattice cell it
+- **Generator security.** It depends on more than the function. The terrain seed must stay secret:
+  the host draws it from a CSPRNG, it is C3, and it is never projected. And no two uses may share an
+  input. Even then, observed terrain reveals the dominant shape within the coarsest lattice cell it
   touches, without breaking ChaCha20. Nothing here protects against someone with C3 access, makes
   observed terrain secret, or replaces the kernel's randomness.
 
 **Noise.** Terrain uses 2D gradient noise summed over octaves (fBm). It computes with safe-integer
 doubles, uses `floorDiv` and `floorMod` from `int.ts`, and uses a monotonic Horner fade. Values become
 u32 words only at the input of the pseudorandom function. Substrate comes from Voronoi regions, each
-with a class drawn by weights from the genesis.
+with a class drawn by weights from the genesis. One function, `sampleRegion`, evaluates any
+rectangle of cells up to a bounded size, with a lattice cache. A chunk is a 32×32 region and a cell a
+1×1 region, so the equalities between them test both the cache and continuity.
 
 **Permanent and temporal layers.**
 
@@ -118,6 +124,24 @@ with a class drawn by weights from the genesis.
   `simSeconds`. Inside the `step` that computes tick T, the instant is `{ tick: ctx.tick,
   simSecondsPerTick: ctx.simSecondsPerTick }`, so a measurement taken inside tick T equals one taken
   outside at tick T.
+- Three sets of golden values stay separate:
+  - terrain covers the permanent layer only and does not depend on the instant;
+  - time does not depend on the terrain seed;
+  - observation covers pairs of a cell and an instant, so it spans both layers.
+- `timeLawIssues(laws, simSecondsPerTick)` requires a day of at least 16 ticks, so every day has at
+  least 16 distinct phases. `validateGlobal` cannot run it, because it sees only the global value,
+  so the host that creates a world calls it before `createWorld`. Decoding does not repeat it: both
+  values are immutable, and they were checked together at creation.
+
+**Four layers of information.** What the engine computes, what can be observed, what an inhabitant
+knows, and what only operators see stay apart:
+
+| Layer | What it is | Where it lives | Class |
+|---|---|---|---|
+| Internal reality | The genesis, the latent fields, the materialized state | the kernel and worldgen | C3 for the genesis; visible parts reach C0 only through projections |
+| Observable data | Quantities with a unit, range, version, and exposure | the worldgen catalog | T6 decides each projection |
+| Knowledge | What an inhabitant believes, with its provenance | T5 | C1 |
+| Administration and research | The genesis, complete fields, human labels, reference truth | the admin and research planes (T6, T8) | C3 |
 
 **Primitive observables.** `elevation`, `liquid.depth`, `substrate`, `thermal`, `radiance`, and
 `deposit.<k>`. A catalog records each one's dimension, unit, kind, range, whether it varies with
@@ -140,29 +164,36 @@ The code of a version stays as long as a world uses it. A ruleset declares
 `versions.generator = WORLDGEN_VERSION`. `ENGINE_VERSION` does not change, because no kernel output
 changes.
 
-**Kernel additions.** All of them are additive:
+**Kernel additions.** None of them changes an output:
 
-- `ReadView.simSecondsPerTick`;
-- `floorDiv` and `floorMod` in `int.ts`;
-- a lint rule that lets `int.ts` reference only `Math.imul` and `Math.floor`.
+- `ReadView.simSecondsPerTick`, an added member;
+- `floorDiv` and `floorMod` in `int.ts`, added helpers;
+- `src/rng/chacha.ts`, a module the kernel itself does not use;
+- `export * as worldgen` in `src/index.ts`;
+- a lint rule that narrows the exemption of `int.ts` to `Math.imul` and `Math.floor`, which tightens
+  an existing control.
 
-Worldgen lives in `packages/engine/src/worldgen`, exported as the `worldgen` namespace. A repository
-scan enforces that the kernel never imports it, that it imports only an allowlist of kernel modules,
-and that it keeps no module-level `let` or `var`.
+Worldgen lives in `packages/engine/src/worldgen`. A repository scan enforces that the kernel never
+imports it, that it imports only an allowlist of kernel modules, and that it keeps no module-level
+`let` or `var`.
 
 **Classification.** The genesis, the terrain seed, the seal, and every digest that contains C3 or C4
-material are C3. That includes the state root, which contains the world seed. None of them is ever
-projected to a client, nor enters perception or a prompt.
+material are C3. That includes the state root, which contains the world seed, and every tick
+checksum, which contains the state root. None of them is ever projected to a client, nor enters
+perception or a prompt.
 
 **Proof without a production ruleset.** Nothing inside the world materializes a chunk before T4. In
 T3, a probe ruleset among the tests passes the determinism suite with audit. Its world factory gives
 each suite seed its own terrain seed, so the interleaving check also covers terrain. T4's first
 ruleset runs the suite again with worldgen inside `step`.
 
-This ADR refines four earlier ones:
+This ADR refines five earlier ones:
 
-- [0003](0003-authoritative-deterministic-engine.md): R = 60 is simulated seconds per real second.
-  How many days pass per real day depends on the day-length law.
+- [0003](0003-authoritative-deterministic-engine.md) and
+  [0004](0004-ai-proposes-engine-decides.md): R stays simulated days per real day. The default
+  tick settings give 60 simulated seconds per real second, so for a day of L simulated seconds,
+  R = 5,184,000 / L, and every budget per simulated day scales with it. The default L is frozen
+  with the golden values.
 - [0006](0006-provenance-and-inheritable-contamination-taints.md): control 4 is confirmed.
 - [0008](0008-data-classification-and-audience-projections.md): the world seed predicts all of the
   kernel's randomness, but not terrain, which comes from the terrain seed. Both seeds are C3, and so
@@ -226,6 +257,16 @@ This ADR refines four earlier ones:
 - **A ruleset per world that knows its own genesis.** Rejected: the suite builds rulesets from
   factories without arguments.
 - **Canonical `number[]` fields digested as text.** Rejected for their memory and digest cost.
+- **Chunks of 16 or 64 cells.** Rejected: 16 multiplies subscriptions and messages; 64 costs about
+  4 ms per chunk and makes interest management coarse.
+- **Separate chunk and cell evaluators.** Rejected: two implementations of one field can diverge.
+- **Time laws in ticks, a copy of `simSecondsPerTick` in the global value, or a default instant.**
+  Rejected: the first ties a law to the integration step, the second keeps two sources of truth,
+  and the third lets an observation depend on a clock nobody named.
+- **Storing temporal values in a chunk.** Rejected: a golden value would then depend on when it was
+  computed.
+- **A version for each piece.** Rejected: nothing consumes separate versions, and one version pins
+  everything T3 defines.
 - **A separate `packages/world`.** Rejected: it would duplicate every purity control and contradict
   plan §G.
 - **A production ruleset in T3.** Rejected: nothing inside the world triggers materialization yet.
@@ -234,7 +275,8 @@ This ADR refines four earlier ones:
 
 - Plan `docs/roadmap/v0.1-plan.es.md`: §E.4, §G, §H, §I.1, §K.4, §K.6–§K.8, §L, §M, §N, O-13.
 - Tracker `docs/roadmap/v0.1-tracker.md`: S15, S16, L34–L36.
-- [0003](0003-authoritative-deterministic-engine.md), [0005](0005-observer-independence.md),
+- [0003](0003-authoritative-deterministic-engine.md), [0004](0004-ai-proposes-engine-decides.md),
+  [0005](0005-observer-independence.md),
   [0006](0006-provenance-and-inheritable-contamination-taints.md),
   [0008](0008-data-classification-and-audience-projections.md),
   [0009](0009-public-and-private-admin-interfaces.md),
