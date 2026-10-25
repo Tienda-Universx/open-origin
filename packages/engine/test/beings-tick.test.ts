@@ -158,7 +158,9 @@ describe("needs", () => {
   test("follow their closed form whatever the processing frequency, and re-anchor at crossings", () => {
     // Being 1 decides every 50 ticks and being 2 every tick; nutrition crosses recoverAbove.
     const controller = brain((senses) => idleFor(senses.self.id === 1 ? 600_000 : 12_000));
-    const world = beingsWorld({ controllers: { [SPECIES.id]: controller } });
+    // A small radius keeps 300 decisions cheap; the needs do not depend on it.
+    const life = lifeWith((species) => ({ ...species, senses: { radius: 4 } }));
+    const world = beingsWorld({ controllers: { [SPECIES.id]: controller }, life });
     const needs = { nutrition: SPECIES.health.recoverAbove + 10_000, rest: 900_000 };
     runTo(world, 1, [
       spawn(1, { species: SPECIES.id, cell: [5, 5], needs }, 0),
