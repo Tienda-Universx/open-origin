@@ -41,7 +41,9 @@ Controls (§K.7):
 4. Non-terrestrial internal laws: recommended default (plan O-13), to be confirmed by the
    maintainer before the first batch that encodes internal laws in the ruleset (plan §K.8).
    Predicting Earth behavior where the world differs is evidence of prior knowledge; converging to
-   the internal law is evidence of internal learning.
+   the internal law is evidence of internal learning. Refined by
+   [0021](0021-procedural-world.md): the maintainer confirmed it on 2026-10-25, and T3's default
+   laws differ from Earth's.
 5. Self-reference policy: tag, do not intervene. Recommended default (plan O-14), to be confirmed
    by the maintainer before T5 implements it. A research world may declare another policy as part
    of its recorded experimental configuration.

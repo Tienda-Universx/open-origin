@@ -127,7 +127,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `apps/web/` | T8 | Public interface (React + PixiJS) |
 | `apps/admin/` | T8, T9 | Local admin panel; AI controls in T9 |
 | `packages/ui/` | T8 | Design system: tokens + components (CSS Modules) |
-| `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 and T4 add the content the kernel runs as rulesets, each passing the determinism suite: worldgen and the calendar (T3), and beings, needs, actions, perception, and the activity index (T4). T7 adds the migration chain of snapshot versions (plan §5.2) |
+| `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 adds worldgen in `src/worldgen` (space, the sealed genesis, terrain, the calendar, and primitive observables) and the ChaCha20 function terrain draws from: pure functions that rulesets call inside `step`, proven by a probe ruleset in the determinism suite ([0021](../decisions/0021-procedural-world.md)). T4 adds beings, needs, actions, perception, and the activity index, and its first ruleset runs the suite with worldgen inside `step`. T7 adds the migration chain of snapshot versions (plan §5.2) |
 | `packages/agents/` | T4 | Policies, memory, prompts, provenance |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
@@ -161,6 +161,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0018](../decisions/0018-telemetry-off.md) | Telemetry off for the tools the repository runs |
 | [0019](../decisions/0019-end-to-end-testing-strategy.md) | End-to-end testing strategy: `bun test` for processes, Playwright from T8 |
 | [0020](../decisions/0020-deterministic-core-design.md) | Deterministic core design: state ownership, failure model, 128-bit digests, counter-based randomness |
+| [0021](../decisions/0021-procedural-world.md) | Procedural world: latent terrain, a sealed genesis, ChaCha20 for terrain, primitive observables |
 
 ## Related
 

@@ -24,6 +24,10 @@ audience (plan §E.4).
 | **C3 Operations and research** | World seed (predicts terrain and all randomness), law parameters, reference truth, observation metrics, logs, admin tools | Server; authenticated and audited research/admin role | Any public client |
 | **C4 Secrets** | Provider API keys, database credentials, tokens, the master key | The admin panel can only **write** keys; where each secret is stored is decided in [0009](0009-public-and-private-admin-interfaces.md#decision) | Clients and client bundles, logs, prompts, snapshots, admin API responses |
 
+Refined by [0021](0021-procedural-world.md): the world seed predicts all of the kernel's randomness
+but not terrain, which comes from a separate terrain seed. Both seeds are C3, and so is every
+digest that contains them, the state root included.
+
 Mechanisms:
 - Explicit projection functions (`toPublicView`, `toResearchView`) with allowlisted DTOs in
   `protocol`. An entity is never serialized whole.

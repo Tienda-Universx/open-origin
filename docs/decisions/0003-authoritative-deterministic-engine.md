@@ -64,6 +64,10 @@ implements each one (plan §M).
 | Time | `TICK_RATE_HZ=5`, `SIM_SECONDS_PER_TICK=12`, so R = 60 simulated days per real day | §I.1.1, O-10 |
 | Think time | `k` = 25 ticks (5 simulated minutes) plus a grace of 25 ticks | §I.1.7, O-11 |
 
+Refined by [0021](0021-procedural-world.md): these defaults give 60 simulated seconds per real
+second, and R stays simulated days per real day, so a world whose day lasts L simulated seconds
+has R = 5,184,000 / L. The default L is frozen with worldgen's golden values in T3.
+
 ## Consequences
 
 - Recovery, observer invariance, and audits can compare hashes instead of trusting logs.
