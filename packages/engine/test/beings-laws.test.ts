@@ -85,7 +85,6 @@ describe("checkLife", () => {
     { path: "/species/0/traits/max", min: 1000, max: 10_000 },
     { path: "/species/0/diet/deposit", min: 0, max: 7 },
     { path: "/species/0/diet/biteMs", min: 1, max: 3_600_000 },
-    { path: "/species/0/locomotion/maxRise", min: 0, max: 0x4000_0000 },
     { path: "/species/0/health/recoverAbove", min: 0, max: 1_000_000 },
     { path: "/species/0/regrowth/num", min: 0, max: 0x10_0000 },
     { path: "/species/0/regrowth/den", min: 1, max: 0x1_0000_0000 },
@@ -96,6 +95,23 @@ describe("checkLife", () => {
         { path, message: `${bad} is out of bounds: it must be from ${min} to ${max}` },
       ]);
     }
+  });
+
+  test("bounds the largest rise from both sides, with a rise that costs nothing", () => {
+    const free = (maxRise: number) =>
+      withMember("/species/0/locomotion", {
+        ...defaultLife().species[0]?.locomotion,
+        maxRise,
+        rise: { num: 0, den: 1 },
+      });
+    expect(lifeIssues(free(0x4000_0000))).toEqual([]);
+    expect(lifeIssues(free(0))).toEqual([]);
+    expect(lifeIssues(free(0x4000_0001))).toEqual([
+      {
+        path: "/species/0/locomotion/maxRise",
+        message: "1073741825 is out of bounds: it must be from 0 to 1073741824",
+      },
+    ]);
   });
 
   test("requires the version of the laws, exactly the stages T4 knows, and some ≤ plenty", () => {
@@ -224,5 +240,74 @@ describe("the default laws against the registered targets", () => {
     const horizon =
       (1_000_000 + peak * species.diet.nutritionPerUnit) / (c - g) + (health * c) / (c - g);
     expect(horizon).toBeLessThanOrEqual(60);
+  });
+});
+
+describe("every law, one bad value at a time", () => {
+  test.each([
+    "/species/0/needs/nutrition/awake/den",
+    "/species/0/needs/nutrition/walking/num",
+    "/species/0/needs/nutrition/asleep/den",
+    "/species/0/needs/rest/awake/num",
+    "/species/0/needs/rest/walking/den",
+    "/species/0/diet/nutritionPerUnit",
+    "/species/0/diet/biteUnits",
+    "/species/0/diet/cue/some",
+    "/species/0/locomotion/stepMs",
+    "/species/0/locomotion/maxWade",
+    "/species/0/locomotion/rise/num",
+    "/species/0/locomotion/wade/den",
+    "/species/0/sleep/recover/den",
+    "/species/0/health/starve/den",
+    "/species/0/health/recover/num",
+    "/species/0/regrowth/den",
+  ])("%s", (path) => {
+    // -2 is out of every bound of the laws, and below every ratio's terms.
+    expect(lifeIssues(withMember(path, -2)).map((issue) => issue.path)).toEqual([path]);
+  });
+
+  test("bounds the slowest step a locomotion law allows, so every step fits an Int32", () => {
+    const steep = (maxRise: number) =>
+      withMember("/species/0/locomotion", {
+        stepMs: 45_000,
+        maxRise,
+        rise: { num: 1000, den: 1 },
+        maxWade: 0,
+        wade: { num: 0, den: 1 },
+      });
+    // 45,000 + 1,000·1,518,684 = SLOWEST_STEP_INNER exactly; one more unit of rise is too slow.
+    expect(lifeIssues(steep(1_518_684))).toEqual([]);
+    expect(lifeIssues(steep(1_518_685))).toEqual([
+      {
+        path: "/species/0/locomotion",
+        message:
+          "the slowest step this law allows costs stepMs + ⌊rise·maxRise⌋ + ⌊wade·maxWade⌋ = 1518730000 ms before its diagonal factor: it must be at most 1518729594, so that every step lasts at most 2^31 − 1 ms",
+      },
+    ]);
+    expect(beings.SLOWEST_STEP_INNER * 1414).toBeLessThanOrEqual((2 ** 31 - 1) * 1000);
+    expect((beings.SLOWEST_STEP_INNER + 1) * 1414).toBeGreaterThan((2 ** 31 - 1) * 1000);
+  });
+
+  test("accepts the last deposit the genesis has, and a bad seal never hides the deposit check", () => {
+    expect(sealedLifeIssues(globalWith(withMember("/species/0/diet/deposit", 1)))).toEqual([]);
+    const fifth = withMember("/species/0/diet/deposit", 5);
+    expect(sealedLifeIssues(globalWith(fifth, 7)).map((issue) => issue.path)).toEqual([
+      "/lifeSeal",
+      "/life/species/0/diet/deposit",
+    ]);
+  });
+
+  test("reads a hostile genesis without throwing", () => {
+    const life = defaultLife();
+    // A mutable copy of the frozen default genesis, to install a getter on.
+    const global = { ...globalWith(life), genesis: copyCanonical(globalWith(life).genesis) };
+    const genesis = global.genesis as { terrain: { [key: string]: unknown } };
+    Object.defineProperty(genesis.terrain, "deposits", {
+      enumerable: true,
+      get: () => {
+        throw new Error("boom");
+      },
+    });
+    expect(() => sealedLifeIssues(global)).not.toThrow();
   });
 });

@@ -41,9 +41,10 @@ export function scaledFloor(rate: Ratio, seconds: number, cap: number): number {
   // num·whole > cap once whole exceeds ⌊cap/num⌋, and then so does the result.
   if (whole > floorDiv(cap, rate.num)) return cap;
   const part = floorDiv(rate.num * (seconds - whole * rate.den), rate.den);
-  const value = rate.num * whole + part;
-  if (value > cap) return cap;
-  return value;
+  // num·whole ≤ cap here, so comparing against what is left keeps the sum within cap.
+  const base = rate.num * whole;
+  if (part > cap - base) return cap;
+  return base + part;
 }
 
 /** A level that falls (`sign` −1) or rises (`sign` 1) at `rate`. */

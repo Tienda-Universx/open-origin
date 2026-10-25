@@ -13,9 +13,16 @@ import { range, readList } from "./schema.ts";
 /** At most 2^24 chunks, far beyond what a world of v0.1 occupies. */
 export const OCCUPANCY_BOUNDS = range(0, 0x100_0000);
 
-/** Every problem of `value` as an occupancy index, at paths from `path`. Never throws. */
+/**
+ * Every problem of `value` as an occupancy index, at paths from `path`. `value` is canonical, as a
+ * validator's value is; it never throws for a canonical value.
+ */
 export function occupancyIssues(value: unknown, path: string): Issue[] {
   const issues = new IssueList();
+  if (value === undefined) {
+    issues.report(path, "the occupancy index is missing");
+    return issues.issues;
+  }
   const keys = readList(value, path, OCCUPANCY_BOUNDS, issues);
   let previous: string | undefined;
   keys?.forEach((key, index) => {

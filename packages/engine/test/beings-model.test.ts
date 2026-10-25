@@ -271,3 +271,98 @@ describe("occupancy", () => {
     expect(keys).toEqual(["-1,0", "0,0", "10,2", "9,9"]);
   });
 });
+
+describe("every member of a being, one bad value at a time", () => {
+  // Each row breaks one member and must give exactly one issue, at that member's path.
+  test.each([
+    ["/species", "S1"],
+    ["/stage", "child"],
+    ["/born", -1],
+    ["/cell", [0]],
+    ["/needs/nutrition", 1_000_001],
+    ["/health", 0.5],
+    ["/anchor", -0],
+    ["/traits/curiosity", 0],
+    ["/condition", "asleep"],
+    ["/activity/kind", "run"],
+    ["/activity/start", -1],
+    ["/plan/0/untilNutrition", -1],
+    ["/behavior/kind", ""],
+    ["/behavior/since", -1],
+    ["/wakeWhen/restBelow", 1_000_001],
+    ["/wakeWhen/lightBelow", -1],
+    ["/wake", -1],
+    ["/outcome/result", "won"],
+    ["/outcome/tick", -1],
+    ["/cooldowns/0/until", -1],
+    ["/cooldowns/0/cell/1", 0x8000_0000],
+  ])("%s", (path, value) => {
+    const issues = issuesOf(edited(being(1, [0, 0]), path, value));
+    expect(issues.map((issue) => issue.path)).toEqual([`/being${path}`]);
+  });
+
+  test.each([
+    ["an idle start", { kind: "idle", start: -1, ms: 1 }, "/activity/start"],
+    ["an idle duration", { kind: "idle", start: 0, ms: 0 }, "/activity/ms"],
+    ["an eat start", { kind: "eat", start: -1, untilNutrition: 1, bites: 0 }, "/activity/start"],
+    [
+      "an eat bite count",
+      { kind: "eat", start: 0, untilNutrition: 1, bites: -1 },
+      "/activity/bites",
+    ],
+    [
+      "a sleep target",
+      { kind: "sleep", untilRest: 1_000_001, forced: false },
+      "/activity/untilRest",
+    ],
+    ["a sleep flag", { kind: "sleep", untilRest: 1, forced: "yes" }, "/activity/forced"],
+  ])("checks %s", (_name, activity, path) => {
+    const issues = issuesOf(edited(being(1, [0, 0]), "/activity", activity));
+    expect(issues.map((issue) => issue.path)).toEqual([`/being${path}`]);
+  });
+
+  test.each([
+    [{ kind: "sleep", untilRest: -1 }, "/plan/0/untilRest"],
+    [{ kind: "idle", ms: 0 }, "/plan/0/ms"],
+    [{ kind: "walk", dirs: "9" }, "/plan/0/dirs"],
+  ])("checks a planned step %#", (step, path) => {
+    const issues = issuesOf(edited(being(1, [0, 0]), "/plan", [step]));
+    expect(issues.map((issue) => issue.path)).toEqual([`/being${path}`]);
+  });
+
+  test("names a non-integer number, and -0, as not safe integers", () => {
+    expect(issuesOf(edited(being(1, [0, 0]), "/health", 0.5))).toEqual([
+      { path: "/being/health", message: "0.5 is not a safe integer other than -0" },
+    ]);
+  });
+});
+
+describe("independent problems of a chunk are all reported", () => {
+  test("a bad due is reported together with a bad being or a bad depletion entry", () => {
+    const broken = edited(being(1, [0, 0]), "/health", -1);
+    expect(
+      beingsChunkIssues("0,0", { beings: [broken], depletion: [], due: "x" }).map((i) => i.path),
+    ).toEqual(["/beings/0/health", "/due"]);
+    const chunkWithBadTake = {
+      beings: [being(1, [0, 0], 9)],
+      depletion: [{ cell: 0, taken: 0, since: 0 }],
+      due: 8,
+    };
+    expect(beingsChunkIssues("0,0", chunkWithBadTake).map((i) => i.path)).toEqual([
+      "/depletion/0/taken",
+      "/due",
+    ]);
+    expect(
+      beingsChunkIssues("0,0", { beings: 7, depletion: [], due: "q" }).map((i) => i.path),
+    ).toEqual(["/beings", "/due"]);
+  });
+
+  test("a missing chunk or occupancy index is reported, not accepted", () => {
+    expect(beingsChunkIssues("0,0", undefined)).toEqual([
+      { path: "", message: "the chunk is missing" },
+    ]);
+    expect(occupancyIssues(undefined, "/occupancy")).toEqual([
+      { path: "/occupancy", message: "the occupancy index is missing" },
+    ]);
+  });
+});

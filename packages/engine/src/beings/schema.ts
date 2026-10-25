@@ -21,7 +21,8 @@ export function range(min: number, max: number): IntRange {
 /** The ticks: safe integers from 0. */
 export const TICKS = range(0, Number.MAX_SAFE_INTEGER);
 
-const MISSING = "the member is missing";
+/** The message for a required member that is missing. */
+export const MISSING = "the member is missing";
 
 /** How a message names the kind of `value`. */
 function kindOf(value: unknown): string {
@@ -134,8 +135,12 @@ export function readInt(
   sink: IssueSink,
 ): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+  if (typeof value !== "number") {
     sink.report(path, `the value must be an integer, not ${kindOf(value)}`);
+    return undefined;
+  }
+  if (!Number.isSafeInteger(value) || Object.is(value, -0)) {
+    sink.report(path, `${describeValue(value)} is not a safe integer other than -0`);
     return undefined;
   }
   if (value >= bounds.min && value <= bounds.max) return value;
@@ -144,7 +149,7 @@ export function readInt(
 }
 
 /** `value` if it is a ratio { num, den } within RATIO_BOUNDS; undefined after an issue. */
-export function readRatio(value: unknown, path: string, sink: IssueSink): Ratio | undefined {
+function readRatio(value: unknown, path: string, sink: IssueSink): Ratio | undefined {
   const fields = readFields(value, path, { required: ["den", "num"] }, sink);
   if (fields === undefined) return undefined;
   const num = fields.int("num", RATIO_BOUNDS.num);
@@ -153,14 +158,14 @@ export function readRatio(value: unknown, path: string, sink: IssueSink): Ratio 
 }
 
 /** `value` if it is a boolean; undefined after an issue at `path`. */
-export function readBoolean(value: unknown, path: string, sink: IssueSink): boolean | undefined {
+function readBoolean(value: unknown, path: string, sink: IssueSink): boolean | undefined {
   if (value === undefined || typeof value === "boolean") return value;
   sink.report(path, `the value must be a boolean, not ${kindOf(value)}`);
   return undefined;
 }
 
 /** `value` if it is one of `choices`; undefined after an issue at `path`. */
-export function readChoice<T extends string>(
+function readChoice<T extends string>(
   value: unknown,
   path: string,
   choices: readonly T[],

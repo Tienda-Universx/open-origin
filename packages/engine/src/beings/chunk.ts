@@ -89,12 +89,9 @@ function checkDepletion(value: unknown, issues: IssueList): void {
   });
 }
 
-/** Reports a `due` that is not the earliest wake of the chunk's beings. */
-function checkDue(value: unknown, beings: unknown, issues: IssueList): void {
-  const due = readInt(value, "/due", TICKS, issues);
-  if (due === undefined || !Array.isArray(beings)) return;
-  // Only called once every being was valid, so each has a wake.
-  const earliest = dueOf(beings as readonly Being[]);
+/** Reports a `due` that is not the earliest wake of the chunk's beings, all of them valid. */
+function checkDue(due: number, beings: readonly Being[], issues: IssueList): void {
+  const earliest = dueOf(beings);
   if (due === earliest) return;
   const expected =
     beings.length === 0
@@ -106,16 +103,27 @@ function checkDue(value: unknown, beings: unknown, issues: IssueList): void {
 /**
  * Every problem of `value` as the chunk `key` of the beings layer, for the ruleset's
  * validateChunk: its beings, each in a cell of this chunk and ordered by id; its depletion,
- * ordered by cell; and its due tick. Never throws.
+ * ordered by cell; and its due tick, which must be the earliest wake when every being is valid.
+ * `value` is canonical, as the kernel passes it to a validator; a host that holds an arbitrary
+ * value copies it first with copyCanonical. Never throws for a canonical value.
  */
 export function beingsChunkIssues(key: ChunkKey, value: unknown): Issue[] {
   const issues = new IssueList();
+  if (value === undefined) {
+    issues.report("", "the chunk is missing");
+    return issues.issues;
+  }
   const chunk = readFields(value, "", { required: ["beings", "depletion", "due"] }, issues);
   if (chunk === undefined) return issues.issues;
   const before = issues.count;
   checkBeings(chunk.value("beings"), readChunkKey(key).coord, issues);
+  // The earliest wake means something only when every being, and the list itself, is valid.
+  const beingsValid = issues.count === before && Array.isArray(chunk.value("beings"));
   checkDepletion(chunk.value("depletion"), issues);
-  // A wrong being would make the earliest wake meaningless, so due is checked on valid beings only.
-  if (issues.count === before) checkDue(chunk.value("due"), chunk.value("beings"), issues);
+  const due = readInt(chunk.value("due"), "/due", TICKS, issues);
+  if (beingsValid && due !== undefined) {
+    // checkBeings reported nothing, so every entry is a valid Being.
+    checkDue(due, chunk.value("beings") as readonly Being[], issues);
+  }
   return issues.issues;
 }

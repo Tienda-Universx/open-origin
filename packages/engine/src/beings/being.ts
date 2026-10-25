@@ -9,6 +9,7 @@ import { type Issue, IssueList } from "../errors.ts";
 import type { Tick } from "../time/tick.ts";
 import type { EntityId } from "../world/contracts.ts";
 import { MAX_CELL, MIN_CELL } from "../worldgen/index.ts";
+import { STAGES } from "./laws.ts";
 import { NEED_MAX } from "./rates.ts";
 import { type Fields, range, readFields, readId, readInt, readList, TICKS } from "./schema.ts";
 
@@ -91,10 +92,14 @@ export type Being = {
   readonly cooldowns: readonly Cooldown[];
 };
 
+/** The most steps a walk may have, and the most steps an intention may plan. */
+export const MAX_WALK_STEPS = 64;
+export const MAX_INTENTION_STEPS = 3;
+
 /** The largest tick: the wake of a being nothing will change, and the due of an empty chunk. */
 export const MAX_TICK = Number.MAX_SAFE_INTEGER;
 
-/** The bounds of a being's data. A walk's arrivals stay below 64 steps of 2^32 ms each. */
+/** The bounds of a being's data. A walk's arrivals stay below MAX_WALK_STEPS steps of 2^32 ms. */
 export const BEING_BOUNDS = Object.freeze({
   id: range(1, Number.MAX_SAFE_INTEGER),
   cell: range(MIN_CELL, MAX_CELL),
@@ -105,13 +110,20 @@ export const BEING_BOUNDS = Object.freeze({
   durationMs: range(1, 0x1_0000_0000),
   arrivalMs: range(1, 0x40_0000_0000),
   bites: range(0, 0x10_0000),
-  plan: range(0, 2),
+  plan: range(0, MAX_INTENTION_STEPS - 1),
   cooldowns: range(0, 4),
   reasonLength: 64,
 });
 
+/** Whether `dirs` is a walk: 1 to MAX_WALK_STEPS direction digits, each from 0 to 7. */
+function isWalk(dirs: string): boolean {
+  if (dirs.length < 1 || dirs.length > MAX_WALK_STEPS) return false;
+  for (const digit of dirs) if (digit < "0" || digit > "7") return false;
+  return true;
+}
+
 /** Reports every problem of the cell at `value`: two integers inside the world. */
-export function checkCell(value: unknown, path: string, sink: IssueSink): void {
+function checkCell(value: unknown, path: string, sink: IssueSink): void {
   const cell = readList(value, path, range(2, 2), sink);
   cell?.forEach((axis, index) => {
     readInt(axis, `${path}/${index}`, BEING_BOUNDS.cell, sink);
@@ -122,10 +134,10 @@ export function checkCell(value: unknown, path: string, sink: IssueSink): void {
 function checkWalk(walk: Fields, sink: IssueSink): void {
   walk.int("start", TICKS);
   const dirs = walk.value("dirs");
-  const valid = typeof dirs === "string" && /^[0-7]{1,64}$/.test(dirs);
+  const valid = typeof dirs === "string" && isWalk(dirs);
   if (!valid)
     sink.report(walk.at("dirs"), "a walk is 1 to 64 directions, each a digit from 0 to 7");
-  const ms = readList(walk.value("ms"), walk.at("ms"), range(0, 64), sink);
+  const ms = readList(walk.value("ms"), walk.at("ms"), range(0, MAX_WALK_STEPS), sink);
   if (valid && ms !== undefined && ms.length !== dirs.length) {
     sink.report(
       walk.at("ms"),
@@ -140,7 +152,7 @@ function checkWalk(walk: Fields, sink: IssueSink): void {
       sink.report(at, `arrivals rise strictly: ${arrival} must exceed ${previous}`);
     }
   });
-  walk.int("done", range(0, (valid ? dirs.length : 64) - 1));
+  walk.int("done", range(0, (valid ? dirs.length : MAX_WALK_STEPS) - 1));
 }
 
 /** The members of each activity, by kind. */
@@ -217,7 +229,7 @@ export function checkPlanStep(value: unknown, path: string, sink: IssueSink): vo
   if (step === undefined) return;
   if (kind === "walk") {
     const dirs = step.value("dirs");
-    if (typeof dirs !== "string" || !/^[0-7]{1,64}$/.test(dirs)) {
+    if (typeof dirs !== "string" || !isWalk(dirs)) {
       sink.report(step.at("dirs"), "a walk is 1 to 64 directions, each a digit from 0 to 7");
     }
   }
@@ -331,7 +343,7 @@ export function checkBeing(value: unknown, path: string, sink: IssueSink): void 
   if (being === undefined) return;
   being.int("id", BEING_BOUNDS.id);
   readId(being.value("species"), being.at("species"), sink);
-  being.choice("stage", ["adult"]);
+  being.choice("stage", STAGES);
   being.int("born", TICKS);
   checkCell(being.value("cell"), being.at("cell"), sink);
   checkBody(being, sink);
@@ -355,7 +367,11 @@ export function checkBeing(value: unknown, path: string, sink: IssueSink): void 
   );
 }
 
-/** Every problem of the being at `value`, at paths from `path`. */
+/**
+ * Every problem of the being at `value`, at paths from `path`. `value` is canonical, as a
+ * validator's value is; a host that holds an arbitrary value copies it first with copyCanonical.
+ * Never throws for a canonical value.
+ */
 export function beingIssues(value: unknown, path: string): Issue[] {
   const issues = new IssueList();
   if (value === undefined) {

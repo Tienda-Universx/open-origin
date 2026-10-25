@@ -36,6 +36,7 @@ export {
   lifeSeal,
   type NutritionLaw,
   type RestLaw,
+  SLOWEST_STEP_INNER,
   type Species,
   STAGES,
   sealedLifeIssues,

@@ -2,17 +2,26 @@
  * The laws of life (ADR 0023): the species of a world and the laws of their bodies, held in the
  * world's global value as `life`, with `lifeSeal = digest(["life", LIFE_VERSION, life])`, written
  * once like the genesis (ADR 0021). Laws are rates per simulated second, never per tick, so a world
- * with another `simSecondsPerTick` has the same physics. Every law has bounds that keep every
- * intermediate value of the beings layer a safe integer.
+ * with another `simSecondsPerTick` has the same physics. Every law has bounds, and locomotion a
+ * bound across its members, that keep every intermediate value of the beings layer a safe integer
+ * and every step's duration within an Int32.
  */
 
 import { copyCanonicalReported } from "../canonical/copy.ts";
 import type { IssueSink } from "../canonical/value.ts";
 import { type Digest, digest } from "../digest/digest.ts";
 import { type Issue, IssueList } from "../errors.ts";
-import { expectRecord, readMember, UNREAD, under } from "../world/members.ts";
-import { NEED_MAX, type Ratio } from "./rates.ts";
-import { type Fields, type IntRange, range, readFields, readId, readList } from "./schema.ts";
+import { expectRecord, readElements, readMember, UNREAD, under } from "../world/members.ts";
+import { NEED_MAX, type Ratio, scaledFloor } from "./rates.ts";
+import {
+  type Fields,
+  type IntRange,
+  MISSING,
+  range,
+  readFields,
+  readId,
+  readList,
+} from "./schema.ts";
 
 /** The version of the laws of life: their schema, bounds, and meaning. */
 export const LIFE_VERSION = "life@1";
@@ -132,16 +141,39 @@ function checkDiet(value: unknown, path: string, sink: IssueSink): void {
   }
 }
 
-/** Reports every problem of a species' locomotion. */
+/**
+ * The inner cost, in milliseconds, of the slowest step a law may allow: a diagonal step costs
+ * ⌈1414·inner/1000⌉, and an entry of the senses' `edgeMs` is an Int32, so inner ≤
+ * ⌊(2^31 − 1)·1000/1414⌋.
+ */
+export const SLOWEST_STEP_INNER = 1_518_729_594;
+
+/**
+ * Reports every problem of a species' locomotion, and a law whose slowest step, the steepest and
+ * deepest it allows, would not fit the senses' Int32 durations: stepMs + ⌊rise·maxRise⌋ +
+ * ⌊wade·maxWade⌋ must stay at or below SLOWEST_STEP_INNER.
+ */
 function checkLocomotion(value: unknown, path: string, sink: IssueSink): void {
   const required = ["maxRise", "maxWade", "rise", "stepMs", "wade"];
   const locomotion = readFields(value, path, { required }, sink);
   if (locomotion === undefined) return;
-  locomotion.int("stepMs", LIFE_BOUNDS.durationMs);
-  locomotion.int("maxRise", LIFE_BOUNDS.height);
-  locomotion.int("maxWade", LIFE_BOUNDS.height);
-  locomotion.ratio("rise");
-  locomotion.ratio("wade");
+  const stepMs = locomotion.int("stepMs", LIFE_BOUNDS.durationMs);
+  const maxRise = locomotion.int("maxRise", LIFE_BOUNDS.height);
+  const maxWade = locomotion.int("maxWade", LIFE_BOUNDS.height);
+  const rise = locomotion.ratio("rise");
+  const wade = locomotion.ratio("wade");
+  if (stepMs === undefined || maxRise === undefined || maxWade === undefined) return;
+  if (rise === undefined || wade === undefined) return;
+  // num·max stays below 2^50, a safe integer.
+  const inner =
+    stepMs +
+    scaledFloor(rise, maxRise, Number.MAX_SAFE_INTEGER) +
+    scaledFloor(wade, maxWade, Number.MAX_SAFE_INTEGER);
+  if (inner <= SLOWEST_STEP_INNER) return;
+  sink.report(
+    path,
+    `the slowest step this law allows costs stepMs + ⌊rise·maxRise⌋ + ⌊wade·maxWade⌋ = ${inner} ms before its diagonal factor: it must be at most ${SLOWEST_STEP_INNER}, so that every step lasts at most 2^31 − 1 ms`,
+  );
 }
 
 /** Reports every problem of a species' health, sleep, regrowth, senses, and traits. */
@@ -231,7 +263,10 @@ function checkSpeciesList(value: unknown, path: string, sink: IssueSink): void {
   });
 }
 
-/** Reports every problem of `value` as the laws of life, at paths from `path`. */
+/**
+ * Reports every problem of `value` as the laws of life, at paths from `path`. `value` is
+ * canonical, as a copy or a validator's value is; it never throws for a canonical value.
+ */
 export function checkLife(value: unknown, path: string, sink: IssueSink): void {
   const life = readFields(value, path, { required: ["deathEnabled", "species", "version"] }, sink);
   if (life === undefined) return;
@@ -247,17 +282,19 @@ export function lifeSeal(life: LifeConfig): Digest {
   return digest(["life", LIFE_VERSION, life]);
 }
 
-const MISSING = "the member is missing";
-
-/** The number of deposits of the genesis `global` holds, or undefined when it cannot be read. */
+/**
+ * The number of deposits of the genesis `global` holds, or undefined when it cannot be read; each
+ * member is read once through its descriptor, so a getter or a Proxy cannot throw here. Problems
+ * of the genesis are sealedGenesisIssues' to report.
+ */
 function depositCount(global: object): number | undefined {
   const quiet = new IssueList();
   const genesis = readMember(global, "genesis", "", quiet);
   if (!expectRecord(genesis, "", "", quiet)) return undefined;
   const terrain = readMember(genesis, "terrain", "", quiet);
   if (!expectRecord(terrain, "", "", quiet)) return undefined;
-  const deposits = readMember(terrain, "deposits", "", quiet);
-  return Array.isArray(deposits) && quiet.count === 0 ? deposits.length : undefined;
+  const deposits = readElements(readMember(terrain, "deposits", "", quiet), "", "", quiet);
+  return deposits !== undefined && quiet.count === 0 ? deposits.length : undefined;
 }
 
 /** Reports every species whose diet names a deposit the genesis does not have. */
@@ -299,10 +336,12 @@ export function sealedLifeIssues(global: unknown): Issue[] {
   const seal = readCopy(global, "lifeSeal", issues);
   const before = issues.count;
   if (life !== undefined) checkLife(life, "", under(issues, "/life"));
+  // Measured before the seal's own check, so that a bad seal never hides the laws' deposits.
+  const lifeValid = life !== undefined && issues.count === before;
   if (seal !== undefined && typeof seal !== "string") {
     issues.report("/lifeSeal", `the seal must be a string, not ${typeof seal}`);
   }
-  if (life === undefined || issues.count !== before) return issues.issues;
+  if (!lifeValid) return issues.issues;
   // checkLife reported nothing, so the copy is a LifeConfig.
   const laws = life as LifeConfig;
   const count = depositCount(global);

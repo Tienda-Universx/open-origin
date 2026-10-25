@@ -65,7 +65,9 @@ or a being found outside the chunk of its cell, fails the tick.
 | `traits` | The bounds of each trait, in permille; the neutral value 1000 lies within them |
 
 Every rate is a ratio with `num` from 0 to 2^20 and `den` from 1 to 2^32, so `num·den` and
-`10^6·den` are safe integers. Each quantity changes under one rate at a time: nutrition and rest by
+`10^6·den` are safe integers. Locomotion also has a bound across its members: the slowest step it
+allows, `stepMs + ⌊rise·maxRise⌋ + ⌊wade·maxWade⌋`, is at most 1,518,729,594 ms before the diagonal
+factor, so that every step lasts at most 2^31 − 1 ms and fits the senses' Int32 durations. Each quantity changes under one rate at a time: nutrition and rest by
 activity, rest by `sleep.recover` while asleep, health by `starve` or `recover` or not at all.
 
 ### A materialized chunk
@@ -142,14 +144,17 @@ are integer simulated milliseconds.
   before it; saturation at the clamp for any elapsed time; and a constructed case where computing
   `num·seconds` directly would round to the wrong integer;
 - every problem of the laws, a being, a chunk, and the occupancy index reported at once with its
-  path, each bound from both sides, and hostile values read without throwing;
+  path, independent problems together (a bad `due` beside a bad being); one bad value for each
+  member, which must give exactly one issue at that member's path; bounds from both sides; and a
+  hostile global value read without throwing. The validators read canonical values, as the kernel
+  passes them; a host copies an arbitrary value first with `copyCanonical`;
 - the seal, and a diet that names a deposit the genesis does not have;
 - the default laws against the registered targets that depend on the laws alone, including one
   cell's regrowth against the cheapest day and the stationary horizon H;
 - each being in the chunk of its cell, on both sides of the origin, ids rising strictly, and `due`
   equal to the earliest wake.
 
-When these tests were written, each of 13 deliberate defects made them fail, except one that is
+When these tests were written, each of 24 deliberate defects made them fail, except one that is
 equivalent: without the saturation guard of `scaledFloor`, its final clamp gives the same result,
 but an intermediate product could leave the safe integers, so the guard stays.
 

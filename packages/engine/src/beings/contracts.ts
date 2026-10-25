@@ -30,9 +30,7 @@ export const DIRECTIONS: readonly (readonly [number, number])[] = Object.freeze(
   Object.freeze([1, -1] as const),
 ]);
 
-/** The most steps a walk may have, and the most steps an intention may plan. */
-export const MAX_WALK_STEPS = 64;
-export const MAX_INTENTION_STEPS = 3;
+export { MAX_INTENTION_STEPS, MAX_WALK_STEPS } from "./being.ts";
 
 /** The window a being senses, `side` cells square from `origin`, indexed `row·side + column`. */
 export type SensedWindow = {
