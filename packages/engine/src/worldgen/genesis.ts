@@ -121,7 +121,7 @@ export const GENESIS_BOUNDS = Object.freeze({
     relief: Object.freeze({
       wavelength: range(8, MAX_WAVELENGTH),
       octaves: range(1, 12),
-      amplitude: range(1, 0x4000_0000),
+      amplitude: range(1, 0x2000_0000),
     }),
     substrate: Object.freeze({
       cell: range(8, 0x1000),

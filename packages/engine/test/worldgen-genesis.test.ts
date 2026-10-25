@@ -130,7 +130,7 @@ describe("GENESIS_BOUNDS", () => {
         relief: {
           wavelength: { min: 8, max: 2 ** 16 },
           octaves: { min: 1, max: 12 },
-          amplitude: { min: 1, max: 2 ** 30 },
+          amplitude: { min: 1, max: 2 ** 29 },
         },
         substrate: {
           cell: { min: 8, max: 2 ** 12 },
@@ -186,7 +186,7 @@ describe("genesisIssues: integer bounds", () => {
     ["/laws/radiance/peak", 1, 2 ** 20, { "/laws/radiance/night": 0 }],
     ["/laws/radiance/night", 0, 1000, {}],
     ["/terrain/relief/octaves", 1, 12, { "/terrain/relief/wavelength": 2 ** 16 }],
-    ["/terrain/relief/amplitude", 1, 2 ** 30, {}],
+    ["/terrain/relief/amplitude", 1, 2 ** 29, {}],
     ["/terrain/substrate/weights/0", 1, 1000, {}],
     ["/terrain/substrate/weights/3", 1, 1000, {}],
     ["/terrain/deposits/0/octaves", 1, 6, {}],
