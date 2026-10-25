@@ -7,10 +7,10 @@
 import { copyCanonicalReported } from "../canonical/copy.ts";
 import { IssueList } from "../errors.ts";
 import type { Tick } from "../time/tick.ts";
+import { readMember } from "../world/members.ts";
 import {
   type Activity,
   type Behavior,
-  type Cell,
   checkBehavior,
   checkPlanStep,
   checkWakeConditions,
@@ -32,12 +32,8 @@ export type Accepted = {
 /** An intention the engine refused, with a short reason for the being's outcome. */
 export type Refused = { readonly kind: "rejected"; readonly reason: string };
 
-/** Where and when an intention is judged: the tick, and the window the brain sensed then. */
-export type IntentionContext = {
-  readonly tick: Tick;
-  readonly window: SensedWindow;
-  readonly center: Cell;
-};
+/** When an intention is judged, and the window the brain sensed then, centered on the being. */
+export type IntentionContext = { readonly tick: Tick; readonly window: SensedWindow };
 
 /** The intention's own members, once its copy passed every check. */
 type Valid = {
@@ -46,8 +42,19 @@ type Valid = {
   readonly behavior: Behavior;
 };
 
+/** Whether `raw` holds more steps than an intention may, read once and without copying them. */
+function tooManySteps(raw: unknown): boolean {
+  const issues = new IssueList();
+  if (typeof raw !== "object" || raw === null) return false;
+  const steps = readMember(raw, "steps", "/steps", issues);
+  const length = Array.isArray(steps) ? readMember(steps, "length", "/steps/length", issues) : 0;
+  return typeof length === "number" && length > MAX_INTENTION_STEPS;
+}
+
 /** A canonical copy of `raw` that has the shape and bounds of an intention; undefined otherwise. */
 function readIntention(raw: unknown): Valid | undefined {
+  // A huge list is refused before the canonical copy would walk all of it.
+  if (tooManySteps(raw)) return undefined;
   const issues = new IssueList();
   const copy = copyCanonicalReported(raw, issues);
   if (issues.count > 0) return undefined;
@@ -64,12 +71,14 @@ function readIntention(raw: unknown): Valid | undefined {
 }
 
 /**
- * The cumulative milliseconds of each arrival of the walk `dirs` from the window's center, or
- * undefined when one of its steps cannot be taken: impassable, or leaving the window.
+ * The cumulative milliseconds of each arrival of the walk `dirs` from the window's center, where
+ * the being stands, or undefined when one of its steps cannot be taken: impassable, or leaving the
+ * window.
  */
-function route(window: SensedWindow, center: Cell, dirs: string): number[] | undefined {
-  const { origin, side, edgeMs } = window;
-  let index = (center[1] - origin[1]) * side + (center[0] - origin[0]);
+function route(window: SensedWindow, dirs: string): number[] | undefined {
+  const { side, edgeMs } = window;
+  const radius = (side - 1) / 2;
+  let index = radius * side + radius;
   let total = 0;
   const arrivals: number[] = [];
   for (const digit of dirs) {
@@ -99,7 +108,8 @@ function activityOf(step: PlanStep, tick: Tick, arrivals: number[]): Activity {
  * Judges `raw`, what a brain returned, at `context`: the accepted activity and plan, or a refusal
  * with one of the reasons `malformed` (not an intention of the right shape and bounds),
  * `walk_not_first` (a walk is the first step or none), and `walk_blocked` (a step of the walk
- * cannot be taken). Never throws: an accessor or a Proxy is refused by the canonical copy.
+ * cannot be taken). Never throws: the canonical copy reads each member once through its own
+ * descriptor, so an accessor, or a Proxy whose traps throw, is refused.
  */
 export function acceptIntention(raw: unknown, context: IntentionContext): Accepted | Refused {
   const intention = readIntention(raw);
@@ -108,7 +118,7 @@ export function acceptIntention(raw: unknown, context: IntentionContext): Accept
   if (first === undefined) return { kind: "rejected", reason: "malformed" };
   if (rest.some((step) => step.kind === "walk"))
     return { kind: "rejected", reason: "walk_not_first" };
-  const arrivals = first.kind === "walk" ? route(context.window, context.center, first.dirs) : [];
+  const arrivals = first.kind === "walk" ? route(context.window, first.dirs) : [];
   if (arrivals === undefined) return { kind: "rejected", reason: "walk_blocked" };
   return {
     kind: "accepted",

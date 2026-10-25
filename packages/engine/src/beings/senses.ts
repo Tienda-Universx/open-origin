@@ -141,9 +141,10 @@ function stepBetween(window: EdgeInput, from: number, to: number, diagonal: bool
 /** The duration of the orthogonal step from window cell `index` by `d` (0, 2, 4, or 6), or −1. */
 function orthogonalEdge(window: EdgeInput, index: number, d: number): number {
   const { side, ground } = window;
-  const [dx, dy] = DIRECTIONS[d] as readonly [number, number];
-  const column = (index % side) + dx;
-  const row = (index - (index % side)) / side + dy;
+  // Indexed reads: destructuring the frozen pair costs about half of the window's time on Bun.
+  const direction = DIRECTIONS[d] as readonly [number, number];
+  const column = (index % side) + direction[0];
+  const row = (index - (index % side)) / side + direction[1];
   if (column < 0 || column >= side || row < 0 || row >= side) return -1;
   const target = row * side + column;
   if (ground.inside[index] === 0 || ground.inside[target] === 0) return -1;
@@ -172,12 +173,12 @@ export function senseWindow(input: SenseInput): SensedWindow {
   const edgeMs = new Int32Array(side * side * 8);
   const foodCue = new Uint8Array(side * side);
   for (let index = 0; index < side * side; index += 1) {
-    for (const d of [0, 2, 4, 6]) edgeMs[index * 8 + d] = orthogonalEdge(edges, index, d);
+    for (let d = 0; d < 8; d += 2) edgeMs[index * 8 + d] = orthogonalEdge(edges, index, d);
     foodCue[index] =
       ground.inside[index] === 1 ? cueOf(ground.food[index] as number, input.species.diet.cue) : 0;
   }
   for (let index = 0; index < side * side; index += 1) {
-    for (const d of [1, 3, 5, 7]) edgeMs[index * 8 + d] = diagonalEdge(edges, edgeMs, index, d);
+    for (let d = 1; d < 8; d += 2) edgeMs[index * 8 + d] = diagonalEdge(edges, edgeMs, index, d);
   }
   return { origin, side, edgeMs, foodCue };
 }
@@ -188,7 +189,9 @@ export function senseWindow(input: SenseInput): SensedWindow {
  * (dx, 0) and by (0, dy), is impassable, or when the step itself is.
  */
 function diagonalEdge(window: EdgeInput, edgeMs: Int32Array, index: number, d: number): number {
-  const [dx, dy] = DIRECTIONS[d] as readonly [number, number];
+  const direction = DIRECTIONS[d] as readonly [number, number];
+  const dx = direction[0];
+  const dy = direction[1];
   const horizontal = edgeMs[index * 8 + (dx > 0 ? 0 : 4)] as number;
   const vertical = edgeMs[index * 8 + (dy > 0 ? 2 : 6)] as number;
   if (horizontal < 0 || vertical < 0) return -1;

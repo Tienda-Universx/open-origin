@@ -201,13 +201,24 @@ deciding in the same tick and region.
 
 `packages/engine/test/beings-senses.test.ts` and `worldgen-surface.test.ts`:
 
-- every edge and cue of windows near the origin, across chunks in negative coordinates, and at
-  both corners of the world, against an oracle that recomputes each step from `sampleRegion` and
-  `liquidLevel` one cell at a time; no diagonal cuts a blocked corner;
-- the cue of food that beings took, less what regrew, at the band boundaries;
-- step durations, the slowest step a valid law allows within 2^31 − 1 ms, and `minimumSteps`;
-- accepted intentions with their exact cumulative arrivals, and each rejection, a getter included;
-- `sampleSurface` equal to `sampleRegion` cell for cell on random regions and at the world's edges.
+- every edge and cue of windows near the origin, across chunks in negative coordinates, at both
+  corners of the world, and along a shore where a step wades, against an oracle that recomputes
+  each step from `sampleRegion` and `liquidLevel` one cell at a time; no diagonal cuts a blocked
+  corner;
+- the cue exactly at `some − 1`, `some`, `plenty − 1`, and `plenty`; regrowth that moves a cell to
+  another band, counted in seconds from the tick of the take; and entries in a covered chunk just
+  outside the window, which change nothing;
+- step durations that round up, the slowest step a valid law allows within 2^31 − 1 ms, and
+  `minimumSteps`;
+- accepted intentions with the cumulative arrivals of a walk of several steps; each rejection, a
+  walk as the second or third step, a huge list of steps, a getter, and a Proxy whose traps throw;
+- `sampleSurface` equal to `sampleRegion` cell for cell on random regions and at the world's edges,
+  and its deposit index, `-0` and a genesis without deposits included.
+
+When these tests were written, each of 10 deliberate defects, from an independent verifier's
+review and its follow-up, made them fail; one more, dropping the row check of an entry outside the
+window, is equivalent, because such a row gives an index outside the window's arrays, and a typed
+array ignores a write there.
 
 ## The brain
 

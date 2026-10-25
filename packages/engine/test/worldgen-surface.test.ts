@@ -60,6 +60,15 @@ describe("sampleSurface", () => {
     expect(issues(() => sampleSurface(prepared, { x: 0, y: 0, width: 1, height: 1 }, -1))).toEqual([
       "/deposit",
     ]);
+    expect(issues(() => sampleSurface(prepared, { x: 0, y: 0, width: 1, height: 1 }, -0))).toEqual([
+      "/deposit",
+    ]);
+    const seed = [9, 8, 7, 6, 5, 4, 3, 2];
+    const terrain = { ...defaultGenesis(seed).terrain, deposits: [] };
+    const barren = prepareGenesis({ ...defaultGenesis(seed), terrain });
+    expect(() => sampleSurface(barren, { x: 0, y: 0, width: 1, height: 1 }, 0)).toThrow(
+      "the deposit index is not one of the genesis: the genesis defines no deposits",
+    );
     expect(
       issues(() => sampleSurface({} as never, { x: 0, y: 0, width: 1, height: 1 }, 0)),
     ).toEqual(["/prepared"]);

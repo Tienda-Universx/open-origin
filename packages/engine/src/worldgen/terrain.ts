@@ -308,14 +308,7 @@ export function sampleSurface(prepared: PreparedGenesis, rect: CellRect, k: numb
   const issues = new IssueList();
   const genesis = readPreparedGenesis(prepared, issues);
   const region = readRegion(rect, issues);
-  const deposit = genesis?.terrain.deposits[k];
-  if (genesis !== undefined && (!Number.isSafeInteger(k) || deposit === undefined)) {
-    const count = genesis.terrain.deposits.length;
-    issues.report(
-      "/deposit",
-      `the genesis has ${count} deposits: the index must be from 0 to ${count - 1}`,
-    );
-  }
+  const deposit = genesis === undefined ? undefined : readDeposit(genesis, k, issues);
   if (genesis === undefined || region === undefined || deposit === undefined || issues.count > 0) {
     throw issues.toError("invalid_value");
   }
@@ -325,6 +318,18 @@ export function sampleSurface(prepared: PreparedGenesis, rect: CellRect, k: numb
     elevation: noiseRegion(key, relief, region),
     deposit: depositField(key, deposit, LATTICE_PURPOSES.deposits[k] as number, region),
   };
+}
+
+/** The deposit `k` of `genesis`, or undefined after reporting at /deposit that it has none. */
+function readDeposit(genesis: Genesis, k: number, issues: IssueSink): Deposit | undefined {
+  const index = Number.isSafeInteger(k) && !Object.is(k, -0) ? k : -1;
+  const deposit = genesis.terrain.deposits[index];
+  if (deposit !== undefined) return deposit;
+  const count = genesis.terrain.deposits.length;
+  const allowed =
+    count === 0 ? "the genesis defines no deposits" : `it must be from 0 to ${count - 1}`;
+  issues.report("/deposit", `the deposit index is not one of the genesis: ${allowed}`);
+  return undefined;
 }
 
 /**

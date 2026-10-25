@@ -124,9 +124,9 @@ visible at a distance:
   exact amount is known only by eating, because deposits are measurement observables;
 - the light of the instant, and the being's own state, including what its brain stored.
 
-The engine reads terrain by regions, never cell by cell: each decision samples its window once,
-with a worldgen reader of the elevation and one deposit that returns exactly `sampleRegion`'s
-values and changes no output of `worldgen@1`. Each decision gets fresh arrays. Perception in T5 builds percepts, memory, and
+The engine reads terrain by regions: each decision samples its window once, with a worldgen reader
+of the elevation and one deposit that returns exactly `sampleRegion`'s values and changes no output
+of `worldgen@1`, and each decision gets fresh arrays. A bite reads the one cell it eats from. Perception in T5 builds percepts, memory, and
 provenance on top of these senses.
 
 **The brain is a pure function of its senses.** `Controller.decide(senses) → Intention`. Whatever it

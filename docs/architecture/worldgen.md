@@ -322,7 +322,7 @@ Every intermediate stays below 2^53 at `GENESIS_BOUNDS`, and every field fits it
 | `generateChunk(prepared, key)` | The region of the chunk, with its `key` (`TerrainChunk`) | `invalid_value` at `/key`, with the messages of `chunkKeyIssues` |
 | `terrainDigest(chunk)` | The digest of the chunk's fields | `invalid_value` for anything that is not a chunk: a record with a key, typed arrays of 1,024 cells, at most 8 deposits |
 
-Their cost is in [Measured cost](#measured-cost-indicative). `sampleSurface` skips the substrate, the thermal base, and the other deposits: on a 49 × 49 region it took about a quarter of `sampleRegion`'s time (0.78 against 2.98 ms on a loaded Codespace, indicative).
+Their cost is in [Measured cost](#measured-cost-indicative). `sampleSurface` skips the substrate, the thermal base, and the other deposits: on a 49 × 49 region it took between a quarter and two fifths of `sampleRegion`'s time in two measurements (0.78 against 2.98 ms, and 0.45 against 1.24 ms, on the two-core Codespace, indicative).
 
 `liquidLevel(genesis)` is exported too: the level below which a cell is under liquid, so that a ruleset computes `liquid.depth` with the same formula as `observe`.
 

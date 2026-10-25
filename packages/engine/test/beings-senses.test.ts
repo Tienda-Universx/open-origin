@@ -26,6 +26,11 @@ describe("stepDuration", () => {
   test("is the flat duration for an orthogonal step, and ⌈1.414 times it⌉ for a diagonal one", () => {
     expect(stepDuration(LAW, { rise: 0, depth: 0, diagonal: false })).toBe(45_000);
     expect(stepDuration(LAW, { rise: 0, depth: 0, diagonal: true })).toBe(63_630);
+    // 1.414 × 1,001 = 1,415.414 rounds up, and so does 1.414 × (1,001 + ⌊3·7/2⌋) = 1,429.552.
+    const odd = { ...LAW, stepMs: 1001, rise: { num: 3, den: 2 } };
+    expect(stepDuration(odd, { rise: 0, depth: 0, diagonal: true })).toBe(1416);
+    expect(stepDuration(odd, { rise: 7, depth: 0, diagonal: true })).toBe(1430);
+    expect(stepDuration(odd, { rise: 7, depth: 0, diagonal: false })).toBe(1011);
   });
 
   test("adds the milliseconds of rise and depth, up to the largest rise and depth a step may take", () => {
@@ -229,12 +234,124 @@ describe("senseWindow", () => {
   });
 });
 
+describe("senseWindow, at the edges of its rules", () => {
+  const species = speciesWithRadius(2);
+  // A cell with food in the default label's spawn area, and its chunk and index.
+  const area = worldgen.sampleRegion(PREPARED, { x: -32, y: -32, width: 96, height: 96 });
+  const at = (area.deposits[0] ?? new Int32Array()).findIndex((food) => food >= 250);
+  const cell: [number, number] = [-32 + (at % 96), -32 + Math.floor(at / 96)];
+  const base = area.deposits[0]?.[at] ?? 0;
+  const key = `${worldgen.chunkOfCell(cell[0])},${worldgen.chunkOfCell(cell[1])}`;
+  const index = worldgen.cellOffset(cell[1]) * 32 + worldgen.cellOffset(cell[0]);
+  const withEntries = (entries: { cell: number; taken: number; since: number }[]) => ({
+    [key]: { beings: [], depletion: entries, due: beings.MAX_TICK },
+  });
+  const centerCue = (window: Window) => window.foodCue[2 * window.side + 2];
+  /** The cue at the center when `left` units are left at tick 100 (1,200 s, the sensing instant). */
+  const cueWithLeft = (left: number) =>
+    centerCue(sense(cell, species, withEntries([{ cell: index, taken: base - left, since: 100 }])));
+  const { some, plenty } = SPECIES.diet.cue;
+
+  test("cues exactly at the boundaries of its bands", () => {
+    expect(base).toBeGreaterThan(plenty);
+    const cues = [
+      cueWithLeft(some - 1),
+      cueWithLeft(some),
+      cueWithLeft(plenty - 1),
+      cueWithLeft(plenty),
+    ];
+    expect(cues).toEqual([0, 1, 1, 2]);
+  });
+
+  test("adds regrowth since the take, counted in seconds from its tick", () => {
+    // Regrowth is 1 unit per 504 s; the window is sensed at 1,200 s.
+    const cueTakenAt = (since: number) =>
+      centerCue(
+        sense(cell, species, withEntries([{ cell: index, taken: base - (some - 2), since }])),
+      );
+    // Taken at tick 50 (600 s): 600 s later 1 unit regrew, one short of "some".
+    expect(cueTakenAt(50)).toBe(0);
+    // Taken at tick 0: 1,200 s later 2 units regrew, which reaches "some".
+    expect(cueTakenAt(0)).toBe(1);
+  });
+
+  /** Whether every cell of the 5 × 5 window around (x, y) has plenty of food. */
+  const richWindow = (x: number, y: number): boolean => {
+    const food = area.deposits[0] ?? new Int32Array();
+    for (let dy = -2; dy <= 2; dy += 1) {
+      for (let dx = -2; dx <= 2; dx += 1) {
+        if ((food[(y + dy + 32) * 96 + (x + dx + 32)] ?? 0) < plenty) return false;
+      }
+    }
+    return true;
+  };
+  /** The first center of the area whose window is rich and whose next column east is in its chunk. */
+  const richCenter = (): [number, number] | undefined => {
+    for (let y = -29; y < 61; y += 1) {
+      for (let x = -29; x < 58; x += 1) {
+        const ox = worldgen.cellOffset(x);
+        if (ox >= 2 && ox <= 28 && richWindow(x, y)) return [x, y];
+      }
+    }
+    return undefined;
+  };
+
+  test("ignores what was taken in a covered chunk outside the window", () => {
+    // A center whose whole 5 × 5 window has plenty of food, with the column just east of the window
+    // in the same chunk. An entry there must change nothing: a careless index would wrap into the
+    // window's next row and lower its cue.
+    const center = richCenter();
+    if (center === undefined) throw new Error("the default label's area has a rich 5 × 5 window");
+    const chunk = `${worldgen.chunkOfCell(center[0])},${worldgen.chunkOfCell(center[1])}`;
+    const entries = [-2, -1, 0, 1, 2]
+      .map((dy) => [center[0] + 3, center[1] + dy] as const)
+      .filter(
+        ([, y]) => `${worldgen.chunkOfCell(center[0] + 3)},${worldgen.chunkOfCell(y)}` === chunk,
+      )
+      .map(([x, y]) => ({
+        cell: worldgen.cellOffset(y) * 32 + worldgen.cellOffset(x),
+        taken: 1000,
+        since: 100,
+      }))
+      .sort((a, b) => a.cell - b.cell);
+    expect(entries.length).toBeGreaterThan(0);
+    const plain = sense(center, species);
+    const covered = sense(center, species, {
+      [chunk]: { beings: [], depletion: entries, due: beings.MAX_TICK },
+    });
+    expect([...plain.foodCue].every((cue) => cue === 2)).toBe(true);
+    expect([...covered.foodCue]).toEqual([...plain.foodCue]);
+  });
+
+  test("charges wading by the depth of the cell a step enters", () => {
+    // A shore: a dry cell whose east neighbor lies under shallow liquid, found once by a search of
+    // this terrain and checked again here.
+    const shore = worldgen.sampleRegion(PREPARED, { x: -7936, y: -8192, width: 256, height: 256 });
+    const depth = (i: number) => LEVEL - (shore.elevation[i] ?? 0);
+    let found: [number, number] | undefined;
+    for (let i = 0; i < 256 * 255 && found === undefined; i += 1) {
+      if (i % 256 < 255 && depth(i) <= 0 && depth(i + 1) > 0 && depth(i + 1) < 5000) {
+        found = [-7936 + (i % 256), -8192 + Math.floor(i / 256)];
+      }
+    }
+    if (found === undefined) throw new Error("the terrain has a shallow shore near (-7936, -8192)");
+    const wading = speciesWithRadius(1, {
+      maxRise: 0x10_0000,
+      maxWade: 5000,
+      wade: { num: 7, den: 1 },
+    });
+    const window = sense(found, wading);
+    expect([...window.edgeMs]).toEqual(oracleWindow(wading, found).edgeMs);
+    // The step east, into the liquid, costs more than a flat step: 7 ms per unit of its depth.
+    expect(window.edgeMs[4 * 8 + 0]).toBeGreaterThan(wading.locomotion.stepMs);
+  });
+});
+
 describe("acceptIntention", () => {
   const species = speciesWithRadius(4);
   const window = sense([200, 200], species);
   const behavior = { kind: "forage", since: 5, heading: 0 };
-  const accept = (intention: unknown) =>
-    acceptIntention(intention, { tick: 5, window, center: [200, 200] });
+  const accept = (intention: unknown) => acceptIntention(intention, { tick: 5, window });
   /** A direction whose step from the center can be taken, and its duration. */
   const open = (() => {
     const center = 4 * window.side + 4;
@@ -284,6 +401,22 @@ describe("acceptIntention", () => {
     });
   });
 
+  test("adds up the arrivals of a walk of several steps", () => {
+    // East, east again, then north-east, each step's duration read from the window.
+    let at = 4 * window.side + 4;
+    let total = 0;
+    const arrivals: number[] = [];
+    for (const d of [0, 0, 1]) {
+      const ms = window.edgeMs[at * 8 + d] ?? -1;
+      expect(ms).toBeGreaterThan(0);
+      total += ms;
+      arrivals.push(total);
+      at += (DIRECTIONS[d]?.[1] ?? 0) * window.side + (DIRECTIONS[d]?.[0] ?? 0);
+    }
+    const result = accept({ steps: [{ kind: "walk", dirs: "001" }], wakeWhen: {}, behavior });
+    expect(result).toMatchObject({ kind: "accepted", activity: { kind: "walk", ms: arrivals } });
+  });
+
   test.each([
     ["not a record", 7, "malformed"],
     [
@@ -310,12 +443,45 @@ describe("acceptIntention", () => {
       "walk_not_first",
     ],
     [
+      "a walk as the third step",
+      {
+        steps: [
+          { kind: "idle", ms: 1 },
+          { kind: "sleep", untilRest: 1 },
+          { kind: "walk", dirs: "0" },
+        ],
+        wakeWhen: {},
+        behavior,
+      },
+      "walk_not_first",
+    ],
+    [
+      "a huge list of steps",
+      {
+        steps: Array.from({ length: 100_000 }, () => ({ kind: "idle", ms: 1 })),
+        wakeWhen: {},
+        behavior,
+      },
+      "malformed",
+    ],
+    [
       "a walk that leaves the window",
       { steps: [{ kind: "walk", dirs: "00000" }], wakeWhen: {}, behavior },
       "walk_blocked",
     ],
   ])("rejects %s, without throwing", (_name, intention, reason) => {
     expect(accept(intention)).toEqual({ kind: "rejected", reason });
+  });
+
+  test("reads a Proxy through its descriptors, and refuses one whose traps throw", () => {
+    const plain = { steps: [{ kind: "idle", ms: 1 }], wakeWhen: {}, behavior };
+    expect(accept(new Proxy(plain, {}))).toMatchObject({ kind: "accepted" });
+    const throwing = new Proxy(plain, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error("boom");
+      },
+    });
+    expect(accept(throwing)).toEqual({ kind: "rejected", reason: "malformed" });
   });
 
   test("rejects a getter instead of running it, and a step that cannot be taken", () => {
@@ -332,7 +498,7 @@ describe("acceptIntention", () => {
     if (closed !== undefined) {
       const result = acceptIntention(
         { steps: [{ kind: "walk", dirs: `${closed}` }], wakeWhen: {}, behavior },
-        { tick: 5, window: flatless, center: [200, 200] },
+        { tick: 5, window: flatless },
       );
       expect(result).toEqual({ kind: "rejected", reason: "walk_blocked" });
     }
