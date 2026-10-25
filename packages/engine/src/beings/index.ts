@@ -2,6 +2,8 @@
  * The beings layer (ADR 0023): the body of the beings, whose laws the engine applies, above
  * worldgen. Brains live in packages/agents and only propose.
  */
+
+export { REFUSED_IDLE_MS } from "./advance.ts";
 export {
   type Activity,
   BEING_BOUNDS,
@@ -16,6 +18,7 @@ export {
   RESULTS,
   type WakeConditions,
 } from "./being.ts";
+export { type Body, bodyAt } from "./body.ts";
 export { type BeingsChunk, beingsChunkIssues, CHUNK_BOUNDS, dueOf } from "./chunk.ts";
 export {
   type Controller,
@@ -26,6 +29,7 @@ export {
   type SensedWindow,
   type Senses,
 } from "./contracts.ts";
+export { type BeingsGlobal, BRAIN_STREAM, CONTEST_STREAM } from "./env.ts";
 export { type Depletion, takenAt } from "./food.ts";
 export {
   type Accepted,
@@ -61,4 +65,10 @@ export {
   secondsToReach,
   type Trend,
 } from "./rates.ts";
+export {
+  BEINGS_RULESET_VERSION,
+  type BeingsRulesetOptions,
+  beingsGlobal,
+  createBeingsRuleset,
+} from "./ruleset.ts";
 export { type SenseInput, senseWindow } from "./senses.ts";
