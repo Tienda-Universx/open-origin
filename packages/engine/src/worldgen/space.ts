@@ -4,8 +4,9 @@
  * every cell of the world lies in a chunk of the world. Kernel chunk keys stay any safe integers: a
  * ruleset that uses worldgen rejects a key outside these bounds in `check`, with chunkKeyIssues.
  *
- * The helpers round toward negative infinity with floorDiv and floorMod (int.ts), never with `>>`
- * or `|0`, which wrap at 2^31 and round toward zero. They check nothing: callers on hot paths
+ * The helpers round toward negative infinity with floorDiv and floorMod (int.ts), never with `|0`,
+ * which rounds toward zero, nor with `>>`, which floors only within int32 and wraps beyond it. They
+ * check nothing: callers on hot paths
  * validate coordinates once, with the readers below, and keep to the preconditions documented on
  * each helper.
  */

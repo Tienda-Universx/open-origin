@@ -64,6 +64,18 @@ describe("cell and chunk helpers", () => {
     expect(chunkFirstCell(chunk) + offset).toBe(cell);
   });
 
+  test.each<[string, number, number, number]>([
+    ["2^31", 2 ** 31, 2 ** 26, 0],
+    ["-2^31 - 1", -(2 ** 31) - 1, -(2 ** 26) - 1, 31],
+    ["2^40", 2 ** 40, 2 ** 35, 0],
+    ["-2^40", -(2 ** 40), -(2 ** 35), 0],
+    ["2^53 - 1", Number.MAX_SAFE_INTEGER, 2 ** 48 - 1, 31],
+    ["-(2^53 - 1)", -Number.MAX_SAFE_INTEGER, -(2 ** 48), 1],
+  ])("floor the safe integer %s beyond int32, where >> would wrap", (_, cell, chunk, offset) => {
+    expect(chunkOfCell(cell)).toBe(chunk);
+    expect(cellOffset(cell)).toBe(offset);
+  });
+
   test("never return -0, which canonical values reject", () => {
     for (const cell of [0, -32, -64, MIN_CELL]) {
       expect(Object.is(cellOffset(cell), -0)).toBe(false);

@@ -531,8 +531,9 @@ export function defaultGenesis(terrainSeed: readonly number[]): Genesis {
 
 /**
  * The seal of `genesis`, which the world's global value holds next to it:
- * digest(["genesis", WORLDGEN_VERSION, genesis]). Throws EngineError("invalid_value"), as digest
- * does, when `genesis` is not canonical; sealedGenesisIssues checks the rest.
+ * digest(["genesis", WORLDGEN_VERSION, genesis]). It expects a genesis that prepareGenesis accepted:
+ * for anything else it throws EngineError("invalid_value"), as digest does, and that error may print
+ * the offending number, which the genesis reader withholds under /terrainSeed.
  */
 export function genesisSeal(genesis: Genesis): Digest {
   return digest(["genesis", WORLDGEN_VERSION, genesis]);

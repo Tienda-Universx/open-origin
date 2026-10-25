@@ -774,6 +774,28 @@ describe("sealedGenesisIssues", () => {
     expect(calls).toBe(0);
   });
 
+  test("reads the seal as it reads the genesis: an accessor never runs, an inherited one is missing", () => {
+    let calls = 0;
+    const accessor = Object.defineProperty({ genesis }, "genesisSeal", {
+      get: () => {
+        calls += 1;
+        return genesisSeal(genesis);
+      },
+      enumerable: true,
+    });
+    expect(sealedGenesisIssues(accessor)).toEqual([
+      {
+        path: "/genesisSeal",
+        message: "the property is an accessor: only data properties are read",
+      },
+    ]);
+    expect(calls).toBe(0);
+    const inherited = Object.assign(Object.create({ genesisSeal: genesisSeal(genesis) }), {
+      genesis,
+    });
+    expect(sealedGenesisIssues(inherited)).toEqual([{ path: "/genesisSeal", message: MISSING }]);
+  });
+
   test("reports a global value that throws while read as one issue", () => {
     const issues = sealedGenesisIssues(revokedProxy());
     expect(issues.map(({ path }) => path)).toEqual([""]);

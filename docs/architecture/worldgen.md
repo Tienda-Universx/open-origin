@@ -30,9 +30,10 @@ never as a fault that poisons the world.
 
 ### Floor rounding
 
-The helpers round toward negative infinity, with `floorDiv` and `floorMod` from `int.ts`. `|0` and
-`>>` would round toward zero, putting the cell −1 in the chunk 0, and wrap above 2^31 − 1. The
-helpers check nothing: they run on hot paths, whose callers validate coordinates once.
+The helpers round toward negative infinity, with `floorDiv` and `floorMod` from `int.ts`. `|0`
+would round toward zero, putting the cell −1 in the chunk 0; `>>` floors only within int32 and
+wraps beyond it (`2^31 >> 5` is −2^26). The helpers check nothing: they run on hot paths, whose
+callers validate coordinates once.
 
 | Helper | Result | At the cell −33 | Precondition |
 |---|---|---|---|
@@ -48,7 +49,7 @@ returns −0.
 
 | Function | Accepts | Problems |
 |---|---|---|
-| `chunkKeyIssues(key)` | A kernel chunk key whose coordinates lie in [`MIN_CHUNK`, `MAX_CHUNK`] | Every problem, as issues at the path `""`: the kernel's messages for a malformed key, or `the x of the chunk key, 67108864, is outside the world: chunk coordinates lie from -67108864 to 67108863` |
+| `chunkKeyIssues(key)` | A kernel chunk key whose coordinates lie in [`MIN_CHUNK`, `MAX_CHUNK`] | Its problems, as issues at the path `""`: a malformed key reports only the kernel's format messages, and a well-formed key each coordinate outside the world, as `the x of the chunk key, 67108864, is outside the world: chunk coordinates lie from -67108864 to 67108863` |
 | `readWorldChunkKey(key, path, sink)` | The same key; returns its coordinates | The same, reported to `sink` at `path` |
 | `readCell(value, path, sink)` | Any object that is not an array, with `x` and `y` in [`MIN_CELL`, `MAX_CELL`]; returns a fresh `{ x, y }` | Every problem, reported to `sink` under `path`: a coordinate that is not a safe integer or is `-0`, in `chunkKey`'s words, or `2147483648 is outside the world: cell coordinates lie from -2147483648 to 2147483647` |
 
