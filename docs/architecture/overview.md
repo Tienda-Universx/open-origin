@@ -162,6 +162,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0019](../decisions/0019-end-to-end-testing-strategy.md) | End-to-end testing strategy: `bun test` for processes, Playwright from T8 |
 | [0020](../decisions/0020-deterministic-core-design.md) | Deterministic core design: state ownership, failure model, 128-bit digests, counter-based randomness |
 | [0021](../decisions/0021-procedural-world.md) | Procedural world: latent terrain, a sealed genesis, ChaCha20 for terrain, primitive observables |
+| [0022](../decisions/0022-single-shared-public-universe.md) | A single public universe, shared and synchronized in real time: one clock, fixed speed, no time controls for users |
 
 ## Related
 

@@ -64,6 +64,10 @@ first, then check that a tool exists and which version it is (`bun --version`,
 11. **Scientific integrity.** Never present a metric or a behavior as proof that inhabitants are
     conscious (no accepted test exists, plan §C), never inject the concepts we want to observe into
     prompts, and keep provenance for every belief (plan §C, §K).
+12. **One shared public universe.** The public universe is one world with one clock, advanced only
+    by the server at a fixed rate. No player, spectator, or client can pause, speed up, slow down,
+    or rewind it; cameras and visual preferences are presentation; replays and private simulations
+    run apart, with their own clocks ([ADR 0022](docs/decisions/0022-single-shared-public-universe.md)).
 
 ## Change protocol (mandatory for every significant change)
 
