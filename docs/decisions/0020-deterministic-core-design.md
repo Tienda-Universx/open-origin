@@ -80,6 +80,8 @@ is amortized O(1), and the sorted list is materialized only when a caller asks f
 Encoding and decoding snapshots and full checksums are O(N), and run only at checkpoints, on load,
 or for audits. A ruleset system that iterates every chunk each tick is O(N) by its own choice;
 T4 adds an activity index based on world data only ([0005](0005-observer-independence.md)).
+Refined by [0023](0023-autonomous-beings.md): the index is the occupancy list of the beings
+ruleset, and only beings whose wake tick has come are processed.
 
 **Digests (refines hashing).** Divergence detection and integrity are separate mechanisms.
 
@@ -114,7 +116,8 @@ T4 adds an activity index based on world data only ([0005](0005-observer-indepen
   the ruleset is validated, and drawing from an undeclared stream is a fault.
 - Bounded integers use rejection sampling (bounds 1 to 2^32), each retry consuming the next `n`.
   The conflict permutation of plan §I.1.3 is a Fisher–Yates shuffle over the caller's own stream,
-  keyed by the resource id.
+  keyed by the resource id. Refined by [0023](0023-autonomous-beings.md): a contest for the food
+  of a cell is keyed by the lowest claimant id, because a cell is not a safe-integer id.
 
 **Canonical values.** Safe integers without `-0`, strings, booleans, dense arrays, and plain
 records; no `null`. Strings and record keys must be well formed and in NFC: the core validates and
