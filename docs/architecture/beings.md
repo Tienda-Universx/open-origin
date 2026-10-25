@@ -9,7 +9,7 @@ requests implement, and the preregistration of its scenarios.
 | Part | Code | Pull request |
 |---|---|---|
 | Layering and module-state scans | `tests/repo/engine-purity.ts` | T4-2 |
-| State, laws, and exact arithmetic | `packages/engine/src/beings` | T4-2 (*planned*) |
+| State, laws, and exact arithmetic | `packages/engine/src/beings`: `rates.ts`, `food.ts`, `laws.ts`, `being.ts`, `chunk.ts`, `occupancy.ts`, `contracts.ts` | T4-2 |
 | Senses and validation of intentions | `packages/engine/src/beings` | T4-3 (*planned*) |
 | Navigation | `packages/agents` | T4-4 (*planned*) |
 | The tick, actions, and contests | `packages/engine/src/beings` | T4-5 (*planned*) |
@@ -132,6 +132,26 @@ are integer simulated milliseconds.
 - **Physiology.** Health falls while nutrition is 0 and recovers while nutrition and rest are above
   `recoverAbove`. Rest at 0 forces sleep. Health at 0 incapacitates the being, or kills it when
   `life.deathEnabled` is true (plan O-16).
+
+### What the tests check
+
+`packages/engine/test/beings-rates.test.ts`, `beings-laws.test.ts`, and `beings-model.test.ts`:
+
+- the closed forms against an oracle that accumulates each rate tick by tick with an exact
+  rational remainder; the first second that reaches a level, on random cases, against the second
+  before it; saturation at the clamp for any elapsed time; and a constructed case where computing
+  `num·seconds` directly would round to the wrong integer;
+- every problem of the laws, a being, a chunk, and the occupancy index reported at once with its
+  path, each bound from both sides, and hostile values read without throwing;
+- the seal, and a diet that names a deposit the genesis does not have;
+- the default laws against the registered targets that depend on the laws alone, including one
+  cell's regrowth against the cheapest day and the stationary horizon H;
+- each being in the chunk of its cell, on both sides of the origin, ids rising strictly, and `due`
+  equal to the earliest wake.
+
+When these tests were written, each of 13 deliberate defects made them fail, except one that is
+equivalent: without the saturation guard of `scaledFloor`, its final clamp gives the same result,
+but an intermediate product could leave the safe integers, so the guard stays.
 
 ## Senses
 
