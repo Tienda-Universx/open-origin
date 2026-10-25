@@ -65,7 +65,10 @@ export {
 } from "./space.ts";
 export {
   generateChunk,
+  liquidLevel,
+  type SurfaceRegion,
   sampleRegion,
+  sampleSurface,
   type TerrainChunk,
   type TerrainRegion,
   terrainDigest,

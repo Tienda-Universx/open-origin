@@ -10,7 +10,7 @@ requests implement, and the preregistration of its scenarios.
 |---|---|---|
 | Layering and module-state scans | `tests/repo/engine-purity.ts` | T4-2 |
 | State, laws, and exact arithmetic | `packages/engine/src/beings`: `rates.ts`, `food.ts`, `laws.ts`, `being.ts`, `chunk.ts`, `occupancy.ts`, `contracts.ts` | T4-2 |
-| Senses and validation of intentions | `packages/engine/src/beings` | T4-3 (*planned*) |
+| Senses and validation of intentions | `packages/engine/src/beings`: `senses.ts`, `locomotion.ts`, `intention.ts`; `sampleSurface` in `worldgen/terrain.ts` | T4-3 |
 | Navigation | `packages/agents/src/navigation` | T4-4 |
 | The tick, actions, and contests | `packages/engine/src/beings` | T4-5 (*planned*) |
 | The brain `utility@1` | `packages/agents` | T4-6 (*planned*) |
@@ -190,9 +190,36 @@ when `|elevation(b) − elevation(a)|` exceeds `maxRise`, or when the liquid dep
 orthogonal step and 1414 for a diagonal one, and the rise and wade terms computed as rates over
 those units.
 
-Terrain is read by regions with `sampleRegion`, or with a reader of selected fields that returns
-exactly its values, through a memo local to one run of the system. The arrays are copied for each
-decision, so one brain cannot change what another sees.
+Terrain is read by regions: each decision samples its window once with `sampleSurface`, which
+returns exactly `sampleRegion`'s elevation and the diet's deposit and costs about a quarter of it.
+The food beings took comes from the chunks the window covers, read without writing or
+materializing anything. Every decision gets fresh arrays, so one brain cannot change what another
+sees. A memo shared by the decisions of one tick waits until the benchmark shows several beings
+deciding in the same tick and region.
+
+### What the tests check (senses)
+
+`packages/engine/test/beings-senses.test.ts` and `worldgen-surface.test.ts`:
+
+- every edge and cue of windows near the origin, across chunks in negative coordinates, at both
+  corners of the world, and along a shore where a step wades, against an oracle that recomputes
+  each step from `sampleRegion` and `liquidLevel` one cell at a time; no diagonal cuts a blocked
+  corner;
+- the cue exactly at `some − 1`, `some`, `plenty − 1`, and `plenty`; regrowth that moves a cell to
+  another band, counted in seconds from the tick of the take; and entries in a covered chunk just
+  outside the window, which change nothing;
+- step durations that round up, the slowest step a valid law allows within 2^31 − 1 ms, and
+  `minimumSteps`;
+- accepted intentions with the cumulative arrivals of a walk of several steps; each rejection, a
+  walk as the second or third step, a getter, a Proxy whose traps throw, a revoked Proxy as the
+  list of steps, and a huge list, refused from its length without reading its entries;
+- `sampleSurface` equal to `sampleRegion` cell for cell on random regions and at the world's edges,
+  and its deposit index, `-0` and a genesis without deposits included.
+
+When these tests were written, each of 10 deliberate defects, from an independent verifier's
+review and its follow-up, made them fail; one more, dropping the row check of an entry outside the
+window, is equivalent, because such a row gives an index outside the window's arrays, and a typed
+array ignores a write there.
 
 ## The brain
 
@@ -206,9 +233,12 @@ decision, so one brain cannot change what another sees.
 - `behavior`: what the brain wants to find again in its next senses.
 
 The engine copies the intention canonically, reading each member once and refusing accessors, then
-validates its shape, bounds, and preconditions, and every step of a walk against the window. An
-invalid intention is rejected: the being idles briefly and `outcome` records the reason. A brain
-that throws poisons the world. The ruleset captures its brains as it captures its lists, and its
+validates its shape and bounds, and every step of a walk against the window of the same tick. A
+walk is the first step or none, so its arrivals are computed from that window; the preconditions of
+the other steps (food to eat, a condition that allows walking) are checked when they start. An
+invalid intention is rejected with one of the reasons `malformed`, `walk_not_first`, and
+`walk_blocked`: the being idles briefly and `outcome` records the reason. A brain that throws
+poisons the world. The ruleset captures its brains as it captures its lists, and its
 brain version composes each species with its brain, in species order.
 
 `utility@1` (T4-6) scores five behaviors with integer response curves: forage, eat here, sleep,
