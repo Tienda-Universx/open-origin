@@ -132,7 +132,9 @@ provenance on top of these senses.
 **The brain is a pure function of its senses.** `Controller.decide(senses) → Intention`. Whatever it
 must remember between decisions (its current behavior, its exploration heading, its recent failed
 targets) is stored in the being as C1 data and returned in the senses. An intention has one to three
-steps (`walk`, `eat`, `sleep`, `idle`), its wake conditions, and its behavior. The engine copies it
+steps (`walk`, `eat`, `sleep`, `idle`), its wake conditions, its behavior, and optionally up to four
+cooldowns, targets to avoid for some milliseconds, which the engine stamps with the tick they end
+at, because the brain does not sense the tick (T4-6). The engine copies it
 canonically, reading each member once and refusing accessors as `members.ts` does, then validates
 it. An invalid intention is a rejection that becomes the being's experience (plan §K.5), never a
 fault; a brain that throws is a code error and poisons the world (ADR 0020). A future

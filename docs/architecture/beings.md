@@ -14,7 +14,8 @@ requests implement, and the preregistration of its scenarios.
 | Navigation | `packages/agents/src/navigation` | T4-4 |
 | The tick, actions, spawn, and occupancy | `packages/engine/src/beings`: `body.ts`, `light.ts`, `activity.ts`, `env.ts`, `advance.ts`, `resolve.ts`, `system.ts`, `ruleset.ts` | T4-5a |
 | Contests, incapacity, fuzz, and call counts | `packages/engine/test`: `beings-contest.test.ts`, `beings-fuzz.test.ts` | T4-5b |
-| The brain `utility@1` | `packages/agents` | T4-6 (*planned*) |
+| Cooldowns that an intention adds | `packages/engine/src/beings`: `intention.ts`, `advance.ts` | T4-6 |
+| The brain `utility@1` | `packages/agents/src/brain`: `curves.ts`, `parameters.ts`, `recipes.ts`, `utility.ts` | T4-6 |
 | Scenarios, survival, and controls | `packages/agents/test`, `bench` | T4-7 (*planned*) |
 
 ## Layers
@@ -259,10 +260,119 @@ records the reason, and the engine emits `being.intention_rejected`. A brain tha
 poisons the world. The ruleset captures its brains as it captures its lists, and its
 brain version composes each species with its brain, in species order.
 
-`utility@1` (T4-6) scores five behaviors with integer response curves: forage, eat here, sleep,
-explore, and rest. It keeps hysteresis, a commitment bonus with a minimum margin to switch, and
-cooldowns on failed targets. It plans with one Dijkstra over the window for food and A* with an
-octile heuristic for a single target; ties break by (f, h, cell index).
+### `utility@1`
+
+`utilityController()` of `@open-origin/agents` is a Utility AI (plan §5.3, L1) with the recipes
+of L2 (plan §5.4). It is a pure function of its senses: it keeps no state, what it must remember
+travels in `behavior` and `cooldowns`, and its only randomness is `draws[0] mod 8`, its heading at
+its first decision. Its parameters are in `packages/agents/src/brain/parameters.ts`.
+
+**Considerations**, integers in permille, each from a piecewise-linear response curve whose
+values between points are rounded down:
+
+- hunger and tiredness, the loss of nutrition and rest from full, `⌊(10^6 − level)/1000⌋`, each
+  felt through a trait: `min(1000, ⌊loss·trait/1000⌋)`, appetite for hunger and sleepiness for
+  tiredness;
+- darkness, 1000 at a light of 100 or less and 0 from 200;
+- the worth of a food cell, the worth of its cue (some 600, plenty 1000) times that of its route
+  time (1000 for none, 700 for an hour, 300 for four hours), from one Dijkstra over the window;
+- alertness, 1000 until half of rest is lost and 0 from 65%;
+- the drive to wander, 500 felt through curiosity, times the daylight `1000 − darkness`.
+
+**Scores** are the product of the considerations, each lifted by `(1 − c)·(1 − 1/n)·c` (the
+compensation of Mark and Dill's Infinite Axis Utility System), so that a consideration of 0 vetoes
+a behavior and more considerations do not lower a score by themselves:
+
+| Behavior | Considerations | Plan | Woken by |
+|---|---|---|---|
+| forage | the drive to eat; the best cell's worth | walk the route, then eat to full when one walk reaches it | rest at 150,000 |
+| eat here | the drive to eat; the cue of its own cell | eat to full | rest at 150,000 |
+| sleep | the need to sleep; darkness, or the urgency of tiredness | sleep to full rest | nutrition at 250,000 |
+| explore | the drive to search or to wander; alertness | a leg, then a pause of 3 hours when wandering | hunger, tiredness, dusk when wandering; tiredness when searching |
+| rest | a constant 250 | idle 2 hours by day, 12 in the dark | hunger, tiredness, dusk and dawn |
+
+- **The drive to eat** starts once 40% of nutrition is lost (700, rising to 1000 at 70%) and,
+  once foraging or eating, keeps going until at most 10% is lost: the hysteresis that carries a
+  meal from cell to cell. Without a reachable food cell or food here, the drive to eat becomes the
+  drive to search; with one, the being does not wander.
+- **The need to sleep** in the dark starts once 10% of rest is lost, by day once 65% is; once
+  asleep, it holds until at most 2% is lost, and a sleep ends at full rest. So beings sleep once or
+  twice each night and wake rested.
+- **Choice.** The best score wins, ties going to the order forage, eat, sleep, explore, rest. The
+  behavior the being is doing gets a bonus of 100, and another must also beat it by 50; a
+  behavior it can no longer do, scored 0, holds nothing. A wake condition the brain asked for
+  releases the commitment, since it is the brain's own request to weigh everything again: a
+  sleep woken by starvation does not outweigh the meal.
+
+**Decision points.** Every plan asks to be woken at the levels that would change the choice: the
+nutrition at which the drive to eat starts and the rest at which sleep starts, felt through the
+being's traits, and the light at dusk (100) and dawn (200), with both in the twilight. Rest idles
+long, and a being decides again only when an activity ends or a condition holds, about 11 to 12
+times a simulated day. By day, every plan either has the dusk condition or ends by itself, a walk
+and a meal, so the reaction to darkness is bounded by the longest such plan: 64 of the slowest
+steps the law allows and a meal to full.
+
+**Recipes.**
+
+- **Forage** searches the window once with Dijkstra and walks to the cell of highest worth, other
+  than its own and those it cools; ties go to the shorter route, then to the lower cell index. A
+  route of more than 64 steps is walked in parts, without the meal, and the being decides again at
+  the end of each. Unreachable cells are never chosen, so no forage fails for want of a route.
+- **Wander**, by a sated being by day: a leg toward the cell 16 cells away along its heading,
+  planned with A* under the octile bounds of the window's own cheapest steps. The heading is kept
+  from leg to leg and from one exploration to the next; the being turns, by 45° then wider to
+  either side, when the target has a cooldown, has no food cue within 12 cells, or has no route,
+  so it never wanders out of sight of food. A target without a route gets a cooldown of 6 hours.
+- **Search**, by a hungry being with nothing to eat in sight: a spiral around its anchor, the
+  oldest cooldown within 200 cells, or a new one of two days where it stands, a place where it
+  found nothing. Each leg steps 12 cells around the anchor, counterclockwise, or around and out
+  when that is blocked, and every leg ends farther from the anchor than it began, so the path is a
+  spiral whose turns lie about π·12 ≈ 38 cells apart, inside the window's side of 49: it sweeps
+  the land nearest the anchor first and never comes back to a place it passed. At the anchor itself
+  the first leg follows the heading, turning when blocked. A straight search, and a search bounced
+  inside a square, were tried during calibration and left beings that spawned out of sight of food
+  to starve: the first walked away from food, the second fell into short periodic loops.
+- **Cooldowns.** A meal that failed where the being stands (`failed` or `lost`, with `no_food` or
+  `food_gone`) cools that cell for 6 hours, a wander target without a route for 6 hours, and the
+  anchor of a search for two days. A cooled cell is neither foraged, eaten, nor aimed at.
+- When the being is incapacitated it never walks; when no leg has a route it rests.
+
+### What the tests check (brain)
+
+`packages/agents/test`: `curves.test.ts`, `utility.test.ts`, `utility-fuzz.test.ts`,
+`utility-world.test.ts`, on senses built by hand (`support/senses.ts`) and in worlds:
+
+- the curves, the compensated product, and traits, against values computed by hand;
+- each behavior and its exact intention: eating here, foraging the cell of highest worth (cue
+  against route time, both ways), ties by route time and by cell index, cooled cells, a route of
+  92 steps walked in parts, no walk while incapacitated, failed meals remembered, sleep by night
+  and only when exhausted by day, rest with its wake levels, felt through traits, wandering toward
+  food in sight and resting when none is, the first heading from the draws, the heading kept, the
+  search's anchor, its steps around and out, a spiral of 120 legs whose distance from the anchor
+  always grows and whose turns lie 30 to 47 cells apart, and blocked targets cooled;
+- hysteresis and commitment: the two levels of eating, needs that waver around a level, rest that
+  wavers around the level of sleep at night, the margin to switch, and a wake condition that
+  releases the commitment;
+- that a decision is the same from the same senses and writes nothing to them;
+- on 300 random senses over real terrain, that the engine accepts every intention, walks have at
+  most 64 steps, an incapacitated being never walks, every behavior occurs, and by day every plan
+  has the dusk condition or ends by itself;
+- in the calibration scenario `calibration/1`, that resting and wandering beings decide at the
+  exact tick of dusk, and a being spawned to forage across dusk within the bound above; and the
+  ruleset's brain version `s1:utility@1`.
+
+When these tests were written, each of 34 deliberate defects in the brain made them fail: the
+start level of eating, no hysteresis of eating or of sleep, no commitment, no margin, ties to the
+later behavior, a commitment kept through a wake condition, the heading drawn at every decision,
+no anchor and no reuse of one, failed meals and blocked targets not cooled, cooled cells foraged
+or eaten, ties to the longer route, route time ignored, a meal planned past one walk, no dusk
+condition, wake levels one short, walking while incapacitated, traits ignored, no compensation,
+curves rounded to the nearest, wandering while hungry, a short rest at night, wandering out of
+sight of food or as far as the window, a clockwise spiral, an integer square root one too large,
+out before around, a first leg that ignores the heading, a search step twice as long, bounds too
+high for A*, and no exhaustion guard on foraging. Four of them first survived, and the tests were
+strengthened: a slow route to plenty against some food near, a little food against wandering, a
+tie in worth broken by route time, and a heading kept whatever the draws.
 
 ## Navigation
 
