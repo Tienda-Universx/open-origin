@@ -42,3 +42,24 @@ export function int64Words(value: number): readonly [number, number] {
   }
   return [value >>> 0, Math.floor(value / U32_COUNT) >>> 0];
 }
+
+/**
+ * ⌊a / b⌋, rounded toward negative infinity, for a safe integer `a` and a positive safe integer
+ * `b`; the caller guarantees both, as hot paths validate their inputs once. It is exact: when the
+ * quotient is not an integer, it lies at least 1/b from the nearest one, while its rounding error is
+ * below half an ulp, which for a quotient below 2^53/b is below 1/b, so the rounding never reaches
+ * an integer. `+ 0` turns -0 into 0, which canonical values require.
+ */
+export function floorDiv(a: number, b: number): number {
+  return Math.floor(a / b) + 0;
+}
+
+/**
+ * a − b·⌊a / b⌋, in [0, b), for a safe integer `a` and a positive safe integer `b`; the caller
+ * guarantees both. The remainder `%` is exact for doubles, and adding `b` to a negative remainder
+ * gives an integer below b, which is exact too. `+ 0` turns the -0 of `-5 % 5` into 0.
+ */
+export function floorMod(a: number, b: number): number {
+  const remainder = a % b;
+  return remainder < 0 ? remainder + b : remainder + 0;
+}

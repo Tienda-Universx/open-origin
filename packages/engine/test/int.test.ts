@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { imul, int64Words, isU32, rotl32 } from "../src/int.ts";
+import { floorDiv, floorMod, imul, int64Words, isU32, rotl32 } from "../src/int.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 
@@ -98,5 +98,75 @@ describe("int64Words", () => {
     expect(engineErrorOf(() => int64Words(value as unknown as number)).issues).toEqual([
       { path: "", message: `a value of type ${type} is not a safe integer` },
     ]);
+  });
+});
+
+/** A random safe integer of up to 53 bits of magnitude, with either sign. */
+function randomSafe(random: Sfc32): number {
+  const magnitude = (random.next() % 0x200000) * 0x1_0000_0000 + random.next();
+  return random.next() % 2 === 0 ? magnitude : -magnitude;
+}
+
+/** ⌊a / b⌋ and a mod b with the sign of b, computed with BigInt. */
+function floorReference(a: number, b: number): readonly [number, number] {
+  const [big, divisor] = [BigInt(a), BigInt(b)];
+  const truncated = big / divisor;
+  const quotient = big % divisor < 0n ? truncated - 1n : truncated;
+  return [Number(quotient), Number(big - quotient * divisor)];
+}
+
+describe("floorDiv and floorMod", () => {
+  test("agree with BigInt floor division on every pair in [-200, 200] x [1, 70]", () => {
+    for (let a = -200; a <= 200; a += 1) {
+      for (let b = 1; b <= 70; b += 1) {
+        expect([floorDiv(a, b), floorMod(a, b)]).toEqual(floorReference(a, b));
+      }
+    }
+  });
+
+  test("agree with BigInt for random safe integers and divisors of every size", () => {
+    const random = new Sfc32(21);
+    for (let sample = 0; sample < 5_000; sample += 1) {
+      const a = randomSafe(random);
+      const b = Math.max(1, Math.abs(randomSafe(random)) >>> (random.next() % 53));
+      expect([floorDiv(a, b), floorMod(a, b)]).toEqual(floorReference(a, b));
+    }
+  });
+
+  test.each([
+    [MAX_SAFE, 1],
+    [-MAX_SAFE, 1],
+    [MAX_SAFE, 2],
+    [-MAX_SAFE, 2],
+    [MAX_SAFE, 3],
+    [-MAX_SAFE, 3],
+    [MAX_SAFE - 1, MAX_SAFE],
+    [-MAX_SAFE, MAX_SAFE],
+    [-1, MAX_SAFE],
+    [-(2 ** 52) - 1, 2 ** 52],
+    [2 ** 31, 32],
+    [-(2 ** 31), 32],
+    [-(2 ** 31) - 1, 32],
+  ])("are exact at the edge (%d, %d)", (a, b) => {
+    expect([floorDiv(a, b), floorMod(a, b)]).toEqual(floorReference(a, b));
+  });
+
+  test("round toward negative infinity: the cells -1, -32, and -33 of chunks of 32", () => {
+    expect([floorDiv(-1, 32), floorMod(-1, 32)]).toEqual([-1, 31]);
+    expect([floorDiv(-32, 32), floorMod(-32, 32)]).toEqual([-1, 0]);
+    expect([floorDiv(-33, 32), floorMod(-33, 32)]).toEqual([-2, 31]);
+  });
+
+  test("never return -0, which is not canonical, even for the safe integer -0", () => {
+    for (const [a, b] of [
+      [-0, 5],
+      [0, 5],
+      [-5, 5],
+      [-10, 5],
+      [-MAX_SAFE, MAX_SAFE],
+    ] as const) {
+      expect(Object.is(floorDiv(a, b), -0)).toBe(false);
+      expect(Object.is(floorMod(a, b), -0)).toBe(false);
+    }
   });
 });
