@@ -37,7 +37,8 @@ export function headerDifferences({ header, ruleset }: WorldState): Issue[] {
  * Worlds that createWorld makes never differ. It takes no ruleset, unlike the
  * `versionDifferences(world, ruleset)` of plan §4: a world runs the ruleset it captured, so its
  * own ruleset is the one to compare. Throws EngineError("invalid_input") when `world` is not a
- * world, EngineError("world_busy") while a step runs on it or it is encoded, and
+ * world, EngineError("world_busy") while a step runs on it or a read of values of its state runs
+ * (readState), and
  * EngineError("world_faulted") when its tick failed.
  */
 export function versionDifferences(world: World): Issue[] {

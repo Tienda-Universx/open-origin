@@ -96,6 +96,29 @@ export function recordRun(world: World, script: Script, from = 1): TickRecord[] 
 
 const PARTS = ["checksum", "events", "changedChunks", "stats"] as const;
 
+/** Whether `value` has the shape of a TickRecord: a safe integer tick, and a fault or each part. */
+function isTickRecord(value: unknown): value is TickRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as { readonly [key: string]: unknown };
+  if (!Number.isSafeInteger(record.tick)) return false;
+  if ("fault" in record) return typeof record.fault === "string";
+  return PARTS.every((part) => typeof record[part] === "string");
+}
+
+/** Whether `text` is a string or undefined, which JSON writes by leaving the member out. */
+const isOptionalText = (text: unknown) => text === undefined || typeof text === "string";
+
+/**
+ * Whether `value`, parsed from what a child process wrote, has the shape of a ChildOutput, so
+ * that the comparison can read it. The records' contents are checked by the comparison itself.
+ */
+export function isChildOutput(value: unknown): value is ChildOutput {
+  if (typeof value !== "object" || value === null) return false;
+  const { records, final, finalError } = value as { readonly [key: string]: unknown };
+  if (!Array.isArray(records) || !records.every(isTickRecord)) return false;
+  return isOptionalText(final) && isOptionalText(finalError);
+}
+
 /** A record's fault, or "no fault". */
 const faultOf = (record: TickRecord) => ("fault" in record ? record.fault : "no fault");
 

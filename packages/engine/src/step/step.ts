@@ -234,7 +234,8 @@ function expectUnchanged(state: WorldState, tick: number): void {
  *
  * Throws, and changes nothing: EngineError("invalid_input") when `world` is not a world or a
  * command is invalid (step/commands.ts); EngineError("world_busy") when a step already runs on the
- * world or it is being encoded; EngineError("world_faulted") when an earlier tick failed;
+ * world or a read of values of its state runs (readState); EngineError("world_faulted") when an
+ * earlier tick failed;
  * EngineError("version_mismatch") with every difference versionDifferences reports, when the
  * world's header records other versions than ENGINE_VERSION and its ruleset's.
  * Throws after poisoning the world: world_busy when an engine defect changed the world while the

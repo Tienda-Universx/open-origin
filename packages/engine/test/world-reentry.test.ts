@@ -14,6 +14,7 @@ import {
   type World,
   worldStatus,
 } from "../src/index.ts";
+import { STALE_CHUNK } from "./support/barrier-rulesets.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { type TrapPlace, trappedWorld } from "./support/trapped-world.ts";
 
@@ -170,6 +171,31 @@ describe("a read that fails after it refused a use throws its first refusal", ()
   });
 });
 
+describe("an encoding that poisons the world throws its fault, which a refusal does not replace", () => {
+  const ENCODERS = READERS.filter((reader) => reader.verb === "encoded");
+
+  test.each(ENCODERS.map((reader) => [reader.api, reader] as const))(
+    "%s, when a trap catches a refusal and then changes what the Proxy answers",
+    (_api, reader) => {
+      const { world, hook } = setUp(reader);
+      hook.run = (target) => {
+        try {
+          step(world, []);
+        } catch {
+          // Refused and caught: the encoding completes, with the changed answer.
+        }
+        target.a = 2;
+      };
+      expect(failure(reader, world)).toEqual({
+        code: "integrity_violation",
+        issues: [{ path: "/chunks/0,0", message: STALE_CHUNK }],
+      });
+      hook.run = undefined;
+      expect(worldStatus(world)).toMatchObject({ kind: "faulted", code: "integrity_violation" });
+    },
+  );
+});
+
 describe("a trap that throws without using the world keeps each read's own classification", () => {
   const thrown = "the object threw while being read: Error: trap";
   const stale = `the chunk changed without writeChunk, and it is not canonical: at /inner: ${thrown}`;
@@ -193,6 +219,11 @@ describe("a trap that throws without using the world keeps each read's own class
     [
       "encodeSnapshot: integrity_violation, which poisons the world",
       READERS[3] as Reader,
+      { code: "integrity_violation", issues: [{ path: "/chunks/0,0", message: stale }] },
+    ],
+    [
+      "snapshotBytes: integrity_violation, which poisons the world",
+      READERS[4] as Reader,
       { code: "integrity_violation", issues: [{ path: "/chunks/0,0", message: stale }] },
     ],
   ])("%s", (_name, reader, expected) => {

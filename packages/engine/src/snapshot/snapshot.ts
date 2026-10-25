@@ -4,10 +4,11 @@
  * replicas of a world encode to the same text.
  *
  * - encodeSnapshot canonicalizes the whole state once and recomputes every digest from that same
- *   text (recomputeState, which fullChecksum and audit also use). When the recomputed root differs
- *   from the incremental one, a write bypassed the barrier:
- *   the world is poisoned with integrity_violation and no text is returned. This is how such a
- *   write is found when audit is off. O(N) for N chunks: it runs at checkpoints, not every tick.
+ *   text (recomputeState, which runs the same recompute as recomputeRoot, the function fullChecksum
+ *   and audit use). When the recomputed root differs from the incremental one, a write bypassed
+ *   the barrier: the world is poisoned with integrity_violation and no text is returned. This is
+ *   how such a write is found when audit is off. O(N) for N chunks: it runs at checkpoints, not
+ *   every tick.
  * - decodeSnapshot accepts canonical text only, checks the schema, captures the ruleset, runs its
  *   validators, and requires the stored state root to equal the recomputed one. The world it
  *   makes keeps the versions the header records, so step refuses to replay it under others.
@@ -49,8 +50,9 @@ import { readSnapshot, SNAPSHOT_SCHEMA_VERSION, type SnapshotV1 } from "./schema
  * The encoding of `state`, whose recomputed root equals its incremental one. Otherwise it throws
  * and returns no encoding:
  *
- * - after a refusal, a read that fails is the trap's failure, not the state's: it throws without
- *   poisoning, and readState throws the first refusal instead (world/world.ts);
+ * - after a refusal, a read that fails throws without poisoning, and readState throws the first
+ *   refusal instead (world/world.ts): the engine cannot tell the trap's failure from a bad state,
+ *   which the next encoding with no refusal finds;
  * - a value that is not canonical, or a root that differs, means a write bypassed the barrier:
  *   it poisons the world and throws its integrity_violation, which names each stale chunk and
  *   the global value;
@@ -100,9 +102,11 @@ function encodeFor(world: World, api: string): string {
 /**
  * The version 1 snapshot of `world`, as canonical text: O(N) for N chunks. Throws
  * EngineError("invalid_input") when `world` is not a world, EngineError("world_busy") while a step
- * runs on it, and EngineError("world_faulted") when its tick failed. Throws
- * EngineError("integrity_violation") after poisoning the world when its state disagrees with its
- * incremental digests: a write that bypassed the barrier, at `/chunks/<key>` or `/global`.
+ * or another read of values of its state runs on it, or when a Proxy in its state used the world
+ * and the encoding then failed (readState), and EngineError("world_faulted") when its tick failed.
+ * Throws EngineError("integrity_violation") after poisoning the world when its state disagrees
+ * with its incremental digests: a write that bypassed the barrier, at `/chunks/<key>` or
+ * `/global`.
  */
 export function encodeSnapshot(world: World): string {
   return encodeFor(world, "encodeSnapshot");
@@ -205,12 +209,15 @@ function decodedState(snapshot: SnapshotV1, ruleset: CapturedRuleset, audit: boo
  * 1. `options` is undefined or a record whose only member is `audit`, a boolean: otherwise
  *    invalid_input, with every unknown key at `/options/<key>`. The options are strict on
  *    purpose, as in createWorld: a misspelled option must not silently turn audit off.
- * 2. `text` is canonical text (parseCanonical) of a version 1 snapshot (snapshot/schema.ts):
- *    otherwise unsupported_schema for another schema version, alone, and invalid_snapshot with
- *    every problem of the text or the schema.
+ * 2. `text` is canonical text of a version 1 snapshot (snapshot/schema.ts), parsed as an envelope
+ *    (parseCanonicalEnvelope), whose nesting budget covers the snapshot document around the
+ *    values: otherwise unsupported_schema for another schema version, alone, and invalid_snapshot
+ *    with every problem of the text or the schema.
  * 3. `ruleset` is captured (captureRuleset): otherwise invalid_ruleset.
- * 4. The ruleset's validators accept the global value and every chunk, and the stored state root
- *    equals the one recomputed from the state: otherwise invalid_snapshot with every issue.
+ * 4. Each value nests at most 64 levels from its own root, checked on its own as it is hashed
+ *    (hashed), the ruleset's validators accept the global value and every chunk, and the stored
+ *    state root equals the one recomputed from the state: otherwise invalid_snapshot with every
+ *    issue.
  *
  * The world keeps the versions its header records, even when they differ from ENGINE_VERSION or
  * the ruleset's, so it loads but cannot be replayed (step throws version_mismatch). It shares no

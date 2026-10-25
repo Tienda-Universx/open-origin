@@ -3,7 +3,7 @@ import type { Seed } from "../src/index.ts";
 import { GOLDEN_TALLY } from "./fixtures/golden-tally.ts";
 import { tallyCommands, tallyWorld } from "./fixtures/tally-ruleset.ts";
 import { STALE_CHUNK } from "./support/barrier-rulesets.ts";
-import { BYPASS_TICK, CONTROL_TICKS, controlSubject } from "./support/broken-rulesets.ts";
+import { BYPASS_TICK, controlSubject } from "./support/broken-rulesets.ts";
 import { firstDivergence, type TickRecord } from "./support/determinism-records.ts";
 import {
   type DeterminismSubject,
@@ -18,10 +18,11 @@ import { validCommands } from "./support/tally-fuzz.ts";
  * the golden run and on generated commands; each deliberately broken ruleset fails exactly the
  * property that must catch it, at the tick it diverges; and the comparison is made tick by tick.
  *
- * Time: the golden subject runs about 13,000 ticks in process, one run under audit, and three
- * child processes, about 5.3 s on the 2-core Codespace (Bun 1.4.4, 2026-10-25). The tests are
- * asynchronous, but each run is synchronous between its awaits, so a timeout is a budget, as in
- * step-fuzz.test.ts: 60 s allows about eleven times it.
+ * Time: the golden subject runs about 13,000 ticks in process, about 6,400 of them under audit
+ * (the audit run and the resumes), and three child processes, which resume under audit too: about
+ * 10 s on the 2-core Codespace (Bun 1.4.4, 2026-10-25; indicative). The tests are asynchronous,
+ * but each run is synchronous between its awaits, so a timeout is a budget, as in
+ * step-fuzz.test.ts: 60 s allows about six times it.
  */
 
 const TALLY = { module: import.meta.resolve("./fixtures/tally-ruleset.ts"), name: "tallyRuleset" };
@@ -70,8 +71,10 @@ describe("positive control: tally passes every check", () => {
   }, 60_000);
 });
 
-const stale = (cut: number) =>
-  `${cut === 8 ? "encodeSnapshot at tick 8 threw" : "the final snapshot threw"} integrity_violation ${JSON.stringify([{ path: "/chunks/1,0", message: STALE_CHUNK }])}`;
+/** The integrity_violation of a write through readChunk into chunk 1,0. */
+const STALE = `integrity_violation ${JSON.stringify([{ path: "/chunks/1,0", message: STALE_CHUNK }])}`;
+/** How a run under audit differs from the reference at the tick of that write. */
+const AUDITED = `expected no fault, got ${STALE}`;
 
 /** Each control, its cuts and child cuts, and the failures the suite must report for it. */
 const CONTROLS: readonly (readonly [string, number[], number[], Failure[]])[] = [
@@ -80,14 +83,10 @@ const CONTROLS: readonly (readonly [string, number[], number[], Failure[]])[] = 
     [0, 3, 8],
     [],
     [
-      {
-        property: "audit",
-        tick: BYPASS_TICK,
-        detail: `expected no fault, got integrity_violation ${JSON.stringify([{ path: "/chunks/1,0", message: STALE_CHUNK }])}`,
-      },
-      { property: "resume", tick: 8, at: 8, detail: stale(8) },
-      { property: "resume", tick: CONTROL_TICKS, at: 0, detail: stale(0) },
-      { property: "resume", tick: CONTROL_TICKS, at: 3, detail: stale(3) },
+      { property: "audit", tick: BYPASS_TICK, detail: AUDITED },
+      { property: "resume", tick: 8, at: 8, detail: `encodeSnapshot at tick 8 threw ${STALE}` },
+      { property: "resume", tick: BYPASS_TICK, at: 0, detail: AUDITED },
+      { property: "resume", tick: BYPASS_TICK, at: 3, detail: AUDITED },
     ],
   ],
   [
@@ -143,13 +142,110 @@ const CONTROLS: readonly (readonly [string, number[], number[], Failure[]])[] = 
       { property: "interleave", tick: 1, at: 2, detail: "checksum, stats differ" },
     ],
   ],
+  [
+    "keepsLastTick",
+    [0, 4],
+    [],
+    [
+      { property: "interleave", tick: 2, at: 0, detail: "checksum, stats differ" },
+      { property: "interleave", tick: 1, at: 1, detail: "checksum, stats differ" },
+      { property: "interleave", tick: 1, at: 2, detail: "checksum differs" },
+    ],
+  ],
+  [
+    "writesBehindOnResume",
+    [0, 4],
+    [4],
+    [
+      { property: "resume", tick: 5, at: 4, detail: AUDITED },
+      { property: "child-resume", tick: 5, at: 4, detail: AUDITED },
+    ],
+  ],
 ];
 
 describe("negative controls: the suite reports each broken ruleset", () => {
-  test.each(CONTROLS)("%s", async (name, cuts, childCuts, failures) => {
-    const report = await runDeterminismSuite(controlSubject(name, cuts, childCuts));
-    expect(report.failures).toEqual(failures);
-  });
+  test.each(CONTROLS)(
+    "%s",
+    async (name, cuts, childCuts, failures) => {
+      const report = await runDeterminismSuite(controlSubject(name, cuts, childCuts));
+      expect(report.failures).toEqual(failures);
+    },
+    60_000,
+  );
+});
+
+describe("a child process that does not resume", () => {
+  /** The failures of the suite on the control `name` with one child cut, at 4. */
+  const childFailures = async (name: string, childTimeoutMs?: number) => {
+    const report = await runDeterminismSuite(controlSubject(name, [0], [4]), { childTimeoutMs });
+    return report.failures;
+  };
+  const failure = (detail: string): Failure[] => [
+    { property: "child-resume", tick: 4, at: 4, detail },
+  ];
+
+  test("that exits with an error is a child-resume failure with the end of its stderr", async () => {
+    expect(await childFailures("exitsInChild")).toEqual(
+      failure("the child process exited with 3: the child failed on purpose"),
+    );
+  }, 60_000);
+
+  test("that runs past its time limit is killed, reaped, and reported", async () => {
+    const failures = await childFailures("hangsInChild", 1_000);
+    // The child writes its process id to stderr before it hangs.
+    const pid = Number(/child (\d+) hangs$/.exec(failures[0]?.detail ?? "")?.[1]);
+    expect(failures).toEqual(
+      failure(`the child process ran past 1000 ms and was killed with SIGKILL: child ${pid} hangs`),
+    );
+    // Signal 0 only checks that the process exists: it was killed and reaped, so none is left.
+    expect(() => process.kill(pid, 0)).toThrow("ESRCH");
+  }, 60_000);
+
+  test("that still runs when an in-process check throws is killed before the error propagates", async () => {
+    /** The processes this process started that run resume-child.ts, as `ps` lists them. */
+    const resumeChildren = () =>
+      Bun.spawnSync(["ps", "-A", "-o", "pid=,ppid=,command="])
+        .stdout.toString()
+        .split("\n")
+        .filter((line) => {
+          const ppid = Number(line.trim().split(/\s+/)[1]);
+          return ppid === process.pid && line.includes("resume-child.ts");
+        });
+    const subject = controlSubject("hangsInChild", [], [4]);
+    let running: string[] = [];
+    const failing: DeterminismSubject = {
+      ...subject,
+      // Only the interleaving builds a world with the second seed, while the child runs.
+      world: (seed, ruleset, audit) => {
+        if (seed !== subject.seeds[1]) return subject.world(seed, ruleset, audit);
+        running = resumeChildren();
+        throw new Error("no world for the second seed");
+      },
+    };
+    await expect(runDeterminismSuite(failing)).rejects.toThrow("no world for the second seed");
+    expect(running).toHaveLength(1);
+    expect(resumeChildren()).toEqual([]);
+  }, 60_000);
+
+  test.each([
+    ["nothing", "writesNothingInChild", "the child process exited with 0 and wrote nothing"],
+    [
+      "text that is not JSON",
+      "writesTextInChild",
+      "the child process wrote output that is not JSON: not JSON",
+    ],
+    [
+      "JSON of another shape",
+      "writesOtherJsonInChild",
+      'the child process wrote JSON that is not a ChildOutput: {"records":[{"tick":"1"}]}',
+    ],
+  ])(
+    "that exits with 0 but writes %s is a child-resume failure",
+    async (_what, name, detail) => {
+      expect(await childFailures(name)).toEqual(failure(detail));
+    },
+    60_000,
+  );
 });
 
 describe("the comparison", () => {
@@ -190,6 +286,22 @@ describe("a subject the suite cannot run is refused before anything runs", () =>
     await expect(
       runDeterminismSuite({ ...subject, ticks: 0, cuts: [], childCuts: [] }),
     ).rejects.toThrow("ticks 0 is not positive");
+  });
+
+  test("a subject with no cut, in process or in a child", async () => {
+    const subject = controlSubject("sharesCounter", [], []);
+    await expect(runDeterminismSuite(subject)).rejects.toThrow(
+      "invalid determinism subject: the subject has no cut: list a tick in cuts or childCuts",
+    );
+  });
+
+  test("a child time limit that is not a positive integer", async () => {
+    const subject = controlSubject("sharesCounter", [0]);
+    for (const childTimeoutMs of [0, -1, 1.5, Number.NaN]) {
+      await expect(runDeterminismSuite(subject, { childTimeoutMs })).rejects.toThrow(
+        `invalid determinism options: childTimeoutMs ${childTimeoutMs} is not a positive integer`,
+      );
+    }
   });
 
   test("a ruleset module that does not export the factory", async () => {

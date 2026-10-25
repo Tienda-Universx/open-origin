@@ -5,8 +5,11 @@ import { type Data, stepRuleset, stepWorld, system, writable } from "./step-rule
 /** Where a trapped world keeps its Proxy: chunk 0,0, the global value, or both. */
 export type TrapPlace = "chunk" | "global";
 
-/** What a Proxy's trap runs on each read of a property, and how many reads ran it. */
-export type Hook = { run: (() => void) | undefined; reads: number };
+/**
+ * What a Proxy's trap runs on each read of a property, given the Proxy's target, so that it can
+ * change what the Proxy answers; and how many reads ran it.
+ */
+export type Hook = { run: ((target: Data) => void) | undefined; reads: number };
 
 /** A Proxy of `{ a: 1 }` whose traps count each read and run `hook.run`, then answer as data. */
 function trapping(hook: Hook): Data {
@@ -15,7 +18,7 @@ function trapping(hook: Hook): Data {
     {
       getOwnPropertyDescriptor(target, key) {
         hook.reads += 1;
-        hook.run?.();
+        hook.run?.(target);
         return Reflect.getOwnPropertyDescriptor(target, key);
       },
       ownKeys(target) {

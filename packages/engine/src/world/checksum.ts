@@ -184,8 +184,8 @@ export function recomputeRoot(state: WorldState): Digest {
 
 /**
  * The state root of `world`, as the world keeps it: O(1). Throws EngineError("invalid_input")
- * when `world` is not a world, EngineError("world_busy") while a step runs on it, and
- * EngineError("world_faulted") when its tick failed.
+ * when `world` is not a world, EngineError("world_busy") while a step or a read of values of its
+ * state runs on it, and EngineError("world_faulted") when its tick failed.
  */
 export function stateRoot(world: World): Digest {
   return healthyState(world, "stateRoot").digests.stateRoot;
@@ -209,7 +209,8 @@ export function fullChecksum(world: World): Digest {
  * Each chunk's cached term, written as a digest, in a fresh record whose keys are in canonical
  * order: O(N), to find which chunks differ between two worlds. Throws
  * EngineError("invalid_input") when `world` is not a world, EngineError("world_busy") while a step
- * runs on it, and EngineError("world_faulted") when its tick failed.
+ * or a read of values of its state runs on it, and EngineError("world_faulted") when its tick
+ * failed.
  */
 export function chunkHashes(world: World): Record<ChunkKey, Digest> {
   const { chunks } = healthyState(world, "chunkHashes");

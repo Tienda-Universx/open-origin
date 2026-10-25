@@ -56,9 +56,11 @@ export type FaultedStatus = {
 export type WorldStatus = { readonly kind: "ok"; readonly tick: Tick } | FaultedStatus;
 
 /**
- * What a world is busy with: a step, which reads the commands and then runs the tick, or an
- * encoding by encodeSnapshot or snapshotBytes. Meanwhile every use of the world, read or step, is
- * refused through it, so nothing sees or saves partial state.
+ * What a world is busy with: a step, which reads the commands and then runs the tick, or a read of
+ * values of its state (Reading) by fullChecksum, the view's readChunk and readGlobal,
+ * encodeSnapshot, or snapshotBytes, which can run the traps of a Proxy in it. Meanwhile every use
+ * of the world, read or step, is refused through it, so nothing sees or saves a partial state, and
+ * nothing changes the state while it is read.
  */
 export interface WorldActivity {
   /**
@@ -95,7 +97,7 @@ export type WorldState<
   status: { readonly kind: "ok" } | FaultedStatus;
   /**
    * What the world is busy with: the step in progress, from reading the commands to the end of the
-   * tick, or an encoding while it reads the state.
+   * tick, or a read of values of its state (readState), such as an encoding.
    */
   active: WorldActivity | undefined;
 };
@@ -159,8 +161,8 @@ export function worldState(value: unknown): WorldState {
 /**
  * The state of `value`, for a call of `api`, if it is not busy. Throws
  * EngineError("invalid_input") when `value` is not a world, and EngineError("world_busy") during a
- * step, whose partial state nothing may read (ADR 0020, failures), or while it is encoded, which a
- * Proxy in its state could otherwise change.
+ * step, whose partial state nothing may read (ADR 0020, failures), or during a read of values of
+ * its state (readState), which a Proxy in that state could otherwise use to change the world.
  */
 export function idleState(value: unknown, api: string): WorldState {
   const state = worldState(value);
@@ -219,7 +221,9 @@ export class Reading implements WorldActivity {
  * - a read that completes returns its result, even when a trap caught a refusal;
  * - a read that throws after a refusal throws the first refusal, world_busy, whatever it threw
  *   and however the trap handled the refusal (caught it, copied it, or was refused again), and
- *   poisons nothing: the failure is the trap's, not the state's;
+ *   poisons nothing. This holds even when the state itself is bad, such as a value that is not
+ *   canonical: once a trap was refused, the engine cannot tell the trap's failure from the
+ *   state's, so it blames neither, and the next read with no refusal finds the bad state;
  * - a read that poisoned the world after it completed, as encodeSnapshot does when the root
  *   differs, throws that fault, which a refusal does not replace.
  */
@@ -260,12 +264,12 @@ export function poison(state: WorldState, fault: EngineError): void {
 /**
  * What `world` is doing, in a fresh record: `{ kind: "ok", tick }`, or, once a tick failed,
  * `{ kind: "faulted", tick, code, issues }`. It is the one function a faulted world answers, and,
- * like every other, it throws EngineError("world_busy") while a step runs on the world or it is
- * encoded: during the tick the kernel is already at the tick being computed, so any answer would
- * report a partial state. Only ruleset code that holds its world, which faults the tick, a host
- * Proxy among the commands, or a Proxy in the state while it is encoded can call it then. step and
- * the encoders clear the busy mark in a `finally`, so once they return or throw, worldStatus
- * answers again.
+ * like every other, it throws EngineError("world_busy") while a step runs on the world or a read
+ * of values of its state runs (readState): during the tick the kernel is already at the tick being
+ * computed, so any answer would report a partial state. Only ruleset code that holds its world,
+ * which faults the tick, a host Proxy among the commands, or a Proxy in the state while it is read
+ * can call it then. step and readState clear the busy mark in a `finally`, so once they return or
+ * throw, worldStatus answers again.
  */
 export function worldStatus(world: World): WorldStatus {
   const { kernel, status } = idleState(world, "worldStatus");

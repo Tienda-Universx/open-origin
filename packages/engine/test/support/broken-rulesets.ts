@@ -1,3 +1,4 @@
+import { writeSync } from "node:fs";
 import type { Seed, World } from "../../src/index.ts";
 import { createWorld } from "../../src/index.ts";
 import type { SuiteRuleset } from "./determinism-records.ts";
@@ -6,8 +7,10 @@ import { type Ctx, type Data, stepRuleset, system, writable } from "./step-rules
 
 /**
  * Negative controls of the determinism suite (plan §8 "Controles negativos"): rulesets broken on
- * purpose, each in a way one property of the suite must catch. Each export is a factory, as
- * DeterminismSubject.ruleset names one, so the child process can import it by name.
+ * purpose, each in a way one property of the suite must catch, and rulesets whose child process
+ * fails, hangs, or writes what is not a ChildOutput, for the suite's handling of its children. Each
+ * export is a factory, as DeterminismSubject.ruleset names one, so the child process can import it
+ * by name.
  *
  * The state some of them keep outside the world is the defect under test. This module is
  * imported by the suite's tests and by the child process only.
@@ -101,6 +104,77 @@ export function sharesCounter(): SuiteRuleset {
     }),
   ]);
 }
+
+/**
+ * Writes into chunk 0,0 how many ticks passed since its ruleset object last ran a tick: always 1
+ * for a world that has the object to itself, from its first tick, so only worlds that share the
+ * object (the interleaving) see another gap.
+ */
+export function keepsLastTick(): SuiteRuleset {
+  let last: number | undefined;
+  return stepRuleset([
+    system("gap", (ctx) => {
+      writable(ctx, "0,0").gap = last === undefined ? 1 : ctx.tick - last;
+      last = ctx.tick;
+    }),
+  ]);
+}
+
+/**
+ * Writes through readChunk on the first tick its ruleset object runs, when that is not tick 1, and
+ * restores the value the same way on the next tick. Every record and every snapshot stay as they
+ * were, so only a resume under audit finds the write, at the tick after its cut.
+ */
+export function writesBehindOnResume(): SuiteRuleset {
+  let first: number | undefined;
+  return stepRuleset([
+    counting,
+    system("sneaky", (ctx) => {
+      first ??= ctx.tick;
+      if (first === 1) return;
+      if (ctx.tick === first) (ctx.readChunk("1,0") as Data).grass = 99;
+      if (ctx.tick === first + 1) (ctx.readChunk("1,0") as Data).grass = 2;
+    }),
+  ]);
+}
+
+/** Whether this process is the suite's child process (resume-child.ts). */
+const IN_CHILD = Bun.main === Bun.fileURLToPath(new URL("./resume-child.ts", import.meta.url));
+
+/** A ruleset that counts in the suite's own process; in a child process, `fail` runs instead. */
+function failsInChild(fail: () => void): SuiteRuleset {
+  if (IN_CHILD) fail();
+  return stepRuleset([counting]);
+}
+
+/** In a child process, writes one line to stderr and exits with 3. */
+export const exitsInChild = () =>
+  failsInChild(() => {
+    writeSync(2, "the child failed on purpose\n");
+    process.exit(3);
+  });
+
+/**
+ * In a child process, writes its process id to stderr and blocks for good, without using the CPU,
+ * until it is killed.
+ */
+export const hangsInChild = () =>
+  failsInChild(() => {
+    writeSync(2, `child ${process.pid} hangs\n`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+  });
+
+/** In a child process, exits with 0 after it wrote `stdout`, which is not a ChildOutput. */
+const writesInChild = (stdout: string) =>
+  failsInChild(() => {
+    writeSync(1, stdout);
+    process.exit(0);
+  });
+
+/** In a child process: nothing, text that is not JSON, and JSON of another shape. */
+export const writesNothingInChild = () => writesInChild("");
+export const writesTextInChild = () => writesInChild("not JSON");
+export const writesOtherJsonInChild = () => writesInChild('{"records":[{"tick":"1"}]}');
 
 /** A world of two chunks for the controls. */
 function controlWorld(seed: Seed, ruleset: SuiteRuleset, audit: boolean): World {

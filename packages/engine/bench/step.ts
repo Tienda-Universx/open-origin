@@ -3,16 +3,15 @@ import { murmur3x86_128 } from "../src/digest/murmur3.ts";
 import {
   type CanonicalValue,
   canonicalize,
-  createWorld,
   decodeSnapshot,
   encodeSnapshot,
   stateRoot,
   step,
   streamId,
-  type World,
 } from "../src/index.ts";
 import { DrawSequence } from "../src/rng/random.ts";
-import { stepRuleset, system, writable } from "../test/support/step-rulesets.ts";
+import { DIRTY_KEYS, dirtying, median, sizedWorld } from "../test/support/cost-worlds.ts";
+import { stepRuleset } from "../test/support/step-rulesets.ts";
 
 /**
  * The engine's benchmark (plan §2.4, §8 "Benchmark"; risk R10): manual, never run by `bun test`,
@@ -26,12 +25,6 @@ import { stepRuleset, system, writable } from "../test/support/step-rulesets.ts"
  */
 
 type Row = readonly [string, string];
-
-/** The median of `values`. */
-function median(values: readonly number[]): number {
-  const sorted = values.toSorted((a, b) => a - b);
-  return sorted[sorted.length >> 1] ?? 0;
-}
 
 /** The median duration of `action`, in nanoseconds, over `runs` runs after `warmUp` more. */
 function timed(action: () => unknown, runs: number, warmUp = Math.ceil(runs / 4)): number {
@@ -49,9 +42,8 @@ const milli = (nanoseconds: number) => `${(nanoseconds / 1e6).toFixed(1)} ms`;
 const megabytesPerSecond = (bytes: number, nanoseconds: number) =>
   `${((bytes / nanoseconds) * 1e3).toFixed(0)} MB/s`;
 
-/** How many chunks change each tick in the step measurements. */
-const DIRTY = 10;
-const DIRTY_KEYS = Array.from({ length: DIRTY }, (_, x) => `${x},0`);
+/** How many chunks change each tick in the step measurements: the same as the complexity test. */
+const DIRTY = DIRTY_KEYS.length;
 
 /** A being, as T4 may keep one: about 120 bytes of canonical text, so 60 make about 7 KB. */
 const being = (id: number) => ({
@@ -71,29 +63,13 @@ const chunkOf = (beings: number): CanonicalValue => ({
   beings: Array.from({ length: beings }, (_, id) => being(id)),
 });
 
-/** A ruleset whose one system writes the counter of the DIRTY chunks every tick. */
-const dirtying = stepRuleset([
-  system("dirty", (ctx) => {
-    for (const key of DIRTY_KEYS) writable(ctx, key).n = ctx.tick;
-  }),
-]);
-
-/** A world of `count` chunks, keyed on rows of 1,000, each made by `chunk`, run by `ruleset`. */
-function worldOf(count: number, chunk: () => CanonicalValue, ruleset = dirtying): World {
-  const chunks: { [key: string]: CanonicalValue } = {};
-  for (let index = 0; index < count; index += 1) {
-    chunks[`${index % 1000},${Math.floor(index / 1000)}`] = chunk();
-  }
-  return createWorld({ seed: [1, 2], simSecondsPerTick: 60, global: 0, chunks, ruleset });
-}
-
 /**
- * A tick with DIRTY chunks changed, in worlds of 1,000 to 100,000 small chunks. The worlds step
+ * A tick with DIRTY chunks changed, in worlds of 1,000 to 1,000,000 small chunks. The worlds step
  * in turn, tick by tick, so that a drift of the machine or the JIT affects all of them alike.
  */
 function stepRows(): Row[] {
-  const counts = [1_000, 10_000, 100_000];
-  const worlds = counts.map((count) => worldOf(count, () => chunkOf(0)));
+  const counts = [1_000, 10_000, 100_000, 1_000_000];
+  const worlds = counts.map((count) => sizedWorld(count, () => chunkOf(0)));
   Bun.gc(true);
   const times: number[][] = counts.map(() => []);
   for (let round = 0; round < 2_500; round += 1) {
@@ -116,7 +92,7 @@ const chunkBytes = (beings: number) =>
 /** The cost of each dirty chunk, of about 1, 7, and 50 KB of canonical text, D at a time. */
 function dirtyRows(): Row[] {
   return [9, 60, 425].map((beings): Row => {
-    const world = worldOf(DIRTY, () => chunkOf(beings));
+    const world = sizedWorld(DIRTY, () => chunkOf(beings));
     const bytes = chunkBytes(beings);
     const tick = timed(() => step(world, []), 200);
     const label = `dirty chunk of ${(bytes / 1024).toFixed(1)} KB`;
@@ -127,7 +103,7 @@ function dirtyRows(): Row[] {
 /** encodeSnapshot and decodeSnapshot of worlds of about 200 KB and 10 MB. */
 function snapshotRows(): Row[] {
   return [29, 1_430].flatMap((count): Row[] => {
-    const world = worldOf(count, () => chunkOf(60));
+    const world = sizedWorld(count, () => chunkOf(60));
     const text = encodeSnapshot(world);
     const size = `${(text.length / 1e6).toFixed(1)} MB`;
     const runs = count > 100 ? 8 : 50;
@@ -151,7 +127,7 @@ function liveHeap(): number {
 function memoryRow(): Row {
   const count = 100_000;
   const before = liveHeap();
-  const world = worldOf(count, () => 0, stepRuleset());
+  const world = sizedWorld(count, () => 0, stepRuleset());
   const bytes = (liveHeap() - before) / count;
   // Keeps the world alive until after the second measurement.
   stateRoot(world);
