@@ -191,6 +191,12 @@ What the generator does not do:
 
 - **Hide its draws.** Anyone with the seed computes every draw, which is why the snapshot that
   holds the seed is C3 (ADR 0020). It is not a cryptographic generator.
+- **Hide its seed from its draws.** MurmurHash3 x86_32 folds `[s0, s1]` into one 32-bit state, and
+  every later step can be undone. One draw whose stream, key, and counter are known therefore gives
+  back that state, which predicts every draw of every stream, and a quantized draw takes a search
+  over 2^32 states. The 64-bit seed is worth 32 bits. Draws must stay unpredictable, so no outcome
+  of a draw may become public; terrain uses a separate seed and ChaCha20
+  ([ADR 0021](../decisions/0021-procedural-world.md)).
 - **Pass a statistical battery.** The checks above are smoke tests on fixed samples; no PractRand
   or TestU01 battery has been run.
 - **Keep counters across calls by itself.** A `DrawSequence` keeps its own counter; the tick
@@ -214,8 +220,9 @@ The engine knows only ticks (ADR 0020). Code: `packages/engine/src/time/tick.ts`
 - Anything that is not a tick, or a seconds per tick that is not a positive safe integer, throws
   `invalid_value` with every invalid argument.
 
-Pacing ticks in real time (`TICK_RATE_HZ`) belongs to the scheduler (T6), and the calendar waits
-for the batch that defines the length of a day.
+Pacing ticks in real time (`TICK_RATE_HZ`) belongs to the scheduler (T6). The calendar belongs to
+worldgen, which defines the length of a day as a law of each world
+([ADR 0021](../decisions/0021-procedural-world.md)).
 
 ## World
 
@@ -652,7 +659,7 @@ the ruleset's validators, and the state root; step checks that the versions allo
   world; integrity against corruption and tampering, header included, is SHA-256 over
   `snapshotBytes`, in the adapter.
 - The snapshot holds the seed, so it is C3 as a whole
-  ([data classification](data-classification.md#why-the-world-seed-is-c3)).
+  ([data classification](data-classification.md#why-the-seeds-are-c3)).
 
 | Function | Cost | Result |
 |---|---|---|

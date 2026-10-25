@@ -64,6 +64,9 @@ implements each one (plan §M).
 | Time | `TICK_RATE_HZ=5`, `SIM_SECONDS_PER_TICK=12`, so R = 60 simulated days per real day | §I.1.1, O-10 |
 | Think time | `k` = 25 ticks (5 simulated minutes) plus a grace of 25 ticks | §I.1.7, O-11 |
 
+Refined by [0021](0021-procedural-world.md): R = 60 is simulated seconds per real second; how many
+simulated days pass per real day depends on each world's day-length law.
+
 ## Consequences
 
 - Recovery, observer invariance, and audits can compare hashes instead of trusting logs.

@@ -103,7 +103,9 @@ T4 adds an activity index based on world data only ([0005](0005-observer-indepen
 `[s1, stream, length(key), ...key, n]` with seed `s0`, where `[s0, s1]` is the world seed.
 
 - Per-tick draws use the key `[tickLo, tickHi, entityLo, entityHi]`. The general key lets T3 draw
-  per chunk without a tick, so a chunk generates identically whenever it is generated.
+  per chunk without a tick, so a chunk generates identically whenever it is generated. Refined by
+  [0021](0021-procedural-world.md): T3 draws per chunk with ChaCha20 under a separate terrain
+  seed instead, because one draw of `ctr-mix32@1` gives back the state that predicts every other.
 - `n` is a transient counter per `(stream, entity)` that restarts every tick. Snapshots exist only
   between ticks, so the RNG state in a snapshot is `{ algorithm: "ctr-mix32@1", seed }`; the
   `counters` field of ADR 0003 is dropped.
