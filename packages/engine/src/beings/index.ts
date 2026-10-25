@@ -48,6 +48,7 @@ export {
   sealedLifeIssues,
   sealLife,
 } from "./laws.ts";
+export { type LightClock, type LightWatch, nextLightTick } from "./light.ts";
 export { minimumSteps, type StepGeometry, stepDuration } from "./locomotion.ts";
 export { insertOccupied, OCCUPANCY_BOUNDS, occupancyIssues, pruneOccupancy } from "./occupancy.ts";
 export {
