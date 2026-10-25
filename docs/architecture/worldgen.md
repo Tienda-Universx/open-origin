@@ -3,10 +3,10 @@
 Worldgen is the procedural world generator: the world is a latent field that the engine evaluates
 and never stores, a pure function of the generator version, the genesis, and the cell.
 [ADR 0021](../decisions/0021-procedural-world.md) records that design and why. This document
-specifies what the code implements: space, the sealed genesis, noise, terrain, and time. Code:
+specifies what the code implements: space, the sealed genesis, noise, terrain, time, and the observables. Code:
 `packages/engine/src/worldgen/`, exported by `packages/engine` as the `worldgen` namespace. Tests:
 `packages/engine/test/` (`worldgen-space`, `worldgen-genesis`, `worldgen-lattice`, `worldgen-noise`,
-`worldgen-terrain`, and `worldgen-calendar`).
+`worldgen-terrain`, `worldgen-calendar`, and `worldgen-observables`).
 
 `WORLDGEN_VERSION` is `"worldgen@1"`. The seal of a genesis contains it, so a seal made under any
 other version does not match; [ADR 0021](../decisions/0021-procedural-world.md#decision)
@@ -418,6 +418,57 @@ It does so at 12, 7, and 13 seconds per tick, and 13 divides neither the day nor
 so its phase drifts. The values are equal under any terrain seed. Near dusk the curve is flat (C1),
 so the last tick of light already reads the night floor.
 
+## Observables
+
+Code: `worldgen/observables.ts`. The primitive observables are what can be measured of a cell
+([ADR 0021](../decisions/0021-procedural-world.md), primitive observables).
+`observableCatalog(prepared)` lists them for a genesis, and `observe(prepared, { id, cell, instant })`
+measures one as an integer.
+
+| id | Dimension, unit | Kind | Varies | Exposure | Value | Range |
+|---|---|---|---|---|---|---|
+| `elevation` | length, `len` | quantity | static | surface | the terrain field | [−B, B] |
+| `liquid.depth` | length, `len` | quantity | static | surface | max(0, L − elevation) | [0, L + B] |
+| `substrate` | category | category | static | surface | the terrain field | [0, M − 1] |
+| `thermal` | thermal, `tu` | quantity | time | measurement | thermalBase + diurnal(instant) | [base − T + min(0, P), base + T + max(0, P) + diurnal] |
+| `radiance` | radiant, `ru` | quantity | time | surface | radiance(instant), the same in every cell | [night, peak] |
+| `deposit.<k>` | amount, `qu` | quantity | static | measurement | the terrain field of deposit k | [0, peak_k] |
+
+- B is noiseBound(relief), L the level of liquid, M the number of substrate classes, T the thermal
+  noise bound (0 for a spread of 0), and P = ⌊num × (B − L) / den⌋, the lapse term at the highest
+  elevation. Each range is a true bound for every cell and instant, derived from the terrain and
+  noise bounds, never from sampled values.
+- The catalog lists the five fixed ids, then one `deposit.<k>` per deposit, in order. It is frozen
+  at every level and canonical, and a category has no `unit`.
+- The catalog does not depend on the terrain seed. Its ranges derive from the laws and terrain
+  parameters, which are C3, so T6 decides each projection.
+- Ids, units, and every other text of the catalog are engineering names. Perception never passes
+  them into a prompt (plan §K.4, §K.7), and no field carries a human-language gloss.
+
+### Measuring
+
+The instant is required for every id, with no default. A static id ignores its value but still
+validates it. The query is read once, member by member, and every problem is reported at once as
+`invalid_value`: at `/prepared` for a value `prepareGenesis` did not make; at `/query` for a value
+that is not a record; at `/query/id` for an id that names nothing or a deposit the genesis lacks; and
+under `/query/cell` and `/query/instant` as `readCell` and `readInstant` report.
+
+A static id or `thermal` costs one 1×1 terrain region, about 34–54 µs with the default genesis, and
+`radiance` about 1.5 µs (indicative, on the two-core Codespace with Bun 1.4.4). A ruleset that reads
+many cells should read regions.
+
+### Golden observation values
+
+`test/fixtures/golden-observations.ts` pins every id at 9 cell and instant pairs under the default
+genesis, with one terrain seed of the terrain goldens.
+
+- The cells are a liquid cell, a dry cell, a cell of each deposit, the four world corners, and
+  (−1, −1).
+- The instants span dawn, light, night, mid-light, and the last safe tick at 12 seconds per tick,
+  mid-light at 7, and a drifting instant at 13.
+- Two runs of the recording agreed. The values hold inside the steps of worlds with different world
+  seeds, and other time laws change only the temporal ones.
+
 ## What the tests check
 
 - the space constants, and the chunk and offset of the cells 0, 31, 32, −1, −32, −33, −2^31, and
@@ -483,3 +534,13 @@ so the last tick of light already reads the night floor.
 - the substrate matches a brute-force nearest search, including the 26 pinned cells beyond 3 × 3;
 - the digest follows its layout, the golden terrain values hold, and each default deposit covers at
   least 1% of the golden region.
+- the catalog is pinned, frozen, and canonical, lists exactly the genesis's deposits, and does not
+  depend on the terrain seed;
+- every static id gives the same value at 9 instants and equals its field or formula, under the
+  default and the maximum genesis;
+- `thermal − thermalBase = diurnal` at random cells and instants, `radiance` is equal at every cell,
+  and `varies` matches the behavior over one default day;
+- every observable stays within its range under a fuzz of geneses, and each range equals a BigInt
+  derivation;
+- `observe` reports every problem with its path, reads its query once, and never runs an accessor;
+- the golden observation values hold, also inside steps of worlds with different world seeds.
