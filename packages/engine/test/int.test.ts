@@ -108,7 +108,7 @@ function randomSafe(random: Sfc32): number {
 }
 
 /** ⌊a / b⌋ and a mod b with the sign of b, computed with BigInt. */
-function floorReference(a: number, b: number): readonly [number, number] {
+function floorReference(a: number, b: number): [number, number] {
   const [big, divisor] = [BigInt(a), BigInt(b)];
   const truncated = big / divisor;
   const quotient = big % divisor < 0n ? truncated - 1n : truncated;
