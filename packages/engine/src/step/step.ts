@@ -27,11 +27,11 @@ import { isRecord } from "../world/members.ts";
 import type { StreamIds } from "../world/ruleset.ts";
 import { headerDifferences } from "../world/versions.ts";
 import {
-  type ActiveStep,
   busyError,
   healthyState,
   poison,
   type World,
+  type WorldActivity,
   type WorldState,
 } from "../world/world.ts";
 import { readCommands } from "./commands.ts";
@@ -46,7 +46,7 @@ const REJECTED_EVENT = "engine.command_rejected";
 const UNKNOWN_TYPE = "unknown_type";
 
 /** Marks a world whose step is reading its commands: any use of the world meanwhile is refused. */
-const READING: ActiveStep = { refuse: busyError };
+const READING: WorldActivity = { refuse: busyError };
 const NOT_REJECTION =
   "returned a value that is not undefined or a rejection { reason, details? }, reason a non-empty string";
 
@@ -234,7 +234,8 @@ function expectUnchanged(state: WorldState, tick: number): void {
  *
  * Throws, and changes nothing: EngineError("invalid_input") when `world` is not a world or a
  * command is invalid (step/commands.ts); EngineError("world_busy") when a step already runs on the
- * world or it is being encoded; EngineError("world_faulted") when an earlier tick failed;
+ * world or a read of values of its state runs (readState); EngineError("world_faulted") when an
+ * earlier tick failed;
  * EngineError("version_mismatch") with every difference versionDifferences reports, when the
  * world's header records other versions than ENGINE_VERSION and its ruleset's.
  * Throws after poisoning the world: world_busy when an engine defect changed the world while the

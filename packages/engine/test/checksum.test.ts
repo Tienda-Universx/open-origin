@@ -5,12 +5,12 @@ import {
   chunkKey,
   createWorld,
   digest,
+  encodeSnapshot,
   fullChecksum,
   type Seed,
   stateRoot,
   type WorldInit,
 } from "../src/index.ts";
-import { relocatePath } from "../src/world/checksum.ts";
 import { type ChunkEntry, worldState } from "../src/world/world.ts";
 import { randomValue } from "./support/canonical-random.ts";
 import { testRuleset } from "./support/rulesets.ts";
@@ -92,13 +92,16 @@ describe("stateRoot", () => {
     expect(stateRoot(createWorld(definition))).toBe(expectedRoot(definition, chunks));
   });
 
-  test("equals fullChecksum and the composition on 200 random worlds", () => {
+  test("equals fullChecksum, the snapshot's root, and the composition on 200 random worlds", () => {
     const random = new Sfc32(2020);
     for (let sample = 0; sample < 200; sample += 1) {
       const { definition, chunks } = randomInit(random);
       const world = createWorld(definition);
-      expect(stateRoot(world)).toBe(fullChecksum(world));
-      expect(stateRoot(world)).toBe(expectedRoot(definition, chunks));
+      const root = expectedRoot(definition, chunks);
+      expect(stateRoot(world)).toBe(root);
+      expect(fullChecksum(world)).toBe(root);
+      // encodeSnapshot recomputes the root from the text it writes, through the same composition.
+      expect((JSON.parse(encodeSnapshot(world)) as { stateRoot: string }).stateRoot).toBe(root);
     }
   });
 
@@ -206,26 +209,5 @@ describe("chunkHashes", () => {
     first["0,0"] = "x";
     expect(chunkHashes(world)["0,0"]).toBe(term("0,0", [4]));
     expect(chunkHashes(world)).not.toBe(chunkHashes(world));
-  });
-});
-
-describe("relocatePath", () => {
-  const tagged = ["chunk", "0,0", { grass: 1 }];
-
-  test.each([
-    ["/2/grass", "/chunks/0,0/grass"],
-    ["/2", "/chunks/0,0"],
-    ["/2/a~1b/0", "/chunks/0,0/a~1b/0"],
-  ])("moves a pointer into the value, %s, under the value's path", (at, expected) => {
-    expect(relocatePath(at, tagged, "/chunks/0,0")).toBe(expected);
-  });
-
-  test.each([
-    ["", "the tagged array itself"],
-    ["/0", "the domain tag"],
-    ["/1", "the key"],
-    ["/20/x", "a part whose index only starts with the value's"],
-  ])("puts a pointer outside the value, %s (%s), at the value's path", (at) => {
-    expect(relocatePath(at, tagged, "/chunks/0,0")).toBe("/chunks/0,0");
   });
 });

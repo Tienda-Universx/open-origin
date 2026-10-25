@@ -117,7 +117,9 @@ T4 adds an activity index based on world data only ([0005](0005-observer-indepen
 **Canonical values.** Safe integers without `-0`, strings, booleans, dense arrays, and plain
 records; no `null`. Strings and record keys must be well formed and in NFC: the core validates and
 never normalizes. The key `__proto__` is rejected; values are trees, so cycles and objects that
-appear twice are rejected; nesting depth is at most 64, and a command payload is at most 8 KiB.
+appear twice are rejected; nesting depth is at most 64, counted from the value's own root (digest
+tags, the events list, and the snapshot document are envelopes that never count), and a command
+payload is at most 8 KiB.
 The text form is the subset of RFC 8785 these values need: keys sorted by UTF-16 code units,
 integers in decimal, strings escaped as `JSON.stringify` does, no whitespace.
 The parser accepts exactly the canonical texts: it parses, validates, re-serializes, and requires

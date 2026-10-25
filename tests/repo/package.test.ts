@@ -183,7 +183,7 @@ describe("package.json", () => {
 });
 
 describe("tsconfig.json", () => {
-  test("the root program typechecks every workspace test file", () => {
+  test("the root program typechecks every workspace test and benchmark file", () => {
     const result = Bun.spawnSync(
       ["bunx", "--no-install", "--bun", "tsc", "-p", "tsconfig.json", "--listFilesOnly"],
       { cwd: REPO_ROOT, timeout: 30_000 },
@@ -197,9 +197,11 @@ describe("tsconfig.json", () => {
         .map((path) => path.slice(REPO_ROOT.length)),
     );
     const tests = workspaceFiles("test/**/*.ts");
+    const benchmarks = workspaceFiles("bench/**/*.ts");
     // An empty list would make the check pass without checking anything.
     expect(tests).toContain("packages/engine/test/version.test.ts");
-    expect(tests.filter((path) => !program.has(path))).toEqual([]);
+    expect(benchmarks).toContain("packages/engine/bench/step.ts");
+    expect([...tests, ...benchmarks].filter((path) => !program.has(path))).toEqual([]);
   });
 });
 

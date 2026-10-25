@@ -4,8 +4,9 @@ import { ownKeyCount, sortedOwnKeys, symbolKeyCount } from "./order.ts";
 /**
  * A value the engine can hash, store, and compare (ADR 0020): a boolean, a safe integer other
  * than -0, a well-formed string in NFC, a dense array, or a plain record whose keys are such
- * strings, nested at most MAX_DEPTH deep. It is a tree: no array or record appears in it twice.
- * There is no null.
+ * strings, nested at most MAX_DEPTH deep, counted from the value's own root: the arrays and
+ * records of an engine envelope around it (a digest tag, the events list, the snapshot document)
+ * never count. It is a tree: no array or record appears in it twice. There is no null.
  */
 export type CanonicalValue =
   | boolean
@@ -14,8 +15,19 @@ export type CanonicalValue =
   | readonly CanonicalValue[]
   | { readonly [key: string]: CanonicalValue };
 
-/** The deepest nesting of arrays and records; it also bounds the walk's recursion. */
+/** The deepest nesting of arrays and records of one value; it also bounds the walk's recursion. */
 const MAX_DEPTH = 64;
+
+/**
+ * The arrays and records that the engine's own documents put above the deepest value they hold:
+ * an event payload sits at `/1/<i>/payload` in the events digest, and a chunk at
+ * `/world/chunks/<key>` in the snapshot document. A walk of such a document uses ENVELOPE_LIMIT,
+ * so that each value keeps its whole MAX_DEPTH; a value that sits higher is checked on its own.
+ */
+const ENVELOPE_DEPTH = 3;
+
+/** The walk limit of a document whose values sit up to ENVELOPE_DEPTH levels below its root. */
+export const ENVELOPE_LIMIT = MAX_DEPTH + ENVELOPE_DEPTH;
 
 /**
  * Builds a walk's result bottom-up from the parts it validated. `invalid` stands in for a value
@@ -48,6 +60,8 @@ type Visit = {
 type Walk<T> = {
   readonly builder: Builder<T>;
   readonly sink: IssueSink;
+  /** An array or record at this depth or deeper is rejected. */
+  readonly limit: number;
   /** Keys and indexes from the root to the current value; its length is the current depth. */
   readonly path: (string | number)[];
   /**
@@ -183,7 +197,7 @@ function walkObject<T>(value: object, walk: Walk<T>): T {
   const earlier = walk.visits.get(value);
   if (earlier !== undefined) return rejectRepeat(earlier, walk);
   const depth = walk.path.length;
-  if (depth >= MAX_DEPTH) {
+  if (depth >= walk.limit) {
     return reject(walk, `the value nests deeper than ${MAX_DEPTH} arrays and records`);
   }
   const parent = walk.current;
@@ -317,16 +331,23 @@ function walkRecord<T>(record: object, walk: Walk<T>): T {
 /**
  * Walks `value` once, depth first in canonical key order, and reports every issue it reaches to
  * `sink`. A value rejected as a whole (an object that is not a plain array or record, a sparse
- * array, an accessor, a cycle, an object reached a second time, or nesting beyond MAX_DEPTH) is
+ * array, an accessor, a cycle, an object reached a second time, or nesting beyond `limit`) is
  * one issue, and its contents are not walked. An object that throws while read is one issue at
  * its path, after the issues already reported for the contents read before the throw; the rest of
  * its contents is not walked. Each property is read once, through its own descriptor. The result
  * is meaningful only when nothing was reported. A sink may throw to stop the walk: that value, and
- * only that value, propagates.
+ * only that value, propagates. `limit` is MAX_DEPTH for a value, and ENVELOPE_LIMIT for a document
+ * that holds values inside an envelope; the issue always names MAX_DEPTH, the limit of a value.
  */
-export function walkCanonical<T>(value: unknown, builder: Builder<T>, sink: IssueSink): T {
+export function walkCanonical<T>(
+  value: unknown,
+  builder: Builder<T>,
+  sink: IssueSink,
+  limit: number = MAX_DEPTH,
+): T {
   const visits = new Map<object, Visit>();
-  return walkValue(value, { builder, sink, path: [], visits, current: undefined, halt: undefined });
+  const walk = { builder, sink, limit, path: [], visits, current: undefined, halt: undefined };
+  return walkValue(value, walk);
 }
 
 const VALIDATOR: Builder<undefined> = {

@@ -26,6 +26,7 @@ Bun are allowed when they add value.
 | Lint, format and complexity checks (Biome, oxlint) | `bun run lint` |
 | Apply formatting and safe fixes | `bun run format` |
 | Tests | `bun test` |
+| Engine benchmark (manual, not part of `check`) | `bun packages/engine/bench/step.ts` |
 
 CLIs whose launcher targets Node (for example `tsc`, `biome`) run with `bunx --no-install --bun`:
 `--bun` keeps them on Bun, and `--no-install` stops bunx from downloading a registry package when
@@ -200,7 +201,8 @@ configuration, which only add friction.
 | Hexagonal boundaries: `packages/engine/src` imports only relative paths that stay inside `src` (no `bun`, `bun:*`, `node:*`, or packages) | Biome `noRestrictedImports` and `noNodejsModules` for `packages/engine/src`; `tests/repo/engine-purity.ts` for paths that leave `src` and type-level `import()` | Enforced for `packages/engine` (`engine-lint.test.ts`, `engine-purity.test.ts`); each new package adds its own rule |
 | Engine purity (ADR 0003 P5) in `packages/engine/src`: the globals `Date`, `Intl`, `globalThis`, `WeakRef`, `FinalizationRegistry`, `SharedArrayBuffer`, `Atomics`, `Promise`, `Proxy`, `Set`, `WeakMap`, `WeakSet`, `Function`, `Bun`, `crypto`, `performance`, `structuredClone`, `Reflect`; every reference outside a type to `JSON` (except in `canonical/encode.ts`), `Map` (except in `canonical/value.ts` and `step/context.ts`), and `Math` (except in `int.ts`); `console`, `process`, `eval`, `for…in`; `**` and `**=`; `async` and `await`; direct member access, with quoted or backtick keys too, to `localeCompare`, `toLocale*`, `constructor`, and `Object.keys`, `values`, `entries`, `getOwnPropertyNames`, `getOwnPropertySymbols`, `getOwnPropertyDescriptors` (except in `canonical/order.ts`); binding or destructuring `Object` into a variable; only ECMAScript 2024 declarations (`lib: ["ES2024"]`, `types: []`); no `/// <reference>`, `declare` declarations (statements, `export declare`, class fields), declaration files (`.d.ts`, `.d.mts`, `.d.cts`, `.d.<ext>.ts`), `@ts-nocheck`, `@ts-expect-error`, `@ts-ignore`, or Biome suppression comments (`biome-ignore`, `-all`, `-start`, `-end`) | Biome stable rules, with one `noRestrictedGlobals` list, and the GritQL plugins in `packages/engine/lint/`: `purity.grit`, plus one plugin per rule that has or will have an exception (`key-order.grit` for key enumeration, `global-json.grit`, `global-map.grit`, `global-math.grit`), each registered for `src` minus its exception file; five reviewed exceptions, each limited to its file: `canonical/order.ts` may enumerate keys, `canonical/encode.ts` may use `JSON`, `canonical/value.ts` and `step/context.ts` may use `Map`, and `int.ts` may use `Math`; `tsc -p packages/engine/tsconfig.json` in `bun run typecheck`; `tests/repo/engine-purity.ts` | Enforced (`engine-lint.test.ts`, `engine-purity.test.ts`, `package.test.ts`) |
 | Duplicated code, dead exports | None yet | Review checklist |
-| Race conditions, performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T6, T7, and T10 |
+| Engine work per tick that grows with the number of chunks | `bun test` (`packages/engine/test/step-cost.test.ts`) | Enforced: the median tick of 200,000 chunks must cost less than 2 times one of 1,000 |
+| Race conditions, other performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T6, T7, and T10, and the engine benchmark |
 
 See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choices and thresholds.
 

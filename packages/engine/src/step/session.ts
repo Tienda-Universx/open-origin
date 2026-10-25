@@ -12,7 +12,7 @@ import type { Tick } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import type { EngineEvent, EventCause, Rejected } from "../world/contracts.ts";
 import type { StreamIds } from "../world/ruleset.ts";
-import { type ActiveStep, busyError, type WorldState } from "../world/world.ts";
+import { busyError, type WorldActivity, type WorldState } from "../world/world.ts";
 
 /** The ruleset code that is running: a command's handler, or a system. */
 export type Owner = {
@@ -33,7 +33,7 @@ const EXPIRED = "the tick context was used after its step returned: keep no refe
 const OUTSIDE =
   "the tick context was used outside every system and command handler: only they may use it";
 
-export class TickSession implements ActiveStep {
+export class TickSession implements WorldActivity {
   readonly state: WorldState;
   /** The tick being computed. */
   readonly tick: Tick;

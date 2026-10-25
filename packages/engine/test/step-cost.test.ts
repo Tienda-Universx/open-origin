@@ -2,15 +2,16 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { hexOf } from "../src/digest/digest.ts";
 import { type CanonicalValue, canonicalize, digest, step, type World } from "../src/index.ts";
 import { worldState } from "../src/world/world.ts";
+import { DIRTY_KEYS, median, sizedWorld } from "./support/cost-worlds.ts";
 import { type Data, stepRuleset, stepWorld, system, writable } from "./support/step-rulesets.ts";
 
 /**
- * The cost of a tick (ADR 0020, cost): the kernel hashes only what changed, plus digests of a
- * fixed size, so `stats.hashedBytes` is exact and deterministic, and it does not grow with the
- * number of chunks.
+ * The cost of a tick (ADR 0020, cost; plan §2.4, §8 "Complejidad"): the kernel hashes only what
+ * changed, plus digests of a fixed size, so `stats.hashedBytes` is exact and deterministic, and
+ * its work per tick does not grow with the number of chunks.
  */
 
-// Creating a world of 10,000 chunks takes a moment on a cold CI runner.
+// Creating a world of 200,000 chunks takes about 1.4 s on the 2-core Codespace.
 setDefaultTimeout(30_000);
 
 const encoder = new TextEncoder();
@@ -112,5 +113,79 @@ describe("the chunk index stays lazy", () => {
     step(world, []);
     expect(worldState(world).chunks.pendingCount).toBe(5);
     expect(worldState(world).chunks.size).toBe(7);
+  });
+});
+
+/**
+ * The complexity test (plan §2.4, §8 "Complejidad", risk R11): with D = 10 chunks changed per
+ * tick, a tick of a world of 200,000 chunks must cost less than 2 times a tick of a world of
+ * 1,000. Measured, with each added to the commit, the cheapest work that grows with N, a bare copy
+ * of the key list, gives 3.1 to 4.2 times; a scan of every key about 95, and a sort about 70. The
+ * kernel itself gives 0.95 to 1.1. So an O(N) term is caught once it costs more than about 0.3 ns
+ * per chunk per tick, as much as the 60 µs a tick of D = 10 costs. The plan's bound of 4 let the
+ * bare copy pass (all indicative: Bun 1.4.4, 2-core Codespace, 2026-10-25, alone and four runs at
+ * once).
+ *
+ * Wall-clock time is noisy, so the test is built not to flake:
+ *
+ * - the garbage of creating the worlds is collected before any tick is timed;
+ * - both worlds step alternately, tick by tick, so they share the machine's conditions;
+ * - 100 ticks of each warm the JIT up before any is measured;
+ * - the median of 300 ticks of each ignores collections and other outliers;
+ * - the bound of 2 is 1.8 times the kernel's highest ratio, 1.1, and the bare copy's lowest, 3.1,
+ *   is 1.5 times the bound;
+ * - a failed measurement is repeated once, since an O(N) bug fails both and noise rarely does.
+ *
+ * If it still fails intermittently, plan R11 moves it to the benchmark, with the reason recorded.
+ */
+const SMALL = 1_000;
+const LARGE = 200_000;
+const MAX_RATIO = 2;
+/** The lowest ratio measured with a bare copy of the key list in the commit. */
+const BARE_COPY_RATIO = 3.1;
+const WARM_UP = 100;
+const MEASURED = 300;
+
+/** Whether a ratio of per-tick medians, LARGE over SMALL, shows no work that grows with N. */
+const withinBound = (ratio: number) => ratio < MAX_RATIO;
+
+/** A world of `count` chunks `{ n: 0 }`, run by `dirtying`. */
+const sized = (count: number) => sizedWorld(count, () => ({ n: 0 }));
+
+/** The per-tick medians of `small` and `large`, stepped alternately, and their ratio. */
+function measure(small: World, large: World) {
+  const times: [number[], number[]] = [[], []];
+  for (let round = 0; round < WARM_UP + MEASURED; round += 1) {
+    [small, large].forEach((world, index) => {
+      const start = Bun.nanoseconds();
+      step(world, []);
+      if (round >= WARM_UP) times[index]?.push(Bun.nanoseconds() - start);
+    });
+  }
+  const [smallMedian, largeMedian] = times.map(median) as [number, number];
+  return { smallMedian, largeMedian, ratio: largeMedian / smallMedian };
+}
+
+describe("the kernel's work per tick does not depend on the number of chunks", () => {
+  test(`the bound: below ${MAX_RATIO} passes; ${MAX_RATIO} and a bare copy's ${BARE_COPY_RATIO} fail`, () => {
+    const ratios = [1.1, MAX_RATIO - 0.01, MAX_RATIO, BARE_COPY_RATIO];
+    expect(ratios.map(withinBound)).toEqual([true, true, false, false]);
+  });
+
+  test(`D = 10 in worlds of ${SMALL} and ${LARGE} chunks: hashed bytes, then time`, () => {
+    const small = sized(SMALL);
+    const large = sized(LARGE);
+    for (const world of [small, large]) {
+      const { stats, events } = step(world, []);
+      const dirty = DIRTY_KEYS.reduce((sum, key) => sum + bytes(["chunk", key, { n: 1 }]), 0);
+      expect(stats.dirtyChunks).toBe(DIRTY_KEYS.length);
+      expect(stats.hashedBytes).toBe(dirty + fixedBytes(world, events, { population: 0 }));
+    }
+    // Collect the garbage of creating the worlds now, not while their ticks are timed.
+    Bun.gc(true);
+    let result = measure(small, large);
+    if (!withinBound(result.ratio)) result = measure(small, large);
+    // The medians are in the failure message, for the record.
+    expect({ ...result, within: withinBound(result.ratio) }).toMatchObject({ within: true });
   });
 });

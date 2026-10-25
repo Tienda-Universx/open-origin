@@ -17,13 +17,13 @@ import { worldState } from "../src/world/world.ts";
 import { tallyRuleset, tallyWorld } from "./fixtures/tally-ruleset.ts";
 import {
   BARRIER_CASES,
-  bypassTick,
+  BARRIER_ROWS,
   STALE_CHUNK,
   STALE_GLOBAL,
 } from "./support/barrier-rulesets.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { Sfc32 } from "./support/sfc32.ts";
-import { type Data, stepRuleset, stepWorld, system, writable } from "./support/step-rulesets.ts";
+import { type Data, stepRuleset, stepWorld, system } from "./support/step-rulesets.ts";
 import { validCommands } from "./support/tally-fuzz.ts";
 
 /**
@@ -108,12 +108,12 @@ describe("an epoch other than 0", () => {
 });
 
 describe("encoding finds writes behind the barrier without audit", () => {
-  test.each(BARRIER_CASES)(
+  test.each(BARRIER_ROWS)(
     "%s: integrity_violation, poisoned, and no text",
-    (name, ruleset, issues) => {
+    (_name, { ruleset, lag, issues }) => {
       const at = 3;
       const world = stepWorld(ruleset(at));
-      const tick = bypassTick(name, at);
+      const tick = at + lag;
       for (let ticks = 1; ticks <= tick; ticks += 1) step(world, []);
       expect(worldStatus(world)).toEqual({ kind: "ok", tick });
       let text: string | undefined;
@@ -162,8 +162,9 @@ describe("encoding finds writes behind the barrier without audit", () => {
   });
 
   test("snapshotBytes runs the same check", () => {
-    const [, ruleset, issues] = BARRIER_CASES[0] ?? [];
-    if (ruleset === undefined || issues === undefined) throw new Error("no barrier case");
+    const [first] = BARRIER_CASES;
+    if (first === undefined) throw new Error("no barrier case");
+    const { ruleset, issues } = first;
     const world = stepWorld(ruleset(1));
     step(world, []);
     const error = engineErrorOf(() => snapshotBytes(world));
@@ -172,56 +173,6 @@ describe("encoding finds writes behind the barrier without audit", () => {
       issues,
     });
   });
-});
-
-describe("a world is busy while it is encoded", () => {
-  test.each([
-    ["encodeSnapshot", encodeSnapshot],
-    ["snapshotBytes", snapshotBytes],
-  ] as const)(
-    "a Proxy in the state whose trap steps the world during %s is refused",
-    (api, encode) => {
-      let hook: (() => void) | undefined;
-      const world = stepWorld(
-        stepRuleset([
-          system("trapper", (ctx) => {
-            if (ctx.tick !== 1) return;
-            writable(ctx, "0,0").inner = new Proxy<Data>(
-              { a: 1 },
-              {
-                getOwnPropertyDescriptor(target, key) {
-                  hook?.();
-                  return Reflect.getOwnPropertyDescriptor(target, key);
-                },
-              },
-            );
-          }),
-        ]),
-      );
-      step(world, []);
-      const before = encode(world);
-      let inner: unknown;
-      hook = () => {
-        try {
-          step(world, []);
-        } catch (error) {
-          inner = error;
-        }
-      };
-      expect(encode(world)).toEqual(before);
-      hook = undefined;
-      expect(inner).toMatchObject({
-        code: "world_busy",
-        issues: [
-          {
-            path: "",
-            message: `step was called while ${api} read this world: no function may use a world while it is encoded`,
-          },
-        ],
-      });
-      expect(worldStatus(world)).toEqual({ kind: "ok", tick: 1 });
-    },
-  );
 });
 
 describe("snapshots share nothing with the host", () => {
