@@ -853,8 +853,9 @@ to `Math.imul` and `Math.floor` and applies to no other file.
 
 ## Determinism suite
 
-The suite is the one harness that every ruleset runs: tally in T2, and the rulesets of T3 to T5,
-which ADR 0020 requires to pass it with audit on (plan §1 item 8, §2.5, §8). Code:
+The suite is the one harness that every ruleset runs: tally in T2, the probe ruleset in T3
+([worldgen integration](worldgen.md#integration)), and the rulesets of T4 and T5, which ADR 0020
+requires to pass it with audit on (plan §1 item 8, §2.5, §8). Code:
 `packages/engine/test/support/` (`determinism-suite.ts`, `determinism-records.ts`, and
 `resume-child.ts`), with its negative controls in `broken-rulesets.ts`. Tests:
 `packages/engine/test/determinism-suite.test.ts`.
@@ -881,15 +882,17 @@ ran nothing shows, and holds the reference records and the final snapshot text.
 
 ### How a batch uses it
 
+The T3 subject, from `worldgen-suite.test.ts`:
+
 ```ts
 const report = await runDeterminismSuite({
-  ruleset: { module: import.meta.resolve("./fixtures/terrain-ruleset.ts"), name: "terrainRuleset" },
-  world: (seed, ruleset, audit) => terrainWorld(seed, ruleset, audit),
-  seeds: [[1, 2], [3, 4]],
-  ticks: 1_000,
-  commands: terrainCommands,
-  cuts: [0, 1, 37, 999],
-  childCuts: [37],
+  ruleset: { module: import.meta.resolve("./fixtures/probe-ruleset.ts"), name: "probeRuleset" },
+  world: probeWorld,
+  seeds: [[11, 22], [33, 44]],
+  ticks: 600,
+  commands: (tick) => SCRIPT.commands[tick - 1] ?? [],
+  cuts: CUTS, // around calendar boundaries and materializations, and at seeded random ticks
+  childCuts: CHILD_CUTS,
 });
 expect(report.failures).toEqual([]);
 ```
@@ -904,6 +907,9 @@ expect(report.failures).toEqual([]);
 - Cuts are ticks in [0, ticks), and a subject needs at least one, in `cuts` or `childCuts`, since
   with none the resume checks would pass without running. A subject that breaks these rules is
   refused before anything runs.
+- The resumes compare only the ticks after their cuts, so a subject cuts where its rules change
+  state, at t − 1 and at t: the probe cuts around calendar boundaries and ticks that create
+  chunks, and at seeded random ticks (tracker L33). It computes its cut lists and pins them.
 - The optional second argument, `{ childTimeoutMs }`, sets the
   [child processes'](#the-child-process) time limit; it must be a positive integer.
 
@@ -990,5 +996,5 @@ about 2 s, most of it creating the large world.
 On the 2-core Codespace with Bun 1.4.4 (2026-10-25; indicative), the golden subject takes about
 10 s: about 13,000 ticks in process, about 6,400 of them under audit (the audit run and the
 resumes), and three child processes, which resume under audit too. The test of a child that hangs
-waits for its time limit of 1 s. The whole `bun test` takes about 26 to 29 s.
+waits for its time limit of 1 s. The whole `bun test` takes about 47 s, with T3's tests (2026-10-25).
 
