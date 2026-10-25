@@ -304,7 +304,9 @@ Here c is the nutrition a day costs at the cheapest mix, asleep for the shortest
 the rest a day costs and awake and idle otherwise; g is a day of regrowth times the nutrition per
 unit. With P the peak of deposit 0, H is the time from full nutrition and health, eating only one
 cell that starts full, to health 0: `(1,000,000 + P·nutritionPerUnit) / (c − g)` days to nutrition
-0, plus the time health takes to fall from full to 0.
+0, plus `T·c / (c − g)`, where T is the time health takes to fall from full to 0. The second term
+is longer than T because the being keeps eating what regrows, and health falls only while its
+nutrition is 0, a fraction `(c − g) / c` of the time.
 
 ### Evaluation
 
@@ -319,7 +321,8 @@ cell that starts full, to health 0: `(1,000,000 + P·nutritionPerUnit) / (c − 
   - in the soak, two variants still survive: an adverse one, with every rate that lowers a need or
     health multiplied by 11/10 and every rate that raises a need, health, or food by 9/10, and a
     favorable one with the opposite factors; each numerator is rounded to the nearest integer,
-    halves up.
+    halves up. Calibrated numerators stay at or below 953,250, ⌊2^20·10/11⌋, so the adverse variant
+    stays within the bounds of a ratio.
 - Acceptance on the default seed and `heldout/1`, over 63,000 ticks (10 days): no being is
   incapacitated, dies, or reaches rest 0, and the brain has no intention rejected. Every being:
   - ate in at least 5 distinct cells, at least one outside the window it was born in;
