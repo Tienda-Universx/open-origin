@@ -619,8 +619,8 @@ What they show:
 - The throughput is about the same from 1 KB to 50 KB, so above about 1 KB a changed chunk costs
   in proportion to its bytes. Below that, the fixed cost of each walk dominates, as the CPU
   profiles of [tally runs](#golden-fuzz-and-isolation) found.
-- The kernel keeps about 170 to 210 bytes per chunk: three separate builds of 100,000 chunks
-  measured 167 to 198 B. The 16 bytes of a 128-bit term are a small part of that; the rest is
+- The kernel keeps about 170 to 210 bytes per chunk: this run measured 208 B, and three separate
+  builds of 100,000 chunks 167 to 198 B. The 16 bytes of a 128-bit term are a small part of that; the rest is
   JavaScript's objects, arrays, and strings for the key, the entry, and the index. A million chunks
   would take about 200 MB before any chunk value. The memory rows read JSC's `heapSize` alone after
   a full collection (`bench/measure.ts`), since it already holds the extra memory JSC tracks; the
@@ -925,9 +925,13 @@ and name, the snapshot text, the tick to continue from, the whole script, and wh
 Its output is one JSON document on stdout: the record of every tick it ran, and its final snapshot
 or what encoding it threw. A resume decodes its snapshot under audit, as the in-process resume
 does. The second seed's run starts from that world's snapshot at tick 0, built before any child
-starts, and decodes it without audit, as the interleaving's worlds run; a world decoded at tick 0
-runs as the one its factory created, as every resume from cut 0 shows. Nothing touches the disk,
-so there is nothing to clean up.
+starts, and decodes it without audit, as the interleaving's worlds run. `createWorld` copies the
+initial values canonically, as decoding does, so a world decoded at tick 0 runs as the one its
+factory created; the resumes from cut 0 of tally and the probe check it. The factory itself runs in
+the parent only, so state that a world factory keeps is outside what the suite checks; the subject
+is the ruleset. A second seed's world whose snapshot cannot be encoded starts no child, and what
+encoding threw is the `interleave` failure of world 1 at tick 0. Nothing touches the disk, so there
+is nothing to clean up.
 
 The processes start together and run while the parent does its in-process resumes and the
 interleaving. Those are synchronous, so meanwhile the parent neither feeds a child's stdin nor
@@ -936,7 +940,7 @@ Past that limit, 30 s by default (`CHILD_TIMEOUT_MS`, or `childTimeoutMs`), the 
 with SIGKILL and reaped, and if an in-process check throws, every child is killed and reaped before
 the error propagates, so no process outlives the suite. Each of these is a failure that names the
 problem: a `child-resume` failure at its cut, or, for the second seed's run, an `interleave`
-failure of world 1 at tick 0:
+failure of world 1 at tick 0, while the first seed's worlds are still compared:
 
 - a process that ran past its limit, with the end of its stderr;
 - a process that exited with an error, with its exit code, the signal that killed it if any, and
@@ -965,7 +969,9 @@ the suite reports for it:
 Other rulesets in `broken-rulesets.ts` count as tally does in the parent, but make the child
 process exit with an error, hang, or write nothing, text that is not JSON, or JSON of another
 shape; a test asserts the `child-resume` failure and the `interleave` failure of the second seed's
-run that each gives, and that a child that hangs is killed and reaped.
+run that each gives, and that a child that hangs is killed and reaped. Another shows that a second
+seed's world whose snapshot cannot be encoded is an `interleave` failure, and that the first seed's
+worlds are still compared then.
 
 Tally, the positive control, passes every check on the golden run and on 200 ticks of generated
 commands. A test of the comparison itself shows that a divergence that heals is still found, at its
@@ -997,7 +1003,8 @@ about 2 s, most of it creating the large world.
 ### Time
 
 On the 2-core Codespace with Bun 1.4.4 (2026-10-25; indicative), the golden subject takes about
-10 s: about 13,000 ticks in process, about 6,400 of them under audit (the audit run and the
-resumes), and three child processes, which resume under audit too. The test of a child that hangs
-waits for its time limit of 1 s. The whole `bun test` takes about 47 s, with T3's tests (2026-10-25).
+11 s: about 12,400 ticks in process, about 6,400 of them under audit (the audit run and the
+resumes), and four child processes: three resumes, under audit too, and the second seed's run
+alone. The test of a child that hangs waits for its time limit of 1 s. The whole `bun test` takes
+about 45 to 55 s with T3's tests.
 

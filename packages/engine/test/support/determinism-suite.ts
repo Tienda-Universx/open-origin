@@ -339,16 +339,34 @@ export function interleave(
 const INTERLEAVING_SEED = 2020;
 
 /**
- * Where the run of the second seed alone starts: that world's snapshot at tick 0, decoded without
- * audit, as the interleaving's worlds run. It runs in a child process, whose modules start fresh:
- * in this process, state that a ruleset keeps in a module, which every run shares, would already
- * hold what the first seed's runs left (a cache keyed without the seed), and the world would agree
- * with its interleaved copy for the wrong reason. A world decoded at tick 0 runs as the world the
- * factory created, as every resume from cut 0 shows.
+ * The interleaving's worlds, as indices into the subject's seeds: the subject's world, a world with
+ * the second seed, and a replica of the first.
  */
-function secondSeedStart({ subject, fresh }: Run): ChildStart {
-  const world = subject.world(subject.seeds[1], fresh(), false);
-  return { cut: 0, snapshot: encodeSnapshot(world), audit: false };
+const INTERLEAVED_SEEDS = [0, 1, 0] as const;
+
+/** The index of the second seed's world in the interleaving, as failures name it. */
+const SECOND_WORLD = INTERLEAVED_SEEDS.indexOf(1);
+
+/**
+ * Starts the child process that runs the second seed's world alone, the interleaving's reference
+ * for that world, from its snapshot at tick 0, decoded without audit as the interleaving's worlds
+ * run. A fresh process: in this one, state that a ruleset keeps in a module, which every run
+ * shares, would already hold what the first seed's runs left (a cache keyed without the seed), and
+ * the world would agree with its interleaved copy for the wrong reason. createWorld copies the
+ * initial values canonically, as decoding does, so a world decoded at tick 0 runs as the one its
+ * factory created; the resumes from cut 0 of tally and the probe check it. The factory itself runs
+ * in this process only. A world whose snapshot cannot be encoded starts no child: what encoding
+ * threw is returned instead.
+ */
+function startSecondSeed(run: Run): Child | string {
+  const world = run.subject.world(run.subject.seeds[1], run.fresh(), false);
+  let snapshot: string;
+  try {
+    snapshot = encodeSnapshot(world);
+  } catch (error) {
+    return `encodeSnapshot of the second seed's world threw ${describeError(error)}`;
+  }
+  return startChild(run, { cut: 0, snapshot, audit: false });
 }
 
 /**
@@ -357,8 +375,7 @@ function secondSeedStart({ subject, fresh }: Run): ChildStart {
  */
 function interleaving({ subject, fresh, script }: Run): TickRecord[][] {
   const shared = fresh();
-  const [first, second] = subject.seeds;
-  const worlds = [first, second, first].map((seed) => subject.world(seed, shared, false));
+  const worlds = INTERLEAVED_SEEDS.map((seed) => subject.world(subject.seeds[seed], shared, false));
   const random = new Sfc32(INTERLEAVING_SEED);
   return interleave(worlds, script, (ready) => random.pick(ready));
 }
@@ -366,19 +383,19 @@ function interleaving({ subject, fresh, script }: Run): TickRecord[][] {
 /**
  * The interleaving's failures: each world must give what it gives alone, the first seed's worlds
  * the reference run and the second seed's world its run in a child process, `second`. A child
- * that gives no output is a failure of the second world.
+ * that gives no output is a failure of the second world at tick 0; the first seed's worlds are
+ * compared all the same.
  */
 function interleavingFailures(
   run: Run,
   records: readonly (readonly TickRecord[])[],
   second: ChildOutput | string,
 ): Failure[] {
-  if (typeof second === "string")
-    return [{ property: "interleave", tick: 0, at: 1, detail: second }];
-  const alone = [run.reference, second.records, run.reference];
-  return records.flatMap((actual, index) =>
-    compared("interleave", alone[index] ?? [], actual, index),
-  );
+  return records.flatMap((actual, index): Failure[] => {
+    if (index !== SECOND_WORLD) return compared("interleave", run.reference, actual, index);
+    if (typeof second !== "string") return compared("interleave", second.records, actual, index);
+    return [{ property: "interleave", tick: 0, at: index, detail: second }];
+  });
 }
 
 /**
@@ -412,19 +429,19 @@ export async function runDeterminismSuite(
   failures.push(...snapshots.failures);
   const run: Run = { subject, fresh, script, reference, texts: snapshots.texts };
   const childCuts = subject.childCuts.filter((cut) => run.texts.has(cut));
-  // Before any child starts: a world factory that throws leaves no child behind.
-  const secondStart = secondSeedStart(run);
+  // Before any other child starts: a world factory that throws leaves no child behind.
+  const second = startSecondSeed(run);
   const children = childCuts.map((cut) =>
     startChild(run, { cut, snapshot: run.texts.get(cut) ?? "", audit: true }),
   );
-  const second = startChild(run, secondStart);
-  const { resumed, interleaved } = await besideChildren([...children, second], () => ({
+  const running = typeof second === "string" ? children : [...children, second];
+  const { resumed, interleaved } = await besideChildren(running, () => ({
     resumed: resumeInProcess(run, failures),
     interleaved: interleaving(run),
   }));
   const [resumes, alone] = await Promise.all([
     childFailures(run, children, timeoutMs),
-    childResult(second, timeoutMs),
+    typeof second === "string" ? second : childResult(second, timeoutMs),
   ]);
   failures.push(...resumes, ...interleavingFailures(run, interleaved, alone));
   const finalText = snapshots.texts.get(script.length);

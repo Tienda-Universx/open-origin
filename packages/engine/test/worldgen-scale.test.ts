@@ -154,10 +154,16 @@ describe("an area of 24 × 24 chunks", () => {
     () => {
       const chunks = areaByRows();
       // Serves each chunk of the area as generateChunk made it, and each region from sampleRegion.
-      const sampler: TerrainSampler = (rect) =>
-        rect.width === CHUNK_CELLS
-          ? chunkAt(chunks, chunkOfCell(rect.x), chunkOfCell(rect.y))
-          : sampleRegion(PREPARED, rect);
+      const served = { chunks: new Set<string>(), regions: 0 };
+      const sampler: TerrainSampler = (rect) => {
+        if (rect.width !== CHUNK_CELLS) {
+          served.regions += 1;
+          return sampleRegion(PREPARED, rect);
+        }
+        const part = chunkAt(chunks, chunkOfCell(rect.x), chunkOfCell(rect.y));
+        served.chunks.add(part.key);
+        return part;
+      };
       const perSide = AREA.width / REGION_SIDE;
       const chunksPerSide = REGION_SIDE / CHUNK_CELLS;
       for (let index = 0; index < perSide * perSide; index += 1) {
@@ -175,6 +181,9 @@ describe("an area of 24 × 24 chunks", () => {
         }));
         expect(terrainCompositionProblems(sampler, region, parts)).toEqual([]);
       }
+      // Not vacuous: every chunk of the area, as generateChunk made it with its key, was compared
+      // with a region from sampleRegion.
+      expect([served.chunks.size, served.regions]).toEqual([SIDE * SIDE, perSide * perSide]);
     },
     TIMEOUT_MS,
   );

@@ -500,6 +500,9 @@ The tests check:
 - boundaries at exactly the ticks the laws give; chunks created only by accepted materializations;
   each chunk's readings; and the exact rejections of a chunk outside the world, a duplicate, a
   materialization from an inhabitant, and an invalid query;
+- the probe's validators report every problem of a global value and its chunks at once, with its
+  path: an unknown member, a watch list too long, a duplicate, or a chunk outside the world, and
+  each member of a chunk that breaks its schema;
 - every stored terrain digest and every reading equal to what worldgen computes outside, for the
   same genesis, chunk, cell, and instant, under each world's terrain seed (tests 16 and 21, I7);
 - each path of ADR 0021's seal table (test 14, I8): a change through `writeGlobal` faults that tick

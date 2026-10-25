@@ -62,11 +62,12 @@ import { Sfc32 } from "./support/sfc32.ts";
  * equals what worldgen computes outside for the same genesis, chunk, cell, and instant; and the
  * genesis stays sealed: each way of changing it fails where ADR 0021 says it does.
  *
- * Time: the suite runs about 12,000 probe ticks in process, about 7,800 of them under audit, and
- * three child processes that resume about 1,600 more. A probe tick costs about 0.3 ms, a third of
- * it spent preparing the genesis, which the probe does in every run of a system or handler. With
- * the other runs here, the file takes 6 to 10 s on the 2-core Codespace (Bun 1.4.4, 2026-10-25;
- * indicative). The timeouts are budgets, as in determinism-suite.test.ts.
+ * Time: the suite runs about 11,400 probe ticks in process, about 7,800 of them under audit, and
+ * four child processes: three resumes of about 1,600 ticks under audit, and the second seed's run
+ * of 600. A probe tick costs about 60 µs, most of it preparing the genesis, which the probe does in
+ * every run of a system or handler, and a materialization about 0.7 ms more (worldgen.md, Measured
+ * cost). With the other runs here, the file takes 6 to 10 s on the 2-core Codespace (Bun 1.4.4,
+ * 2026-10-25; indicative). The timeouts are budgets, as in determinism-suite.test.ts.
  */
 
 const PROBE = { module: import.meta.resolve("./fixtures/probe-ruleset.ts"), name: "probeRuleset" };
@@ -397,6 +398,41 @@ describe("inside the step equals outside (tests 16 and 21)", () => {
 function stepTo(world: World, tick: number): void {
   while (worldStatus(world).tick < tick) step(world, []);
 }
+
+describe("the probe's validators", () => {
+  test("report every problem of its global value and chunks at once, with its path", () => {
+    const genesis = probeGenesis(SEEDS[0]);
+    const watched = Array.from({ length: WATCH_LIMIT - 1 }, (_, x) => `${x},0`);
+    const global = { ...probeGlobal(genesis), extra: 1, watch: [...watched, "0,0", "67108864,0"] };
+    const chunks = { "0,0": { at: 0, terrain: "xyz", readings: -1, color: "red" }, "1,0": 5 };
+    const init = { seed: SEEDS[0], simSecondsPerTick: PROBE_SECONDS_PER_TICK, global, chunks };
+    const error = engineErrorOf(() => createWorld({ ...init, ruleset: probeRuleset() }));
+    expect([error.code, error.issues.map(({ path, message }) => ({ path, message }))]).toEqual([
+      "invalid_input",
+      [
+        { path: "/init/global/extra", message: "unknown member" },
+        {
+          path: "/init/global/watch",
+          message: `the watch list has ${WATCH_LIMIT + 1} keys: it holds at most ${WATCH_LIMIT}`,
+        },
+        { path: `/init/global/watch/${WATCH_LIMIT - 1}`, message: "the chunk is watched twice" },
+        {
+          path: `/init/global/watch/${WATCH_LIMIT}`,
+          message:
+            "the x of the chunk key, 67108864, is outside the world: chunk coordinates lie from -67108864 to 67108863",
+        },
+        { path: "/init/chunks/0,0/color", message: "unknown member" },
+        { path: "/init/chunks/0,0/at", message: "must be a tick from 1" },
+        { path: "/init/chunks/0,0/terrain", message: "must be a terrain digest, 32 hex digits" },
+        { path: "/init/chunks/0,0/readings", message: "must be a safe integer from 0" },
+        {
+          path: "/init/chunks/1,0",
+          message: "a probe chunk must be a record { at, terrain, readings }",
+        },
+      ],
+    ]);
+  });
+});
 
 describe("the genesis stays sealed inside the step (test 14, I8)", () => {
   const sealFault = [{ path: "/global/genesisSeal", message: SEAL_MISMATCH }];
