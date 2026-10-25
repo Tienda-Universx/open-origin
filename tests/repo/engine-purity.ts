@@ -112,58 +112,108 @@ const WORLDGEN_DIRECTORIES = ["canonical", "digest", "worldgen"];
 /** What worldgen may import, as its diagnostic lists it. */
 const WORLDGEN_ALLOWLIST = `${WORLDGEN_MODULES.join(", ")}, and the modules under ${WORLDGEN_DIRECTORIES.map((directory) => `${directory}/`).join(", ")}`;
 
-/** Whether a worldgen module may import the module at `resolved`. */
-function worldgenMayImport(resolved: string): boolean {
+/** The body of the beings, a layer above worldgen that only the entry point exposes (ADR 0023). */
+const BEINGS = `${ENGINE_SRC}/beings`;
+/** The modules the beings layer may import, relative to src: worldgen only through its index. */
+const BEINGS_MODULES = [
+  "int.ts",
+  "errors.ts",
+  "time/tick.ts",
+  "world/chunk.ts",
+  "world/members.ts",
+  "world/contracts.ts",
+  "worldgen/index.ts",
+];
+/** The directories under src whose modules the beings layer may import: its own among them. */
+const BEINGS_DIRECTORIES = ["canonical", "digest", "beings"];
+/** What the beings layer may import, as its diagnostic lists it. */
+const BEINGS_ALLOWLIST = `${BEINGS_MODULES.join(", ")}, and the modules under ${BEINGS_DIRECTORIES.map((directory) => `${directory}/`).join(", ")}`;
+
+/** Whether `resolved` is one of `modules` or lies under one of `directories`, relative to src. */
+function inAllowlist(resolved: string, modules: string[], directories: string[]): boolean {
   const path = resolved.slice(ENGINE_SRC.length + 1);
-  return (
-    WORLDGEN_MODULES.includes(path) ||
-    WORLDGEN_DIRECTORIES.some((directory) => isUnder(path, directory))
-  );
+  return modules.includes(path) || directories.some((directory) => isUnder(path, directory));
 }
 
 /**
- * Why `file` may not import the module at `resolved` (`specifier`) under worldgen's layering
- * (ADR 0021): the kernel never imports worldgen, except the entry point that re-exports it, and
- * worldgen imports only the allowlist above, so it cannot reach the world's state or its
- * randomness. Undefined when the import is allowed.
+ * Why `file` may not import the module at `resolved` (`specifier`) under the engine's layering:
+ * worldgen imports only its allowlist (ADR 0021), so it cannot reach the world's state or its
+ * randomness; the beings layer imports only its own (ADR 0023), so randomness enters it only
+ * through the tick context and it never touches the terrain seed; and the kernel imports neither,
+ * except the entry point that re-exports both. Undefined when the import is allowed.
  */
 function layerProblem(file: string, specifier: string, resolved: string): string | undefined {
   if (isUnder(file, WORLDGEN)) {
-    if (worldgenMayImport(resolved)) return undefined;
+    if (inAllowlist(resolved, WORLDGEN_MODULES, WORLDGEN_DIRECTORIES)) return undefined;
     return `"${specifier}" is not a module worldgen may import: it may import ${WORLDGEN_ALLOWLIST} (ADR 0021)`;
   }
-  if (file === ENTRY_POINT || !isUnder(resolved, WORLDGEN)) return undefined;
-  return `"${specifier}" imports worldgen: the kernel never depends on worldgen, which only ${ENTRY_POINT} re-exports (ADR 0021)`;
+  if (isUnder(file, BEINGS)) {
+    if (inAllowlist(resolved, BEINGS_MODULES, BEINGS_DIRECTORIES)) return undefined;
+    return `"${specifier}" is not a module the beings layer may import: it may import ${BEINGS_ALLOWLIST} (ADR 0023)`;
+  }
+  if (file === ENTRY_POINT) return undefined;
+  if (isUnder(resolved, WORLDGEN)) {
+    return `"${specifier}" imports worldgen: the kernel never depends on worldgen, which only ${ENTRY_POINT} re-exports (ADR 0021)`;
+  }
+  if (isUnder(resolved, BEINGS)) {
+    return `"${specifier}" imports the beings layer: the kernel never depends on it, which only ${ENTRY_POINT} re-exports (ADR 0023)`;
+  }
+  return undefined;
 }
 
-/** Why `specifier`, imported from `file`, is not allowed; undefined when it is. */
-function specifierProblem(file: string, specifier: string): string | undefined {
+/** The kernel's contracts, which hold only types: a layer above the kernel imports them as types. */
+const CONTRACTS = `${ENGINE_SRC}/world/contracts.ts`;
+/** A statement that imports or re-exports types only: `import type …` or `export type …`. */
+const TYPE_ONLY_STATEMENT = /^(?:import|export)\s+type\b/;
+
+/**
+ * Why `statement`, which imports the module at `resolved` from `file`, must be type-only: worldgen
+ * and the beings layer may name the kernel's contracts but never load the module. Undefined when
+ * the statement is allowed.
+ */
+function contractsProblem(file: string, statement: string, resolved: string): string | undefined {
+  if (resolved !== CONTRACTS || !(isUnder(file, WORLDGEN) || isUnder(file, BEINGS)))
+    return undefined;
+  if (TYPE_ONLY_STATEMENT.test(statement)) return undefined;
+  return "world/contracts.ts holds only types: import it with `import type` or re-export it with `export type`";
+}
+
+/**
+ * Why `statement`, which imports `specifier` from `file`, is not allowed; undefined when it is.
+ * `statement` is the import's own text, from its keyword, which says whether it is type-only.
+ */
+function specifierProblem(file: string, specifier: string, statement: string): string | undefined {
   if (!/^\.\.?(?:\/|$)/.test(specifier)) {
     return `"${specifier}" is not a relative import: the engine depends on nothing`;
   }
   const resolved = posix.normalize(posix.join(posix.dirname(file), specifier));
   if (!isUnder(resolved, ENGINE_SRC)) return `"${specifier}" resolves outside ${ENGINE_SRC}`;
-  return layerProblem(file, specifier, resolved);
+  return layerProblem(file, specifier, resolved) ?? contractsProblem(file, statement, resolved);
 }
 
 /** Every literal specifier the patterns capture, checked against the engine's import rule. */
 function specifierFindings(file: string, code: string): Finding[] {
   return [FROM_CLAUSE, SIDE_EFFECT_IMPORT, IMPORT_EQUALS].flatMap((pattern) =>
     [...code.matchAll(pattern)].flatMap((match) => {
-      const message = specifierProblem(file, match[1] ?? match[2] ?? "");
+      const message = specifierProblem(file, match[1] ?? match[2] ?? "", match[0]);
       return message === undefined ? [] : [{ index: match.index, message }];
     }),
   );
 }
 
+/** `typeof` right before a dynamic import: a type-level import, which loads nothing. */
+const TYPE_QUERY = /\btypeof\s*$/;
+
 /** Dynamic imports: a literal specifier follows the import rule; a computed one is rejected. */
 function dynamicImportFindings(file: string, code: string): Finding[] {
   return [...code.matchAll(DYNAMIC_IMPORT)].flatMap((match) => {
     const argument = LITERAL_ARGUMENT.exec(code.slice(match.index + match[0].length));
+    // A type-level `typeof import(…)` counts as a type-only statement for the contracts rule.
+    const statement = TYPE_QUERY.test(code.slice(0, match.index)) ? "import type" : match[0];
     const message =
       argument === null
         ? "a dynamic import with a computed specifier cannot be checked"
-        : specifierProblem(file, argument[1] ?? argument[2] ?? "");
+        : specifierProblem(file, argument[1] ?? argument[2] ?? "", statement);
     return message === undefined ? [] : [{ index: match.index, message }];
   });
 }
@@ -219,6 +269,16 @@ function gateTokenFindings(source: string): Finding[] {
 
 /** `let` and `var`, which declare bindings that can be reassigned. */
 const MUTABLE_DECLARATION = new RegExp(String.raw`${KEYWORD}(?:let|var)\b`, "g");
+/**
+ * A `const` bound to a value that can change after the module loads: an array or object literal, a
+ * `new` expression (a typed array among them, which cannot be frozen), or a regular expression
+ * literal (`lastIndex`). `Object.freeze(…)`, primitives, and functions stay allowed. Group 1 is
+ * the start of the initializer.
+ */
+const MUTABLE_CONST = new RegExp(
+  String.raw`${KEYWORD}const\s+[\w$]+\s*(?::[^=;]*)?=\s*(\[|\{|new\b|\/(?![/*]))`,
+  "g",
+);
 
 /** The code (comments already blanked) with every string and template literal blanked too. */
 function blankLiterals(code: string): string {
@@ -230,27 +290,61 @@ function braceBalance(text: string): number {
   return (text.match(/\{/g)?.length ?? 0) - (text.match(/\}/g)?.length ?? 0);
 }
 
+/** Where a layer's modules may keep no state between calls, and why. */
+type StatelessLayer = { directory: string; reason: string; constants: boolean };
+
 /**
- * The `let` and `var` declarations at the top level of a worldgen module: module state, which
- * would let one generator call depend on the calls before it (ADR 0021). Top level is brace depth
- * 0 once literals are blanked, so a top-level `for (let …)` is reported too, which errs on the
- * side of rejecting.
+ * The layers whose modules keep no state between calls. Worldgen's rule covers `let` and `var`
+ * (ADR 0021); its four constant tables are records and arrays that no code writes, reviewed rather
+ * than scanned, because freezing an array slows every read of it (ADR 0020). The beings layer also
+ * rejects mutable constants: a ruleset is shared by every world that uses it (ADR 0023).
  */
-function moduleStateFindings(code: string): Finding[] {
-  const text = blankLiterals(code);
-  const findings: Finding[] = [];
+const STATELESS_LAYERS: StatelessLayer[] = [
+  {
+    directory: WORLDGEN,
+    reason: "worldgen modules keep no state between calls (ADR 0021)",
+    constants: false,
+  },
+  {
+    directory: BEINGS,
+    reason:
+      "beings modules keep no state between calls, so the worlds that share a ruleset stay independent (ADR 0023)",
+    constants: true,
+  },
+];
+
+/** The top-level declarations that `pattern` finds in `text`, whose literals are blanked. */
+function topLevelMatches(text: string, pattern: RegExp): RegExpExecArray[] {
+  const found: RegExpExecArray[] = [];
   let depth = 0;
   let scanned = 0;
-  for (const match of text.matchAll(MUTABLE_DECLARATION)) {
+  for (const match of text.matchAll(pattern)) {
     depth += braceBalance(text.slice(scanned, match.index));
     scanned = match.index;
-    if (depth !== 0) continue;
-    findings.push({
-      index: match.index,
-      message: `a top-level \`${match[0]}\` declares module state: worldgen modules keep no state between calls (ADR 0021)`,
-    });
+    if (depth === 0) found.push(match);
   }
-  return findings;
+  return found;
+}
+
+/**
+ * The module state at the top level of a module of a stateless layer: `let` and `var`, and for the
+ * layers that ask for it, constants bound to mutable values. Module state would let one call
+ * depend on the calls before it. Top level is brace depth 0 once literals are blanked, so a
+ * top-level `for (let …)` is reported too, which errs on the side of rejecting. A constant bound
+ * to the result of a call, other than `Object.freeze`, is not seen: review covers it.
+ */
+function moduleStateFindings({ reason, constants }: StatelessLayer, code: string): Finding[] {
+  const text = blankLiterals(code);
+  const declarations = topLevelMatches(text, MUTABLE_DECLARATION).map((match) => ({
+    index: match.index,
+    message: `a top-level \`${match[0]}\` declares module state: ${reason}`,
+  }));
+  if (!constants) return declarations;
+  const values = topLevelMatches(text, MUTABLE_CONST).map((match) => ({
+    index: match.index,
+    message: `a top-level \`const\` bound to \`${match[1]}…\` holds a value that can change: ${reason}; freeze it with Object.freeze, or build it inside a function`,
+  }));
+  return [...declarations, ...values];
 }
 
 /** Every purity issue in one engine source file, in line order. */
@@ -271,7 +365,9 @@ export function checkEngineSource({ path, content }: SourceFile): PurityIssue[] 
     ...gateTokenFindings(content),
     ...specifierFindings(path, code),
     ...dynamicImportFindings(path, code),
-    ...(isUnder(path, WORLDGEN) ? moduleStateFindings(code) : []),
+    ...STATELESS_LAYERS.filter(({ directory }) => isUnder(path, directory)).flatMap((layer) =>
+      moduleStateFindings(layer, code),
+    ),
   ]
     .sort((a, b) => a.index - b.index)
     .map(({ index, message }) => ({ file: path, line: lineAt(content, index), message }));
