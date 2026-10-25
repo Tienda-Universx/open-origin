@@ -2,13 +2,15 @@ import { CHACHA20_INPUT_WORDS } from "../../src/rng/chacha.ts";
 import { LATTICE_PURPOSES, NOISE_PURPOSES } from "../../src/worldgen/lattice.ts";
 import { type CellRect, type NoiseSpec, noiseBound, Q16 } from "../../src/worldgen/noise.ts";
 import { CHUNK_CELLS } from "../../src/worldgen/space.ts";
+import type { TerrainRegion } from "../../src/worldgen/terrain.ts";
 import { oracleTolerance } from "./noise-oracle.ts";
 
 /**
- * Property checks of worldgen's noise (plan §12, tests 4–7, 9, 10, and 17): each takes what it
- * checks, a region sampler, a fade, or a lattice packer, and returns its problems, empty when there
- * are none. They never compare against golden values, so a broken variant (broken-worldgen.ts)
- * fails them by breaking a property, and the real code passes them by keeping it.
+ * Property checks of worldgen's noise and terrain (plan §12, tests 4–7, 9, 10, and 17): each takes
+ * what it checks, a region sampler, a fade, or a lattice packer, and returns its problems, empty
+ * when there are none. They never compare against golden values, so a broken variant
+ * (broken-worldgen.ts) fails them by breaking a property, and the real code passes them by keeping
+ * it.
  */
 
 /** Samples the noise `spec` over the cells of `rect`, row by row, as sampleNoiseRegion does. */
@@ -38,7 +40,7 @@ function listed(problems: string[]): string[] {
 }
 
 /** The value of the cell `x`, `y` in `values`, sampled over `rect`. */
-export function valueAt(values: Int32Array, rect: CellRect, x: number, y: number): number {
+export function valueAt(values: ArrayLike<number>, rect: CellRect, x: number, y: number): number {
   const column = x - rect.x;
   const row = y - rect.y;
   const value = values[row * rect.width + column];
@@ -163,11 +165,27 @@ export function historyProblems(
   target: CellRect,
   others: readonly CellRect[],
 ): string[] {
-  const before = sampler(spec, target);
-  for (const other of others) sampler(spec, other);
-  const after = sampler(spec, target);
+  return requestHistoryProblems((rect) => sampler(spec, rect), target, others);
+}
+
+/**
+ * Cells of `target` whose value changes once `sample` has served the requests `others`, and a
+ * change in how many values it gives, for any sampler of cells: noise with a fixed spec, or
+ * terrain's fields laid end to end.
+ */
+export function requestHistoryProblems(
+  sample: (rect: CellRect) => ArrayLike<number>,
+  target: CellRect,
+  others: readonly CellRect[],
+): string[] {
+  const before = sample(target);
+  for (const other of others) sample(other);
+  const after = sample(target);
   const problems: string[] = [];
-  for (let index = 0; index < before.length; index += 1) {
+  if (after.length !== before.length) {
+    problems.push(`${before.length} values before the other requests, ${after.length} after`);
+  }
+  for (let index = 0; index < Math.min(before.length, after.length); index += 1) {
     if (after[index] !== before[index])
       problems.push(
         `cell ${index}: ${before[index]} before the other requests, ${after[index]} after`,
@@ -361,4 +379,95 @@ export function packingCollisions(packer: LatticePacker): string[] {
       problems.push(`${JSON.stringify(use)} and ${JSON.stringify(other)} share the words ${words}`);
   }
   return listed(problems);
+}
+
+/** Samples terrain over the cells of `rect`, row by row, as sampleRegion does for one genesis. */
+export type TerrainSampler = (rect: CellRect) => TerrainRegion;
+
+/** A field of a terrain region: its name, deposits as `deposits/k`, and its values. */
+export type NamedField = readonly [name: string, values: ArrayLike<number>];
+
+/** Every field of `region`, in the order terrainDigest hashes them. */
+export function terrainFields(region: TerrainRegion): NamedField[] {
+  return [
+    ["elevation", region.elevation],
+    ["substrate", region.substrate],
+    ["thermalBase", region.thermalBase],
+    ...region.deposits.map((values, k): NamedField => [`deposits/${k}`, values]),
+  ];
+}
+
+/** Every field of `region` laid end to end, for checks that compare whole regions. */
+export function terrainValues(region: TerrainRegion): number[] {
+  return terrainFields(region).flatMap(([, values]) => Array.from(values));
+}
+
+/** The cells of `part` that also lie in `region`, as [x, y] pairs, row by row. */
+function sharedCells(region: CellRect, part: CellRect): [number, number][] {
+  const cells: [number, number][] = [];
+  const right = Math.min(part.x + part.width, region.x + region.width);
+  const top = Math.min(part.y + part.height, region.y + region.height);
+  for (let y = Math.max(part.y, region.y); y < top; y += 1) {
+    for (let x = Math.max(part.x, region.x); x < right; x += 1) cells.push([x, y]);
+  }
+  return cells;
+}
+
+/**
+ * Cells where a part's terrain differs from `region`'s, field by field, over the cells they share:
+ * every field of a region must equal the composition of its chunks, and a chunk of its cells.
+ */
+export function terrainCompositionProblems(
+  sampler: TerrainSampler,
+  region: CellRect,
+  parts: readonly CellRect[],
+): string[] {
+  const whole = terrainFields(sampler(region));
+  const problems: string[] = [];
+  for (const part of parts) {
+    const fields = terrainFields(sampler(part));
+    const cells = sharedCells(region, part);
+    if (cells.length === 0 || fields.length !== whole.length) {
+      problems.push(`the part ${JSON.stringify(part)} is outside or has other fields`);
+    }
+    fields.forEach(([name, values], index) => {
+      const expected = (whole[index] as NamedField)[1];
+      for (const [x, y] of cells) {
+        const value = valueAt(values, part, x, y);
+        const wanted = valueAt(expected, region, x, y);
+        if (value !== wanted) {
+          problems.push(`${name} at ${x},${y}: the part gives ${value}, the region ${wanted}`);
+        }
+      }
+    });
+  }
+  return listed(problems);
+}
+
+/**
+ * Fields that ignore the terrain seed (plan §12, I7): `first` and `second` sample two geneses that
+ * differ only in their terrain seed, so over `rect` elevation must differ in more than half of the
+ * cells, and every other field in at least one. A sampler keyed by anything but the terrain seed,
+ * such as the world seed, gives both geneses the same terrain.
+ */
+export function terrainSeedProblems(
+  first: TerrainSampler,
+  second: TerrainSampler,
+  rect: CellRect,
+): string[] {
+  const one = terrainFields(first(rect));
+  const other = terrainFields(second(rect));
+  const problems: string[] = [];
+  one.forEach(([name, values], index) => {
+    const changed = (other[index] as NamedField)[1];
+    let differing = 0;
+    for (let cell = 0; cell < values.length; cell += 1) {
+      if (values[cell] !== changed[cell]) differing += 1;
+    }
+    const needed = name === "elevation" ? Math.floor(values.length / 2) + 1 : 1;
+    if (differing < needed) {
+      problems.push(`${name} differs in ${differing} of ${values.length} cells under another seed`);
+    }
+  });
+  return problems;
 }

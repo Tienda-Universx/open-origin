@@ -39,6 +39,18 @@ export {
   type ThermalLaw,
 } from "./genesis.ts";
 export {
+  type CategoryObservable,
+  type Observable,
+  type ObservableExposure,
+  type ObservableQuery,
+  type ObservableUnit,
+  type ObservableVariation,
+  observableCatalog,
+  observe,
+  type QuantityDimension,
+  type QuantityObservable,
+} from "./observables.ts";
+export {
   type CellCoord,
   CHUNK_CELLS,
   cellIndex,
@@ -51,4 +63,11 @@ export {
   MIN_CELL,
   MIN_CHUNK,
 } from "./space.ts";
+export {
+  generateChunk,
+  sampleRegion,
+  type TerrainChunk,
+  type TerrainRegion,
+  terrainDigest,
+} from "./terrain.ts";
 export { WORLDGEN_VERSION } from "./version.ts";

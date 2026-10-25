@@ -1,6 +1,6 @@
 import { floorDiv, floorMod } from "../../src/int.ts";
 import { CHACHA20_BLOCK_WORDS, CHACHA20_INPUT_WORDS, ChaCha20Key } from "../../src/rng/chacha.ts";
-import { type PreparedGenesis, sharedGenesis } from "../../src/worldgen/genesis.ts";
+import { type Genesis, type PreparedGenesis, sharedGenesis } from "../../src/worldgen/genesis.ts";
 import { setLatticeField, setLatticePoint, setOffsetInput } from "../../src/worldgen/lattice.ts";
 import {
   type CellRect,
@@ -16,14 +16,21 @@ import {
   Q16,
 } from "../../src/worldgen/noise.ts";
 import { cellOffset } from "../../src/worldgen/space.ts";
-import type { LatticePacker, LatticeUse, RegionSampler } from "./worldgen-checks.ts";
+import { terrainRegion } from "../../src/worldgen/terrain.ts";
+import type {
+  LatticePacker,
+  LatticeUse,
+  RegionSampler,
+  TerrainSampler,
+} from "./worldgen-checks.ts";
 
 /**
- * Broken variants of the noise (plan §12, test 17), the permanent Phase B: each composes the
- * functions noise.ts and lattice.ts export as the real sampler does, except for one part, which
- * it replaces with a defect. composeSampler with FAITHFUL_PARTS must equal sampleNoiseRegion
- * exactly, which a test checks, so each variant is one defect away from the real code; the
- * property checks of worldgen-checks.ts must then catch every variant, never golden values.
+ * Broken variants of the noise and of terrain (plan §12, test 17), the permanent Phase B: each
+ * composes the functions noise.ts and lattice.ts export as the real sampler does, except for one
+ * part, which it replaces with a defect. composeSampler with FAITHFUL_PARTS must equal
+ * sampleNoiseRegion exactly, which a test checks, so each variant is one defect away from the real
+ * code; the property checks of worldgen-checks.ts must then catch every variant, never golden
+ * values. The terrain variants do the same with terrain's key (composeTerrain, at the end).
  *
  * composeSampler evaluates each cell on its own, with a cache per call keyed by lattice point, not
  * by the region's layout, so its equality with sampleNoiseRegion also checks the real cache.
@@ -274,5 +281,40 @@ export const BROKEN_VARIANTS: readonly BrokenVariant[] = [
     name: "module-level counter",
     caughtBy: "history",
     parts: { ...FAITHFUL_PARTS, offsets: driftingOffsets() },
+  },
+];
+
+/** The key a terrain sampler draws under, for a genesis. */
+export type TerrainKeying = (genesis: Genesis) => ChaCha20Key;
+
+/** The real keying: the terrain seed of the genesis. */
+export const FAITHFUL_KEYING: TerrainKeying = (genesis) => new ChaCha20Key(genesis.terrainSeed);
+
+/**
+ * A terrain sampler of `prepared`, the unvalidated core of sampleRegion under the key `keying`
+ * gives. With FAITHFUL_KEYING it must equal sampleRegion exactly, which a test checks.
+ */
+export function composeTerrain(prepared: PreparedGenesis, keying: TerrainKeying): TerrainSampler {
+  const genesis = sharedGenesis(prepared);
+  return (rect: CellRect) => terrainRegion(keying(genesis), genesis, rect);
+}
+
+/** A broken terrain variant: its name, its keying, and the property check that must catch it. */
+export type BrokenTerrainVariant = {
+  readonly name: string;
+  readonly keying: TerrainKeying;
+  readonly caughtBy: string;
+};
+
+/**
+ * The broken terrain variants (plan §12, test 17). Worldgen never sees the world seed, so the
+ * variant that would key terrain by it stands as a key fixed for every world: either way, the
+ * terrain no longer follows the terrain seed (ADR 0021, randomness for terrain).
+ */
+export const BROKEN_TERRAIN_VARIANTS: readonly BrokenTerrainVariant[] = [
+  {
+    name: "the world seed instead of the terrain seed",
+    caughtBy: "terrainSeed",
+    keying: () => new ChaCha20Key([0x5eed, 0x7a11, 0, 0, 0, 0, 0, 0]),
   },
 ];

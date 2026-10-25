@@ -80,8 +80,8 @@ describe("defaultGenesis", () => {
         relief: { wavelength: 2048, octaves: 7, amplitude: 60000 },
         substrate: { cell: 64, weights: [5, 3, 2, 1] },
         deposits: [
-          { wavelength: 256, octaves: 3, threshold: 600, peak: 1000 },
-          { wavelength: 512, octaves: 2, threshold: 700, peak: 1000 },
+          { wavelength: 256, octaves: 3, threshold: 300, peak: 1000 },
+          { wavelength: 512, octaves: 2, threshold: 450, peak: 1000 },
         ],
       },
     });
@@ -295,6 +295,78 @@ describe("genesisIssues: the day", () => {
     expect(lightPeriod({ length: 999, daylight: 1 })).toBe(0);
     expect(lightPeriod({ length: 1000, daylight: 1 })).toBe(1);
     expect(lightPeriod({ length: 2 ** 36, daylight: 999 })).toBe(68_650_757_259);
+  });
+});
+
+describe("genesisIssues: the lapse and the relief", () => {
+  const tooSteep = (num: number, den: number, amplitude: number) =>
+    `the lapse ${num}/${den} is too steep for a relief of amplitude ${amplitude}: |num| × amplitude is ${Math.abs(num) * amplitude}, and it must be at most 2^28 × den, ${2 ** 28 * den}, so that thermalBase fits an Int32Array`;
+  const steep = (num: number, den: number, amplitude: number) => ({
+    "/laws/thermal/lapse/num": num,
+    "/laws/thermal/lapse/den": den,
+    "/terrain/relief/amplitude": amplitude,
+  });
+
+  test.each([
+    [1, 1, 2 ** 28],
+    [2 ** 19, 2 ** 20, 2 ** 29],
+    [-(2 ** 19), 2 ** 20, 2 ** 29],
+    [2 ** 20, 1, 2 ** 8],
+    [-(2 ** 20), 2 ** 20, 2 ** 28],
+  ])(
+    "accepts the lapse %d/%d with an amplitude of %d: |num| × amplitude ≤ 2^28 × den",
+    (num, den, amplitude) => {
+      expect(issuesWith(steep(num, den, amplitude))).toEqual([]);
+    },
+  );
+
+  test.each([
+    [1, 1, 2 ** 28 + 1],
+    [2 ** 19 + 1, 2 ** 20, 2 ** 29],
+    [-(2 ** 19 + 1), 2 ** 20, 2 ** 29],
+    [2 ** 20, 1, 2 ** 8 + 1],
+    [2 ** 20, 1, 2 ** 29],
+  ])(
+    "rejects the lapse %d/%d with an amplitude of %d, one past the rule or beyond, at the lapse",
+    (num, den, amplitude) => {
+      expect(issuesWith(steep(num, den, amplitude))).toEqual([
+        { path: "/laws/thermal/lapse", message: tooSteep(num, den, amplitude) },
+      ]);
+    },
+  );
+
+  test("checks the rule only when num, den, and the amplitude are each in bounds", () => {
+    expect(issuesWith(steep(2 ** 20, 1, 2 ** 29 + 1))).toEqual([
+      { path: "/terrain/relief/amplitude", message: outOfBounds(2 ** 29 + 1, 1, 2 ** 29) },
+    ]);
+    expect(issuesWith(steep(2 ** 20 + 1, 1, 2 ** 29))).toEqual([
+      { path: "/laws/thermal/lapse/num", message: outOfBounds(2 ** 20 + 1, -(2 ** 20), 2 ** 20) },
+    ]);
+    expect(issuesWith(steep(2 ** 20, 0, 2 ** 29))).toEqual([
+      { path: "/laws/thermal/lapse/den", message: outOfBounds(0, 1, 2 ** 20) },
+    ]);
+    expect(issuesWith({ ...steep(2 ** 20, 1, 2 ** 29), "/terrain/relief/amplitude": "7" })).toEqual(
+      [
+        {
+          path: "/terrain/relief/amplitude",
+          message: "the value must be an integer, not a string",
+        },
+      ],
+    );
+  });
+
+  test("still checks the rule when other members are invalid, reporting it in schema order", () => {
+    expect(
+      issuesWith({
+        ...steep(2 ** 20, 1, 2 ** 29),
+        "/laws/radiance/night": 1001,
+        "/terrain/relief/octaves": 13,
+      }),
+    ).toEqual([
+      { path: "/laws/thermal/lapse", message: tooSteep(2 ** 20, 1, 2 ** 29) },
+      { path: "/laws/radiance/night", message: outOfBounds(1001, 0, 1000) },
+      { path: "/terrain/relief/octaves", message: outOfBounds(13, 1, 12) },
+    ]);
   });
 });
 

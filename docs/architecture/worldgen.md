@@ -3,10 +3,10 @@
 Worldgen is the procedural world generator: the world is a latent field that the engine evaluates
 and never stores, a pure function of the generator version, the genesis, and the cell.
 [ADR 0021](../decisions/0021-procedural-world.md) records that design and why. This document
-specifies what the code implements: space, the sealed genesis, noise, and time. Code:
+specifies what the code implements: space, the sealed genesis, noise, terrain, time, and the observables. Code:
 `packages/engine/src/worldgen/`, exported by `packages/engine` as the `worldgen` namespace. Tests:
 `packages/engine/test/` (`worldgen-space`, `worldgen-genesis`, `worldgen-lattice`, `worldgen-noise`,
-and `worldgen-calendar`).
+`worldgen-terrain`, `worldgen-calendar`, and `worldgen-observables`).
 
 `WORLDGEN_VERSION` is `"worldgen@1"`. The seal of a genesis contains it, so a seal made under any
 other version does not match; [ADR 0021](../decisions/0021-procedural-world.md#decision)
@@ -84,7 +84,9 @@ level, so a misspelled law is reported instead of silently ignored.
 ### Bounds
 
 The bounds keep every intermediate value of worldgen a safe integer. `GENESIS_BOUNDS` holds them,
-frozen at every level; they may still change until `worldgen@1` is frozen.
+frozen at every level. They belong to the genesis schema, which `worldgen@1` covers. The golden
+values are recorded in T3-5; `worldgen@1` is frozen when T3 closes (ADR 0021), and T3-6 changes no
+output. After the freeze, changing a bound needs `worldgen@2`.
 
 | Field | Bounds |
 |---|---|
@@ -114,6 +116,10 @@ A wavelength's lower bound leaves at least 8 cells to the finest octave. When th
 invalid, the wavelength is checked for one octave, and when `peak` is invalid, `night` is checked
 against the highest peak, so that one bad value is reported once.
 
+One rule joins a law and a terrain parameter: |`lapse.num`| × `relief.amplitude` ≤ 2^28 ×
+`lapse.den`, so that `thermalBase` fits an `Int32Array`. It is checked only when the three values
+are each in bounds, and reported at `/laws/thermal/lapse`.
+
 ### Reading a genesis
 
 `genesisIssues(value)` and `prepareGenesis(value)` read the value once, through
@@ -136,6 +142,7 @@ and the bounds are then checked on the copy, which the engine owns.
 | A value of the wrong type | `the value must be an integer, not a string`, `the value must be a record { length, daylight }, not an array` |
 | An unknown member | `unknown member: the members here are day, liquid, thermal, radiance` |
 | A missing member | `the member is missing` |
+| A lapse too steep for the relief | `the lapse 524289/1048576 is too steep for a relief of amplitude 536870912: \|num\| × amplitude is 281475513581568, and it must be at most 2^28 × den, 281474976710656, so that thermalBase fits an Int32Array` |
 | A day without light | `the day has no light period: 999‰ of a day of 1 seconds is less than one second, and the light period and the night must each last at least one second` |
 
 ### Defaults
@@ -152,7 +159,7 @@ and the bounds are then checked on the copy, which the engine owns.
 | radiance | `peak` 1000, `night` 40 | Night keeps 4% of the peak, far brighter than a night on Earth |
 | relief | `wavelength` 2048, `octaves` 7, `amplitude` 60,000 | Generic noise parameters in the world's own units, scaled from nothing on Earth |
 | substrate | `cell` 64, `weights` [5, 3, 2, 1] | Four abstract classes, with no Earth material behind them |
-| deposits | `{ wavelength 256, octaves 3, threshold 600, peak 1000 }`, `{ wavelength 512, octaves 2, threshold 700, peak 1000 }` | Two abstract resources, with no Earth mineral behind them |
+| deposits | `{ wavelength 256, octaves 3, threshold 300, peak 1000 }`, `{ wavelength 512, octaves 2, threshold 450, peak 1000 }` | Two abstract resources, with no Earth mineral behind them |
 
 ### The seal
 
@@ -255,6 +262,97 @@ indicative).
 | Every problem at once | `invalid_value` with issues at `/prepared`, `/spec/...` (purpose, octaves, wavelength, amplitude), and `/rect/...`. Host objects are read once, member by member, and the last cell is checked once the first cell and the sides are valid |
 | No seed in messages | No message prints a seed word |
 
+## Terrain
+
+Code: `worldgen/terrain.ts`. The permanent primary fields of a cell are each a pure function of the
+generator version, the genesis, and the cell, never of time
+([ADR 0021](../decisions/0021-procedural-world.md), permanent and temporal layers).
+
+| Field | Array | Rule | Range |
+|---|---|---|---|
+| `elevation` | `Int32Array` | noise of purpose `elevation` with `terrain.relief` | ±noiseBound(relief) |
+| `thermalBase` | `Int32Array` | `base` + thermal noise + lapse term | below 2^31 in magnitude, by the genesis rule on the lapse |
+| `substrate` | `Uint8Array` | the class of the nearest Voronoi point | [0, number of weights − 1] |
+| `deposits[k]` | `Int32Array` | the excess of noise over a threshold, scaled to `peak` | [0, peak] |
+
+| Quantity | Rule |
+|---|---|
+| Level L (`liquidLevel`) | ⌊A × (2·level − 1000) / 1000⌋, with A the relief amplitude |
+| Thermal noise | purpose `thermal`, amplitude `spread`, wavelength 4096, 3 octaves (`THERMAL_NOISE`); 0, never sampled, when `spread` is 0 |
+| Lapse term | ⌊num × max(0, elevation − L) / den⌋: with the default positive lapse, thermal level rises with elevation |
+| Deposit k | noise n of purpose `deposits[k]`, amplitude 2^16, the deposit's wavelength and octaves; B its noiseBound and t = ⌊threshold × B / 1000⌋; ⌊(n − t) × peak / (B − t)⌋ where n > t, else 0 |
+
+The thermal noise has a wavelength twice the default relief's, so it is a regional trend, and the
+lapse term dominates the differences between nearby cells: the lapse law stays discoverable. A
+deposit's threshold is ‰ of its noise's own bound B. The noise rarely exceeds 0.74·B, so the
+default thresholds of 300‰ and 450‰ leave about 11% and 4.7% of the cells above them (indicative),
+and thresholds of 600‰ or more leave under 1%.
+
+### Substrate
+
+The plane is cut into squares of `substrate.cell` cells, and each square holds one point:
+
+- words 0 and 1 of its block (purpose `substrate`) give the jitter in [0, cell) on each axis;
+- word 2 draws its class, ⌊word × W / 2^32⌋ against the cumulative weights, with W their sum.
+
+A cell takes the class of its exact nearest point by squared integer distance. The search covers
+the 5 × 5 squares around the cell minus the 4 corners, 21 squares, which is enough for exactness:
+the cell's own point is less than √2·cell away, and every point outside those squares is farther.
+Ties go to the lowest square y, then x. A 3 × 3 search would miss the nearest point in only about
+2·10⁻⁷ to 2·10⁻⁶ of the cells, so the tests pin such cells in all 12 outer squares of the search,
+the ring of the 5 × 5 without its corners, instead of relying on random regions.
+
+### Bounds
+
+Every intermediate stays below 2^53 at `GENESIS_BOUNDS`, and every field fits its array:
+
+- |elevation| ≤ 1,632,610,980, and `num × (elevation − L)` < 2^51;
+- `thermalBase` fits its `Int32Array` because the genesis requires |num| × amplitude ≤ 2^28 × den;
+- the substrate's squared distances stay below 2^29, and `word × W` below 2^46;
+- for deposits, `threshold × B` < 2^28 and `(n − t) × peak` < 2^39, and B − t ≥ B / 1000 > 0.
+
+### Sampling
+
+| Function | Result | Problems |
+|---|---|---|
+| `sampleRegion(prepared, rect)` | The `TerrainRegion` of a rectangle, row by row, with the same rect rules and cap as the noise | `invalid_value` at `/prepared` and `/rect/...`, all at once |
+| `generateChunk(prepared, key)` | The region of the chunk, with its `key` (`TerrainChunk`) | `invalid_value` at `/key`, with the messages of `chunkKeyIssues` |
+| `terrainDigest(chunk)` | The digest of the chunk's fields | `invalid_value` for anything that is not a chunk: a record with a key, typed arrays of 1,024 cells, at most 8 deposits |
+
+| Genesis | 32×32 chunk | One cell | 9×9 region |
+|---|---|---|---|
+| Default | 0.555 ms | 44.3 µs | 91.5 µs |
+| Maximum | 1.80 ms | 122 µs | 292 µs |
+
+These figures are medians on the two-core Codespace with Bun 1.4.4, and only indicative. One default
+cell passes the plan's 50 µs gate with a thin margin, so the generator keeps one ChaCha20 block per
+field, octave, and lattice point. Reading regions in batches, as a ruleset should, costs far less
+per cell.
+
+### The terrain digest
+
+`terrainDigest` is MurmurHash3 x86_128 over little-endian u32 words, in this order:
+
+1. the text `terrain`, then `WORLDGEN_VERSION`, each as its byte count followed by its bytes padded
+   with zeros to a whole word;
+2. the chunk's x and y;
+3. `elevation`, 1,024 words;
+4. `substrate`, 1,024 bytes, 4 per word;
+5. `thermalBase`, 1,024 words;
+6. the number of deposits, then each deposit, 1,024 words each.
+
+No seed and no instant enter it.
+
+### Golden terrain values
+
+`test/fixtures/golden-worldgen.ts` pins `terrainDigest` for 3 terrain seeds × 13 chunks (the origin,
+its −1 neighbors, a far chunk, the four edge midpoints, and the four corners at ±2^26), plus the
+digest of a 16×16-chunk region, under both the default and a maximum genesis. The region is chunks
+0 to 15 on each axis, the first candidate in which each default deposit covers at least 1% of the
+cells pooled over the seeds (8.4% and 6.7%). Two processes recorded identical values. The golden
+values are recorded in T3-5; `worldgen@1` is frozen when T3 closes (ADR 0021), and T3-6 changes no
+output. After the freeze, any change to these values needs `worldgen@2`.
+
 ## Time
 
 Code: `worldgen/calendar.ts`. The temporal layer depends on the generator version, the laws, and an
@@ -323,6 +421,60 @@ It does so at 12, 7, and 13 seconds per tick, and 13 divides neither the day nor
 so its phase drifts. The values are equal under any terrain seed. Near dusk the curve is flat (C1),
 so the last tick of light already reads the night floor.
 
+## Observables
+
+Code: `worldgen/observables.ts`. The primitive observables are what can be measured of a cell
+([ADR 0021](../decisions/0021-procedural-world.md), primitive observables).
+`observableCatalog(prepared)` lists them for a genesis, and `observe(prepared, { id, cell, instant })`
+measures one as an integer.
+
+| id | Dimension, unit | Kind | Varies | Exposure | Value | Range |
+|---|---|---|---|---|---|---|
+| `elevation` | length, `len` | quantity | static | surface | the terrain field | [−B, B] |
+| `liquid.depth` | length, `len` | quantity | static | surface | max(0, L − elevation) | [0, L + B] |
+| `substrate` | category | category | static | surface | the terrain field | [0, M − 1] |
+| `thermal` | thermal, `tu` | quantity | time | measurement | thermalBase + diurnal(instant) | [base − T + min(0, P), base + T + max(0, P) + diurnal] |
+| `radiance` | radiant, `ru` | quantity | time | surface | radiance(instant), the same in every cell | [night, peak] |
+| `deposit.<k>` | amount, `qu` | quantity | static | measurement | the terrain field of deposit k | [0, peak_k] |
+
+- B is noiseBound(relief), L the level of liquid, M the number of substrate classes, T the thermal
+  noise bound (0 for a spread of 0), and P = ⌊num × (B − L) / den⌋, the lapse term at the highest
+  elevation. Each range is a true bound for every cell and instant, derived from the terrain and
+  noise bounds, never from sampled values.
+- The catalog lists the five fixed ids, then one `deposit.<k>` per deposit, in order. It is frozen
+  at every level and canonical, and a category has no `unit`.
+- Every entry belongs to `WORLDGEN_VERSION`, which versions its definition: the version that
+  ADR 0021 lists among the observable data is the generator's, not a field of each entry. After the
+  freeze, a change to an id, a unit, a range, or a value needs `worldgen@2`.
+- The catalog does not depend on the terrain seed. Its ranges derive from the laws and terrain
+  parameters, which are C3, so T6 decides each projection.
+- Ids, units, and every other text of the catalog are engineering names. Perception never passes
+  them into a prompt (plan §K.4, §K.7), and no field carries a human-language gloss.
+
+### Measuring
+
+The instant is required for every id, with no default. A static id ignores its value but still
+validates it. The query is read once, member by member, and every problem is reported at once as
+`invalid_value`: at `/prepared` for a value `prepareGenesis` did not make; at `/query` for a value
+that is not a record; at `/query/id` for an id that names nothing or a deposit the genesis lacks; and
+under `/query/cell` and `/query/instant` as `readCell` and `readInstant` report.
+
+A static id or `thermal` costs one 1×1 terrain region, about 34–54 µs with the default genesis, and
+`radiance` about 1.5 µs (indicative, on the two-core Codespace with Bun 1.4.4). A ruleset that reads
+many cells should read regions.
+
+### Golden observation values
+
+`test/fixtures/golden-observations.ts` pins every id at 9 cell and instant pairs under the default
+genesis, with one terrain seed of the terrain goldens.
+
+- The cells are a liquid cell, a dry cell, a cell of each deposit, the four world corners, and
+  (−1, −1).
+- The instants span dawn, light, night, mid-light, and the last safe tick at 12 seconds per tick,
+  mid-light at 7, and a drifting instant at 13.
+- Two runs of the recording agreed. The values hold inside the steps of worlds with different world
+  seeds, and other time laws change only the temporal ones.
+
 ## What the tests check
 
 - the space constants, and the chunk and offset of the cells 0, 31, 32, −1, −32, −33, −2^31, and
@@ -377,4 +529,24 @@ so the last tick of light already reads the night floor.
   it; the instant taken inside a tick equals the one taken outside at the same tick;
 - `timeLawIssues` accepts each edge and rejects one past it, and the genesis rejects a day without a
   light period;
-- the golden time values hold under two terrain seeds.
+- the golden time values hold under two terrain seeds;
+- the lapse rule accepts its edges for a positive and a negative `num`, rejects one past them, and is
+  checked only when `num`, `den`, and the amplitude are each in bounds, even among other problems;
+- every terrain field: a region equals its chunks, and each 1×1 region its chunk's cell, over 200
+  chunks under both geneses; the laws hold uniformly (five lapses, negative and zero included, and
+  spread 0); a fuzz of 80 geneses stays in range;
+- order does not matter: 5 permutations, 2,000 other generations, a child process, and the history
+  check; a different terrain seed changes terrain, and a broken variant with a fixed key is caught;
+- the substrate matches a brute-force nearest search, including the 26 pinned cells beyond 3 × 3;
+- the digest follows its layout, the golden terrain values hold, and each default deposit covers at
+  least 1% of the golden region.
+- the catalog is pinned, frozen, and canonical, lists exactly the genesis's deposits, and does not
+  depend on the terrain seed;
+- every static id gives the same value at 9 instants and equals its field or formula, under the
+  default and the maximum genesis;
+- `thermal − thermalBase = diurnal` at random cells and instants, `radiance` is equal at every cell,
+  and `varies` matches the behavior over one default day;
+- every observable stays within its range under a fuzz of geneses, and each range equals a BigInt
+  derivation;
+- `observe` reports every problem with its path, reads its query once, and never runs an accessor;
+- the golden observation values hold, also inside steps of worlds with different world seeds.

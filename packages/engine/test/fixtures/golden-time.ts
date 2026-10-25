@@ -18,11 +18,12 @@
  *
  * Near dusk the curve is flat, as C1 requires, so `lastLight` already reads the night floor.
  *
- * Any change that alters one of them changes what worldgen@1 outputs. Until T3 closes, worldgen@1
- * is not frozen, and such a change records the new values here in the same change. Once T3 closes,
- * it must also bump WORLDGEN_VERSION (ADR 0021, versioning), which worldgen-calendar.test.ts pins
- * with the default laws. These were recorded on 2026-10-25 with Bun 1.4.4 from a BigInt reference
- * that computes every step exactly, before calendar.ts existed, and calendar.ts reproduced them.
+ * `worldgen@1` is frozen when T3 closes (ADR 0021), and T3-6 changes no output. Update policy:
+ * after the freeze, any change that alters one of these values changes what worldgen@1 outputs, so
+ * it needs a new WORLDGEN_VERSION ("worldgen@2"), which worldgen-calendar.test.ts pins with the
+ * default laws, and new values recorded in the same change. These values were recorded in T3-4, on
+ * 2026-10-25 with Bun 1.4.4, from a BigInt reference that computes every step exactly, before
+ * calendar.ts existed, and calendar.ts reproduced them.
  */
 export const GOLDEN_TIME = {
   worldgenVersion: "worldgen@1",
