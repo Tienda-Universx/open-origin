@@ -4,7 +4,13 @@
  * does, and there is no whitespace. This is the one module where biome.json allows `JSON`.
  */
 import { EngineError, IssueList } from "../errors.ts";
-import { type Builder, type CanonicalValue, type IssueSink, walkCanonical } from "./value.ts";
+import {
+  type Builder,
+  type CanonicalValue,
+  ENVELOPE_LIMIT,
+  type IssueSink,
+  walkCanonical,
+} from "./value.ts";
 
 /**
  * Whether JSON.stringify would only wrap `text` in quotes: it has no quote, backslash, or C0
@@ -77,6 +83,15 @@ export function canonicalize(value: unknown): string {
 }
 
 /**
+ * The canonical text of a document that holds values inside an envelope, such as the events
+ * digest's `["events", events]`: canonicalize with the nesting budget of ENVELOPE_LIMIT, so that
+ * each value inside keeps the whole depth a value has. Only the engine's own documents use it.
+ */
+export function canonicalizeEnvelope(document: unknown): string {
+  return walkCanonical(document, ENCODER, FAIL_FAST, ENVELOPE_LIMIT);
+}
+
+/**
  * canonicalize(value) for a value that lives at the JSON Pointer `path` inside a larger one, such
  * as `/chunks/0,0` in a world: the issue's path is its path in `value` under `path`.
  */
@@ -91,6 +106,19 @@ export function canonicalizeAt(value: unknown, path: string): string {
  * or with the first offset where the text differs from its canonical form.
  */
 export function parseCanonical(text: string): CanonicalValue {
+  return parseWithin(text, undefined);
+}
+
+/**
+ * parseCanonical for a document that holds values inside an envelope, such as a snapshot: the
+ * nesting budget is ENVELOPE_LIMIT, and the caller checks each value's own depth.
+ */
+export function parseCanonicalEnvelope(text: string): CanonicalValue {
+  return parseWithin(text, ENVELOPE_LIMIT);
+}
+
+/** parseCanonical with the walk limit `limit`; undefined is the limit of a value. */
+function parseWithin(text: string, limit: number | undefined): CanonicalValue {
   if (typeof text !== "string") {
     throw new EngineError("invalid_value", [
       { path: "", message: `the canonical text must be a string, not ${typeof text}` },
@@ -107,7 +135,7 @@ export function parseCanonical(text: string): CanonicalValue {
     );
   }
   const issues = new IssueList();
-  const canonical = walkCanonical(value, ENCODER, issues);
+  const canonical = walkCanonical(value, ENCODER, issues, limit);
   issues.throwIfAny("invalid_value");
   if (canonical !== text) {
     const offset = firstDifference(text, canonical);

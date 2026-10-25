@@ -13,7 +13,7 @@
  * key order, then the problems of its own members, in the schema's order; the world's members are
  * epoch, tick, nextEntityId, rng, config, global, and chunks, each chunk key in canonical order.
  */
-import { parseCanonical } from "../canonical/encode.ts";
+import { parseCanonicalEnvelope } from "../canonical/encode.ts";
 import { sortedOwnKeys } from "../canonical/order.ts";
 import { type CanonicalValue, pointer } from "../canonical/value.ts";
 import type { Digest } from "../digest/digest.ts";
@@ -258,10 +258,14 @@ function readWorld(value: CanonicalValue | undefined, issues: IssueList) {
   };
 }
 
-/** The canonical value of `text`; anything else is an invalid snapshot with the parser's issues. */
+/**
+ * The canonical value of `text`; anything else is an invalid snapshot with the parser's issues.
+ * The document is an envelope: a chunk sits three levels down, so the parser's budget covers it
+ * whole, and decodeSnapshot checks that each value nests at most 64 by itself.
+ */
 function parseSnapshot(text: string): CanonicalValue {
   try {
-    return parseCanonical(text);
+    return parseCanonicalEnvelope(text);
   } catch (error) {
     if (!EngineError.isEngineError(error)) throw error;
     const { issues, issueCount } = error;

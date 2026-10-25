@@ -18,14 +18,15 @@
 import { canonicalize, recordText } from "../canonical/encode.ts";
 import { utf8Encode } from "../canonical/utf8.ts";
 import { type CanonicalValue, pointer } from "../canonical/value.ts";
-import type { Digest } from "../digest/digest.ts";
+import { type Digest, Digester } from "../digest/digest.ts";
 import { EngineError, IssueList } from "../errors.ts";
 import {
-  chunkTerm,
+  chunkTermOfText,
   digestCache,
-  globalDigest,
+  globalDigestOfText,
   recomputeState,
   type StateText,
+  textOrReport,
 } from "../world/checksum.ts";
 import { ChunkIndex } from "../world/chunk-index.ts";
 import type { Ruleset, WorldOptions } from "../world/contracts.ts";
@@ -115,20 +116,47 @@ export function snapshotBytes(world: World): Uint8Array {
   return utf8Encode(encodeFor(world, "snapshotBytes"));
 }
 
-/** The digests and the chunks of a snapshot, each digest taken before any validator ran. */
-type Hashed = { readonly global: Digest; readonly chunks: ChunkIndex<ChunkEntry> };
+/**
+ * The digests and the chunks of a snapshot, each digest taken before any validator ran. `whole` is
+ * false when a value nests deeper than a value may: it was reported, and has no digest.
+ */
+type Hashed = {
+  readonly global: Digest;
+  readonly chunks: ChunkIndex<ChunkEntry>;
+  readonly whole: boolean;
+};
+
+/**
+ * The digests of `snapshot`. Each value is canonicalized on its own, so that it keeps its whole
+ * depth of 64 although the snapshot document puts it two or three levels down; one that nests
+ * deeper is an issue at `/world/global/...` or `/world/chunks/<key>/...`, and a snapshot that
+ * has one has no digests.
+ */
+function hashed({ global, chunks }: SnapshotV1, issues: IssueList): Hashed {
+  const digester = new Digester();
+  const index = new ChunkIndex<ChunkEntry>();
+  const globalText = textOrReport(global, "/world/global", issues);
+  let whole = globalText !== undefined;
+  for (const [key, value] of chunks) {
+    const text = textOrReport(value, `/world/chunks${pointer([key])}`, issues);
+    if (text === undefined) whole = false;
+    else index.add(key, { value, term: chunkTermOfText(key, text, digester) });
+  }
+  const digest = globalText === undefined ? "" : globalDigestOfText(globalText, digester);
+  return { global: digest, chunks: index, whole };
+}
 
 /**
  * The digests of `snapshot`, its values checked by the validators of `ruleset`, and every issue
  * at `/world/global/...` and `/world/chunks/<key>/...` reported to `issues`. Every digest is taken
  * before any validator runs, so a validator that changes a value it is given, or one it kept from
  * an earlier call, leaves a stale digest that fullChecksum and encodeSnapshot find (ADR 0020,
- * ownership), as at createWorld and at the commit.
+ * ownership), as at createWorld and at the commit. A value too deep to hash is not validated.
  */
 function validated(snapshot: SnapshotV1, ruleset: CapturedRuleset, issues: IssueList): Hashed {
+  const result = hashed(snapshot, issues);
+  if (!result.whole) return result;
   const { global, chunks } = snapshot;
-  const hashed = { global: globalDigest(global), chunks: new ChunkIndex<ChunkEntry>() };
-  for (const [key, value] of chunks) hashed.chunks.add(key, { value, term: chunkTerm(key, value) });
   // Called without a receiver, so ruleset code cannot reach the captured ruleset through `this`.
   const { validateGlobal, validateChunk } = ruleset;
   runValidator("validateGlobal", "/world/global", () => validateGlobal(global), issues);
@@ -136,7 +164,7 @@ function validated(snapshot: SnapshotV1, ruleset: CapturedRuleset, issues: Issue
     const path = `/world/chunks${pointer([key])}`;
     runValidator("validateChunk", path, () => validateChunk(key, value), issues);
   }
-  return hashed;
+  return result;
 }
 
 /**
@@ -145,7 +173,9 @@ function validated(snapshot: SnapshotV1, ruleset: CapturedRuleset, issues: Issue
  */
 function decodedState(snapshot: SnapshotV1, ruleset: CapturedRuleset, audit: boolean): WorldState {
   const issues = new IssueList();
-  const { global, chunks } = validated(snapshot, ruleset, issues);
+  const { global, chunks, whole } = validated(snapshot, ruleset, issues);
+  // Without every digest the state root cannot be recomputed, and the value's issue says why.
+  if (!whole) issues.throwIfAny("invalid_snapshot");
   const { kernel } = snapshot;
   const digests = digestCache(kernel, global, chunks);
   if (digests.stateRoot !== snapshot.stateRoot) {

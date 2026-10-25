@@ -13,11 +13,16 @@
  * term and adding its new one, and composes by region. A world caches the terms, the sum, the
  * global digest, and the root; the kernel digest has a fixed size and is recomputed. A step
  * updates them for what it changed (step/commit.ts); fullChecksum recomputes them all.
+ *
+ * A tag is an envelope: it never counts toward the nesting of the value it wraps. The hashed text
+ * is the array of the tag, the key, and the value's own canonical text, so a value nests at most
+ * 64 arrays and records, counted from its root, wherever it is hashed.
  */
 import { arrayText, canonicalize, canonicalizeAt } from "../canonical/encode.ts";
 import { type CanonicalValue, pointer } from "../canonical/value.ts";
-import { type Digest, Digester, digest, digestWords, hexOf } from "../digest/digest.ts";
+import { type Digest, Digester, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes } from "../digest/lanes.ts";
+import { EngineError, type IssueList } from "../errors.ts";
 import type { ChunkKey } from "./chunk.ts";
 import type { ChunkIndex } from "./chunk-index.ts";
 import {
@@ -49,14 +54,43 @@ export function kernelDigest(
   return digester.digest(["kernel", kernel]);
 }
 
-/** The global digest, digest(["global", global]). */
-export function globalDigest(global: CanonicalValue): Digest {
-  return digest(["global", global]);
+/** The domain tags of the global value and of chunks, as canonical text. */
+const GLOBAL_TAG = canonicalize("global");
+const CHUNK_TAG = canonicalize("chunk");
+
+/** The global digest of the value whose canonical text is `text`: digest(["global", global]). */
+export function globalDigestOfText(text: string, digester: Digester): Digest {
+  return hexOf(digester.textWords(arrayText([GLOBAL_TAG, text])));
 }
 
-/** The term that the chunk `key` adds to the chunk sum. */
+/** The term that the chunk `key`, whose value has the canonical text `text`, adds to the sum. */
+export function chunkTermOfText(key: ChunkKey, text: string, digester: Digester): Lanes {
+  return digester.textWords(arrayText([CHUNK_TAG, canonicalize(key), text]));
+}
+
+/**
+ * The canonical text of `value`, which lives at the JSON Pointer `path`; undefined after
+ * reporting its first problem to `issues`, at its own path under `path`. The value is
+ * canonicalized alone, so that its depth is its own and no envelope consumes it.
+ */
+export function textOrReport(value: unknown, path: string, issues: IssueList): string | undefined {
+  try {
+    return canonicalizeAt(value, path);
+  } catch (error) {
+    if (!EngineError.isEngineError(error)) throw error;
+    for (const issue of error.issues) issues.report(issue.path, issue.message, error.cause);
+    return undefined;
+  }
+}
+
+/** The global digest, digest(["global", global]), of a value that is known to be canonical. */
+export function globalDigest(global: CanonicalValue): Digest {
+  return globalDigestOfText(canonicalize(global), new Digester());
+}
+
+/** The term that the chunk `key` adds to the chunk sum, for a chunk known to be canonical. */
 export function chunkTerm(key: ChunkKey, chunk: CanonicalValue): Lanes {
-  return digestWords(["chunk", key, chunk]);
+  return chunkTermOfText(key, canonicalize(chunk), new Digester());
 }
 
 /** What the state root composes. */
@@ -97,22 +131,6 @@ export function digestCache(
   return { globalDigest: global, chunkSum, stateRoot: composeRoot(parts, digester) };
 }
 
-/**
- * Where an issue found in `tagged` lies in the world. `tagged` is a domain tag and its parts, the
- * last of them the value that lives at `valuePath`; `at` is the issue's JSON Pointer into
- * `tagged`. A pointer into the value keeps its rest after `valuePath`; any other pointer, into the
- * tag or a key, becomes `valuePath` itself.
- */
-export function relocatePath(at: string, tagged: readonly unknown[], valuePath: string): string {
-  const value = `/${tagged.length - 1}`;
-  if (at === value || at.startsWith(`${value}/`)) return `${valuePath}${at.slice(value.length)}`;
-  return valuePath;
-}
-
-/** The domain tags of the global value and of chunks, as canonical text. */
-const GLOBAL_TAG = canonicalize("global");
-const CHUNK_TAG = canonicalize("chunk");
-
 /** The canonical texts of the values of a state, and the root recomputed from them. */
 export type StateText = {
   readonly global: string;
@@ -139,12 +157,12 @@ function recompute(
   let chunkSum = ZERO;
   for (const [key, entry] of chunks.sortedEntries()) {
     const text = canonicalizeAt(entry.value, `/chunks${pointer([key])}`);
-    const term = digester.textWords(arrayText([CHUNK_TAG, canonicalize(key), text]));
+    const term = chunkTermOfText(key, text, digester);
     chunkSum = addLanes(chunkSum, term);
     keep?.(key, text);
   }
   const globalText = canonicalizeAt(global, "/global");
-  const globalPart = hexOf(digester.textWords(arrayText([GLOBAL_TAG, globalText])));
+  const globalPart = globalDigestOfText(globalText, digester);
   const parts = { kernel: kernelDigest(kernel, digester), global: globalPart, chunkSum };
   const root = composeRoot({ ...parts, chunkCount: chunks.size }, digester);
   return { root, global: globalText };

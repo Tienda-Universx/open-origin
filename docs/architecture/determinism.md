@@ -23,7 +23,7 @@ canonical text. Code: `packages/engine/src/canonical/` and `packages/engine/src/
 | String | Well-formed UTF-16 (`isWellFormed`), in Unicode Normalization Form C | A lone surrogate has no UTF-8 form, and digests hash UTF-8. NFC gives each text one sequence of code points; the core rejects other forms and never normalizes, so a stored value is the value given |
 | Array | Dense; prototype `Array.prototype`; no own properties other than its elements and `length`; no symbol keys | Holes and extra properties would vanish from the text, so two different values would share it |
 | Record | Prototype `Object.prototype` or `null`; only own, enumerable, string-keyed data properties; keys follow the string rule; no key `__proto__` | A getter or a Proxy could answer differently on each read. `__proto__` sets the prototype when assigned |
-| Nesting | At most 64 arrays and records deep | Bounds recursion |
+| Nesting | At most 64 arrays and records deep, counted from the value's own root: the global value, a chunk, a command payload or origin, an event payload, and a `check` verdict are each a value | Bounds recursion. The engine's envelopes, which are the digest tags, the events list and event records, and the snapshot document, never count toward it, so a value that is accepted anywhere can be hashed, saved, and restored |
 | Tree | No array or record appears twice, so no value contains itself | A shared object would be walked once per path, which grows exponentially with depth, and a write through one place in the state would change another without marking it dirty. A cycle is reported at once, even one that branches |
 
 Nothing else is canonical: not `null` or `undefined`, bigints, symbols, or functions, and no other
@@ -93,8 +93,8 @@ Every failure is an `EngineError` with a `code` (`invalid_value` here, `tick_ove
 
 - Validation and copying report every issue they reach, in canonical order. A value rejected as a
   whole is one issue, and its contents are not checked: an object that is not a plain array or
-  record, a sparse array, an accessor, a cycle, nesting beyond 64, and an object reached a second
-  time, reported with the path of its first occurrence.
+  record, a sparse array, an accessor, a cycle, nesting beyond 64 levels of the value itself, and
+  an object reached a second time, reported with the path of its first occurrence.
 - An object that throws while being read (a revoked Proxy, or a trap that throws or breaks a
   Proxy invariant) is an issue at its path, so these operations throw nothing but `EngineError`;
   `copyCanonical` and `canonicalize` keep the first thrown value as the `cause`. The walk may have

@@ -1,26 +1,34 @@
 /**
  * The commit of a tick (ADR 0020, digests, failures, and cost). It hashes only what changed:
  *
- * 1. The written and created chunks, in canonical key order. Each is turned into canonical text,
- *    which fails fast at its first problem, then hashed into its term, and only then checked by
- *    validateChunk, so that a validator that changes the chunk leaves a stale term that audit
- *    finds. The chunk sum subtracts each old term and adds the new one.
+ * 1. The written and created chunks, in canonical key order. Each is turned into canonical text
+ *    on its own, which fails fast at its first problem, then hashed into its term, and only then
+ *    checked by validateChunk, so that a validator that changes the chunk leaves a stale term
+ *    that audit finds. The chunk sum subtracts each old term and adds the new one.
  * 2. The global value, the same way, when it was written.
  * 3. The kernel digest, the state root, the events digest digest(["events", events]), and the
- *    tick checksum digest(["tick", stateRoot, eventsDigest]).
+ *    tick checksum digest(["tick", stateRoot, eventsDigest]). The events list and the event
+ *    records are an envelope: a payload keeps its whole depth of 64 (ENVELOPE_DEPTH).
  *
  * Steps 1 and 2 report, in one system_fault, the first problem of each value that is not
  * canonical, since canonical text fails fast, and every issue the validators return, at
- * `/chunks/<key>/...` and `/global/...`. Created chunks join the lazy index in amortized O(1), so no step of the commit
- * depends on the number of chunks in the world.
+ * `/chunks/<key>/...` and `/global/...`. Created chunks join the lazy index in amortized O(1), so
+ * no step of the commit depends on the number of chunks in the world.
  */
-import { canonicalize } from "../canonical/encode.ts";
+import { canonicalizeEnvelope } from "../canonical/encode.ts";
 import { compareCodeUnits } from "../canonical/order.ts";
-import { type CanonicalValue, pointer } from "../canonical/value.ts";
+import { pointer } from "../canonical/value.ts";
 import { type Digest, Digester, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes, subtractLanes } from "../digest/lanes.ts";
 import { EngineError, IssueList } from "../errors.ts";
-import { composeRoot, kernelDigest, recomputeRoot, relocatePath } from "../world/checksum.ts";
+import {
+  chunkTermOfText,
+  composeRoot,
+  globalDigestOfText,
+  kernelDigest,
+  recomputeRoot,
+  textOrReport,
+} from "../world/checksum.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import { integrityError } from "../world/integrity.ts";
 import { runValidator } from "../world/validators.ts";
@@ -38,22 +46,6 @@ export type Commit = {
 /** What the commit of one value works with. */
 type Tools = { readonly digester: Digester; readonly issues: IssueList };
 
-/**
- * The canonical text of `tagged`, a domain tag and its parts, whose last part is the value at
- * `path`; undefined after reporting the value's first problem there.
- */
-function taggedText(tagged: readonly CanonicalValue[], path: string, issues: IssueList) {
-  try {
-    return canonicalize(tagged);
-  } catch (error) {
-    if (!EngineError.isEngineError(error)) throw error;
-    for (const issue of error.issues) {
-      issues.report(relocatePath(issue.path, tagged, path), issue.message, error.cause);
-    }
-    return undefined;
-  }
-}
-
 /** Commits the chunk `key` and returns the chunk sum with its new term. */
 function commitChunk(session: TickSession, key: ChunkKey, sum: Lanes, tools: Tools): Lanes {
   const { state } = session;
@@ -62,9 +54,9 @@ function commitChunk(session: TickSession, key: ChunkKey, sum: Lanes, tools: Too
   // Every changed key is a committed chunk or one created during the tick.
   if (value === undefined) return sum;
   const path = `/chunks${pointer([key])}`;
-  const text = taggedText(["chunk", key, value], path, tools.issues);
+  const text = textOrReport(value, path, tools.issues);
   if (text === undefined) return sum;
-  const term = tools.digester.textWords(text);
+  const term = chunkTermOfText(key, text, tools.digester);
   // Called without a receiver, so ruleset code cannot reach the captured ruleset through `this`.
   const { validateChunk } = state.ruleset;
   runValidator("validateChunk", path, () => validateChunk(key, value), tools.issues);
@@ -84,9 +76,9 @@ function commitGlobal(session: TickSession, { digester, issues }: Tools): Digest
   const { state } = session;
   const cached = state.digests.globalDigest;
   if (!session.globalDirty) return cached;
-  const text = taggedText(["global", state.global], "/global", issues);
+  const text = textOrReport(state.global, "/global", issues);
   if (text === undefined) return cached;
-  const fresh = hexOf(digester.textWords(text));
+  const fresh = globalDigestOfText(text, digester);
   const { validateGlobal } = state.ruleset;
   runValidator("validateGlobal", "/global", () => validateGlobal(state.global), issues);
   session.throwIfFaulted();
@@ -106,7 +98,7 @@ export function commit(session: TickSession): Commit {
   const kernel = kernelDigest(state.kernel, digester);
   const chunkCount = state.chunks.size;
   const stateRoot = composeRoot({ kernel, global, chunkSum, chunkCount }, digester);
-  const events = digester.digest(["events", session.events]);
+  const events = hexOf(digester.textWords(canonicalizeEnvelope(["events", session.events])));
   const checksum = digester.digest(["tick", stateRoot, events]);
   const { digests } = state;
   digests.globalDigest = global;
