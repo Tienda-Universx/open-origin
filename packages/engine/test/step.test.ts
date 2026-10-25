@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   type Command,
   canonicalize,
+  createWorld,
   digest,
   type EngineEvent,
   fullChecksum,
@@ -381,6 +382,38 @@ describe("the tick context", () => {
       ]),
     );
     expect(step(world, []).events[0]?.payload).toEqual({ list: [1] });
+  });
+
+  test("a system, a check, and an apply read the world's seconds per tick", () => {
+    const seen: [string, number][] = [];
+    const ruleset = stepRuleset(
+      [system("clock", (ctx) => seen.push(["run", ctx.simSecondsPerTick]))],
+      {
+        look: {
+          check: (view) => {
+            seen.push(["check", view.simSecondsPerTick]);
+            return undefined;
+          },
+          apply: (ctx) => {
+            seen.push(["apply", ctx.simSecondsPerTick]);
+            return undefined;
+          },
+        },
+      },
+    );
+    const world = createWorld({
+      seed: [1, 2],
+      simSecondsPerTick: 7,
+      global: { population: 0 },
+      chunks: {},
+      ruleset,
+    });
+    step(world, [command(1, 0, "look")]);
+    expect(seen).toEqual([
+      ["check", 7],
+      ["apply", 7],
+      ["run", 7],
+    ]);
   });
 });
 
