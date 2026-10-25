@@ -129,11 +129,14 @@ describe("walks", () => {
         done: 0,
       });
       const arrivals = cumulative(ms).map((total) => 2 + Math.ceil(total / (sps * 1000)));
-      for (const [index, arrival] of arrivals.entries()) {
+      for (const arrival of arrivals) {
+        // Before and at each arrival tick, exactly the steps due by then have arrived.
         runTo(world, arrival - 1);
-        expect(beingOf(world, 1).cell[0]).toBe(start[0] + index);
+        const before = arrivals.filter((due) => due <= arrival - 1).length;
+        expect(beingOf(world, 1).cell[0]).toBe(start[0] + before);
         runTo(world, arrival);
-        expect(beingOf(world, 1).cell[0]).toBeGreaterThanOrEqual(start[0] + index + 1);
+        const after = arrivals.filter((due) => due <= arrival).length;
+        expect(beingOf(world, 1).cell[0]).toBe(start[0] + after);
       }
       expect(beingOf(world, 1).cell).toEqual([start[0] + 6, start[1]]);
     }

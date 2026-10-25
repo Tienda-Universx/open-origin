@@ -17,6 +17,7 @@ import {
   type BeingsWorld,
   behavior,
   beingOf,
+  beingsOf,
   beingsWorld,
   brain,
   idler,
@@ -185,6 +186,21 @@ describe("beings.spawn", () => {
       depletion: [],
       due: 2,
     });
+  });
+
+  test("refuses a spawn that an inhabitant sends: only the admin plane creates beings", () => {
+    const world = beingsWorld({ controllers: { [SPECIES.id]: idler(600_000) } });
+    step(world, [spawn(1, { species: SPECIES.id, cell: [3, 3] })]);
+    const forged = {
+      ...spawn(2, { species: SPECIES.id, cell: [4, 4] }),
+      origin: { kind: "inhabitant", actor: 1 },
+    } as const;
+    const events = step(world, [forged]).events;
+    expect(events.filter((event) => event.type === "engine.command_rejected")).toMatchObject([
+      { payload: { reason: "admin_only" } },
+    ]);
+    expect(events.filter((event) => event.type === "being.spawned")).toEqual([]);
+    expect(beingsOf(world).map(({ id }) => id)).toEqual([1]);
   });
 
   test("fills omitted needs and traits, and keeps beings and occupancy sorted", () => {

@@ -331,7 +331,8 @@ One system, `beings`, runs three phases:
    tick, without a second decision in this phase. Then consumption, chunk crossings, `due`, `occupancy` with its daily prune, and
    events. At most one write of the global value per tick.
 
-Commands: `beings.spawn`, from an admin, with `{ species, cell, needs?, traits? }` and no draws.
+Commands: `beings.spawn`, from an admin, with `{ species, cell, needs?, traits? }` and no draws;
+from any other origin it is rejected with the reason `admin_only`.
 Events, one per behavior rather than per step, on the order of 50 per being and simulated day:
 `being.spawned`, `started`, `finished`, `ate`, `contested`, `exhausted`, `incapacitated`,
 `recovered`, `died`, `intention_rejected`. A sleep starts and finishes as every activity does, so
@@ -347,9 +348,9 @@ day lasts 100 ticks:
 
 - the ruleset's brain version, its refusal of every bad brain at once, and that it captured its
   brains; a species without a brain; and an occupancy index that lists a chunk that does not exist;
-- `beings.spawn`: the record it creates, in the chunk of its cell at negative coordinates, omitted
-  needs and traits, sorted beings and occupancy, every problem of a bad spawn, traits bounded by the
-  species, and a cell under liquid deeper than the species wades;
+- `beings.spawn`: refused from an inhabitant; the record it creates, in the chunk of its cell at
+  negative coordinates, omitted needs and traits, sorted beings and occupancy, every problem of a
+  bad spawn, traits bounded by the species, and a cell under liquid deeper than the species wades;
 - walks arriving at the tick their milliseconds give, across a chunk edge, at 12 and at 6 seconds
   per tick, and the chunk they left pruned from the occupancy index at the next day;
 - needs equal to an integer oracle whether a being is processed every tick or every 50, re-anchored

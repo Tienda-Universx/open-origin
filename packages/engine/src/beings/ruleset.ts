@@ -248,11 +248,16 @@ function spawnBlocked(view: ReadView<BeingsGlobal, BeingsChunk>, spawn: Spawn): 
     : undefined;
 }
 
-/** `check` of `beings.spawn`: a rejection for a malformed spawn or a cell the species cannot stand on. */
+/**
+ * `check` of `beings.spawn`: a rejection for a spawn that is not the admin's, a malformed one, or a
+ * cell the species cannot stand on.
+ */
 function checkSpawn(
   view: ReadView<BeingsGlobal, BeingsChunk>,
   command: Command,
 ): Rejection | undefined {
+  // Beings come from the admin plane only (AGENTS.md, rule 7); an inhabitant cannot create them.
+  if (command.origin.kind !== "admin") return { reason: "admin_only" };
   const issues = new IssueList();
   const spawn = readSpawn(view, command.payload, issues);
   if (spawn === undefined)
