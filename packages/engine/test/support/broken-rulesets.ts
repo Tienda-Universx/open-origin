@@ -69,6 +69,30 @@ export function keepsModuleCache(): SuiteRuleset {
   ]);
 }
 
+/**
+ * The first draw that any world made, kept in the module: every run in one process finds the draw
+ * of its first run, which depends on that run's world seed, while a fresh process starts empty.
+ */
+const firstDraw = new Map<string, number>();
+
+/**
+ * Writes into chunk 0,0 the first draw of this process, a cache keyed without the world seed: a
+ * world of another seed in this process gets the first seed's draw, and only a run of that world
+ * alone, in a fresh process, gets its own.
+ */
+export function keepsModuleCacheOfSeed(): SuiteRuleset {
+  return stepRuleset([
+    system(
+      "remembering",
+      (ctx) => {
+        if (!firstDraw.has("0,0")) firstDraw.set("0,0", ctx.random.u32("draws", 1));
+        writable(ctx, "0,0").first = firstDraw.get("0,0") ?? 0;
+      },
+      ["draws"],
+    ),
+  ]);
+}
+
 /** The same cache, kept by each ruleset object: only a resume with a fresh ruleset sees it. */
 export function keepsRulesetCache(): SuiteRuleset {
   const seen = new Map<string, number>();

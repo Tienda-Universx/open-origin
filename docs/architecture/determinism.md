@@ -871,7 +871,7 @@ the record of each tick: its checksum, events, changed chunks, and statistics, a
 | `audit` | A run under audit gives the same records, so the incremental root equals the full one at every tick | A write behind the barrier, at the tick it happens |
 | `resume` | At each cut, the snapshot of that tick, decoded with a fresh ruleset under audit, gives the same records from the next tick, and the same final snapshot text. The snapshots come from a run of their own, so an encoding that poisons its world changes no other run | Behavior that depends on insertion order, which a decoded world does not keep; state kept in the ruleset object; a write behind the barrier, which encoding refuses, and which audit finds at its tick even when only a resumed world makes it |
 | `child-resume` | The same, in a fresh child process for each child cut, also under audit | State kept at module level, which an in-process resume shares with the first run |
-| `interleave` | The world, a world with the second seed, and a replica of the first, sharing one ruleset object and stepped in a seeded random interleaving, give what each gives alone | State shared between worlds, through a module or the ruleset object |
+| `interleave` | The world, a world with the second seed, and a replica of the first, sharing one ruleset object and stepped in a seeded random interleaving, give what each gives alone: the first seed's worlds the reference run, and the second seed's world its run alone in a fresh child process | State shared between worlds, through the ruleset object or a module. A module cache keyed without the seed agrees with itself within one process, whose runs all start from what the first seed left in it, so only a process that has seen no other world can give the second seed's own run |
 
 It returns a report and asserts nothing, so the negative controls can prove that it fails. Each
 failure names its property, the first tick at which it failed, and, for a resume, the cut (for an
@@ -909,20 +909,25 @@ expect(report.failures).toEqual([]);
 
 ### The child process
 
-The suite starts one child process per child cut, `bun resume-child.ts` with `process.execPath`,
-in the repository root, so `bunfig.toml` keeps telemetry off. Its input is one JSON document on
-stdin: the ruleset's module and name, the snapshot text, the tick to continue from, and the whole
-script. Its output is one JSON document on stdout: the record of every tick it ran, and its final
-snapshot or what encoding it threw. It decodes the snapshot under audit, as the in-process resume
-does. Nothing touches the disk, so there is nothing to clean up.
+The suite starts one child process per child cut, and one for the interleaving's run of the second
+seed alone: `bun resume-child.ts` with `process.execPath`, in the repository root, so
+`bunfig.toml` keeps telemetry off. Its input is one JSON document on stdin: the ruleset's module
+and name, the snapshot text, the tick to continue from, the whole script, and whether to audit.
+Its output is one JSON document on stdout: the record of every tick it ran, and its final snapshot
+or what encoding it threw. A resume decodes its snapshot under audit, as the in-process resume
+does. The second seed's run starts from that world's snapshot at tick 0, built before any child
+starts, and decodes it without audit, as the interleaving's worlds run; a world decoded at tick 0
+runs as the one its factory created, as every resume from cut 0 shows. Nothing touches the disk,
+so there is nothing to clean up.
 
 The processes start together and run while the parent does its in-process resumes and the
 interleaving. Those are synchronous, so meanwhile the parent neither feeds a child's stdin nor
 drains its stdout; each child's time limit therefore starts only when the parent waits for it.
 Past that limit, 30 s by default (`CHILD_TIMEOUT_MS`, or `childTimeoutMs`), the process is killed
 with SIGKILL and reaped, and if an in-process check throws, every child is killed and reaped before
-the error propagates, so no process outlives the suite. Each of these is a `child-resume` failure
-at its cut that names the problem:
+the error propagates, so no process outlives the suite. Each of these is a failure that names the
+problem: a `child-resume` failure at its cut, or, for the second seed's run, an `interleave`
+failure of world 1 at tick 0:
 
 - a process that ran past its limit, with the end of its stderr;
 - a process that exited with an error, with its exit code, the signal that killed it if any, and
@@ -942,6 +947,7 @@ the suite reports for it:
 | `dependsOnInsertionOrder` | Remembers the first key of a record by `Object.keys` | `resume` and `child-resume` at the tick after a cut with two keys or more |
 | `keepsModuleCache` | A module-level `const` `Map` of the tick each chunk was first written | `child-resume` only, at the tick after the cut |
 | `keepsRulesetCache` | The same cache, in the ruleset object | `resume` at the tick after the cut |
+| `keepsModuleCacheOfSeed` | A module-level `const` `Map` of the first draw of the process, keyed without the world seed | `interleave` only, for the second seed's world at tick 1 |
 | `returnsPromise` | A system that returns a `Promise` | `fault` at tick 1 |
 | `sharesCounter` | A counter shared by every run in the process | `repeat`, `audit`, `resume`, and `interleave` at their first tick |
 | `keepsLastTick` | The tick its ruleset object last ran, kept in the object | `interleave` only, at the first tick at which each world finds another world's tick |
@@ -949,8 +955,8 @@ the suite reports for it:
 
 Other rulesets in `broken-rulesets.ts` count as tally does in the parent, but make the child
 process exit with an error, hang, or write nothing, text that is not JSON, or JSON of another
-shape; a test asserts the `child-resume` failure each gives, and that a child that hangs is killed
-and reaped.
+shape; a test asserts the `child-resume` failure and the `interleave` failure of the second seed's
+run that each gives, and that a child that hangs is killed and reaped.
 
 Tally, the positive control, passes every check on the golden run and on 200 ticks of generated
 commands. A test of the comparison itself shows that a divergence that heals is still found, at its

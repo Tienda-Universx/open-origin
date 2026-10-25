@@ -48,6 +48,8 @@ export type ChildInput = {
   readonly snapshot: string;
   readonly from: number;
   readonly script: Script;
+  /** Whether the child decodes the snapshot under audit. */
+  readonly audit: boolean;
 };
 
 /** The record of the tick that `result` describes. */
