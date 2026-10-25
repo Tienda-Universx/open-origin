@@ -10,6 +10,11 @@
  * declares no top-level `let` or `var`. Biome overrides cannot express these: an override replaces
  * a rule's options instead of merging them (ADR 0020).
  *
+ * packages/agents/src keeps the same compiler gate under its own import rule (ADR 0023): it imports
+ * only relative paths that stay inside its src and exactly the engine's public entry,
+ * `@open-origin/engine`, and its modules keep no state, so a brain stays a pure function of its
+ * senses.
+ *
  * The scan is lexical. Comments are blanked first; string literals are kept, so a string that
  * reads like an import is reported too, which errs on the side of rejecting. A regular expression
  * literal that contains a quote or a comment opener can confuse the comment blanking for the rest
@@ -24,12 +29,20 @@ export type PurityIssue = { file: string; line: number; message: string };
 /** Repository-relative directory of the engine core. */
 export const ENGINE_SRC = "packages/engine/src";
 
+/** Repository-relative directory of the brain's sources, which import only the engine. */
+export const AGENTS_SRC = "packages/agents/src";
+
 /** TypeScript sources: `.ts`, `.mts`, `.cts`, `.tsx`, and their declaration files. */
 const TYPESCRIPT_FILE = /\.[cm]?tsx?$/;
 
 /** Whether `path` is a TypeScript file under packages/engine/src. */
 export function isEngineSource(path: string): boolean {
   return path.startsWith(`${ENGINE_SRC}/`) && TYPESCRIPT_FILE.test(path);
+}
+
+/** Whether `path` is a TypeScript file under packages/agents/src. */
+export function isAgentsSource(path: string): boolean {
+  return path.startsWith(`${AGENTS_SRC}/`) && TYPESCRIPT_FILE.test(path);
 }
 
 /** A string literal (group 1 or 2 holds its text) that stays on one line, like a specifier. */
@@ -178,24 +191,81 @@ function contractsProblem(file: string, statement: string, resolved: string): st
   return "world/contracts.ts holds only types: import it with `import type` or re-export it with `export type`";
 }
 
+/** A relative specifier: `.`, `..`, or a path that starts with `./` or `../`. */
+const RELATIVE = /^\.\.?(?:\/|$)/;
+
+/** `specifier`, imported from `file`, as a repository-relative path. */
+function resolveFrom(file: string, specifier: string): string {
+  return posix.normalize(posix.join(posix.dirname(file), specifier));
+}
+
 /**
- * Why `statement`, which imports `specifier` from `file`, is not allowed; undefined when it is.
- * `statement` is the import's own text, from its keyword, which says whether it is type-only.
+ * Why `statement`, which imports `specifier` from `file`, is not allowed in the engine; undefined
+ * when it is. `statement` is the import's own text, from its keyword, which says whether it is
+ * type-only.
  */
-function specifierProblem(file: string, specifier: string, statement: string): string | undefined {
-  if (!/^\.\.?(?:\/|$)/.test(specifier)) {
+function engineSpecifierProblem(
+  file: string,
+  specifier: string,
+  statement: string,
+): string | undefined {
+  if (!RELATIVE.test(specifier)) {
     return `"${specifier}" is not a relative import: the engine depends on nothing`;
   }
-  const resolved = posix.normalize(posix.join(posix.dirname(file), specifier));
+  const resolved = resolveFrom(file, specifier);
   if (!isUnder(resolved, ENGINE_SRC)) return `"${specifier}" resolves outside ${ENGINE_SRC}`;
   return layerProblem(file, specifier, resolved) ?? contractsProblem(file, statement, resolved);
 }
 
-/** Every literal specifier the patterns capture, checked against the engine's import rule. */
-function specifierFindings(file: string, code: string): Finding[] {
+/** The one package the agents may import: the engine, through its public entry (ADR 0023). */
+const ENGINE_ENTRY = "@open-origin/engine";
+
+/** Why `file` may not import `specifier` under the agents' import rule; undefined when it may. */
+function agentsSpecifierProblem(file: string, specifier: string): string | undefined {
+  if (specifier === ENGINE_ENTRY) return undefined;
+  if (!RELATIVE.test(specifier)) {
+    return `"${specifier}" is not a relative import or ${ENGINE_ENTRY}: packages/agents imports only the engine's public entry (ADR 0023)`;
+  }
+  if (!isUnder(resolveFrom(file, specifier), AGENTS_SRC)) {
+    return `"${specifier}" resolves outside ${AGENTS_SRC}`;
+  }
+  return undefined;
+}
+
+/**
+ * How one package's sources are scanned: the names its diagnostics give its code and its type
+ * gate, its import rule, and its stateless layers.
+ */
+type SourcePolicy = {
+  /** The package as diagnostics name its code and its tsconfig: "engine" or "agents". */
+  readonly code: string;
+  /** The package's type gate, as diagnostics name it. */
+  readonly typeGate: string;
+  /** Why `statement`, which imports `specifier` from `file`, is not allowed; undefined if it is. */
+  readonly specifierProblem: (
+    file: string,
+    specifier: string,
+    statement: string,
+  ) => string | undefined;
+};
+
+const ENGINE_POLICY: SourcePolicy = {
+  code: "engine",
+  typeGate: "the engine's type gate",
+  specifierProblem: engineSpecifierProblem,
+};
+
+const AGENTS_POLICY: SourcePolicy = {
+  code: "agents",
+  typeGate: "the type gate of packages/agents",
+  specifierProblem: agentsSpecifierProblem,
+};
+
+/** Every literal specifier the patterns capture, checked against the package's import rule. */
+function specifierFindings(policy: SourcePolicy, file: string, code: string): Finding[] {
   return [FROM_CLAUSE, SIDE_EFFECT_IMPORT, IMPORT_EQUALS].flatMap((pattern) =>
     [...code.matchAll(pattern)].flatMap((match) => {
-      const message = specifierProblem(file, match[1] ?? match[2] ?? "", match[0]);
+      const message = policy.specifierProblem(file, match[1] ?? match[2] ?? "", match[0]);
       return message === undefined ? [] : [{ index: match.index, message }];
     }),
   );
@@ -205,7 +275,7 @@ function specifierFindings(file: string, code: string): Finding[] {
 const TYPE_QUERY = /\btypeof\s*$/;
 
 /** Dynamic imports: a literal specifier follows the import rule; a computed one is rejected. */
-function dynamicImportFindings(file: string, code: string): Finding[] {
+function dynamicImportFindings(policy: SourcePolicy, file: string, code: string): Finding[] {
   return [...code.matchAll(DYNAMIC_IMPORT)].flatMap((match) => {
     const argument = LITERAL_ARGUMENT.exec(code.slice(match.index + match[0].length));
     // A type-level `typeof import(…)` counts as a type-only statement for the contracts rule.
@@ -213,26 +283,26 @@ function dynamicImportFindings(file: string, code: string): Finding[] {
     const message =
       argument === null
         ? "a dynamic import with a computed specifier cannot be checked"
-        : specifierProblem(file, argument[1] ?? argument[2] ?? "", statement);
+        : policy.specifierProblem(file, argument[1] ?? argument[2] ?? "", statement);
     return message === undefined ? [] : [{ index: match.index, message }];
   });
 }
 
 /**
- * Declarations that no engine code backs: reference directives (read from the raw source, since
- * they are comments) and every `declare` declaration, which can give a host global a type even
- * inside a module.
+ * Declarations that no code of the package backs: reference directives (read from the raw source,
+ * since they are comments) and every `declare` declaration, which can give a host global a type
+ * even inside a module.
  */
-function declarationFindings(source: string, code: string): Finding[] {
+function declarationFindings(policy: SourcePolicy, source: string, code: string): Finding[] {
   const directives = [...source.matchAll(DIRECTIVE)].map((match) => ({
     index: match.index,
-    message: "`/// <reference>` directives add declarations the engine tsconfig excludes",
+    message: `\`/// <reference>\` directives add declarations the ${policy.code} tsconfig excludes`,
   }));
   const declared = [...code.matchAll(DECLARE)].map((match) => ({
     index: match.index,
     message: DECLARATION_KEYWORDS.has(match[1] ?? "")
-      ? `\`declare ${match[1]}\` adds ambient declarations the engine tsconfig excludes`
-      : "a `declare` field declares a value that no engine code provides",
+      ? `\`declare ${match[1]}\` adds ambient declarations the ${policy.code} tsconfig excludes`
+      : `a \`declare\` field declares a value that no ${policy.code} code provides`,
   }));
   return [...directives, ...declared];
 }
@@ -242,24 +312,26 @@ function declarationFindings(source: string, code: string): Finding[] {
  * biome.json override) and TypeScript's directives that skip type errors. TypeScript matches its
  * directives as prefixes, so they need no word boundary.
  */
-const GATE_TOKENS = [
-  {
-    pattern: /\bbiome-ignore(?:-all|-start|-end)?\b/g,
-    reason: "can silently disable a purity rule: add a reviewed override in biome.json instead",
-  },
-  {
-    pattern: /@ts-(?:nocheck|expect-error|ignore)/g,
-    reason: "can silently disable the engine's type gate: fix the type error instead",
-  },
-];
+const BIOME_SUPPRESSION = /\bbiome-ignore(?:-all|-start|-end)?\b/g;
+const TS_DIRECTIVE = /@ts-(?:nocheck|expect-error|ignore)/g;
 
 /**
  * Every gate-switching directive anywhere in the source, strings included. A comment inside a
  * template substitution reads as template text to this lexical scan, so restricting the search to
- * comments would miss it; engine code has no reason to spell these tokens in a string.
+ * comments would miss it; the scanned code has no reason to spell these tokens in a string.
  */
-function gateTokenFindings(source: string): Finding[] {
-  return GATE_TOKENS.flatMap(({ pattern, reason }) =>
+function gateTokenFindings(policy: SourcePolicy, source: string): Finding[] {
+  const gates = [
+    {
+      pattern: BIOME_SUPPRESSION,
+      reason: "can silently disable a purity rule: add a reviewed override in biome.json instead",
+    },
+    {
+      pattern: TS_DIRECTIVE,
+      reason: `can silently disable ${policy.typeGate}: fix the type error instead`,
+    },
+  ];
+  return gates.flatMap(({ pattern, reason }) =>
     [...source.matchAll(pattern)].map((match) => ({
       index: match.index,
       message: `\`${match[0]}\` ${reason}`,
@@ -297,7 +369,9 @@ type StatelessLayer = { directory: string; reason: string; constants: boolean };
  * The layers whose modules keep no state between calls. Worldgen's rule covers `let` and `var`
  * (ADR 0021); its four constant tables are records and arrays that no code writes, reviewed rather
  * than scanned, because freezing an array slows every read of it (ADR 0020). The beings layer also
- * rejects mutable constants: a ruleset is shared by every world that uses it (ADR 0023).
+ * rejects mutable constants: a ruleset is shared by every world that uses it (ADR 0023). So does
+ * the agents package: a brain is a pure function of its senses, shared by every being of its
+ * species in every world (ADR 0023).
  */
 const STATELESS_LAYERS: StatelessLayer[] = [
   {
@@ -309,6 +383,12 @@ const STATELESS_LAYERS: StatelessLayer[] = [
     directory: BEINGS,
     reason:
       "beings modules keep no state between calls, so the worlds that share a ruleset stay independent (ADR 0023)",
+    constants: true,
+  },
+  {
+    directory: AGENTS_SRC,
+    reason:
+      "agents modules keep no state between calls, so a brain stays a pure function of its senses (ADR 0023)",
     constants: true,
   },
 ];
@@ -347,8 +427,8 @@ function moduleStateFindings({ reason, constants }: StatelessLayer, code: string
   return [...declarations, ...values];
 }
 
-/** Every purity issue in one engine source file, in line order. */
-export function checkEngineSource({ path, content }: SourceFile): PurityIssue[] {
+/** Every purity issue in one source file under `policy`, in line order. */
+function checkSource(policy: SourcePolicy, { path, content }: SourceFile): PurityIssue[] {
   // `.d.ts`, `.d.mts`, `.d.cts`, and declaration files for other extensions (`x.d.json.ts`).
   if (/\.d\.(?:[^./]+\.)?[cm]?ts$/.test(path)) {
     return [
@@ -361,14 +441,27 @@ export function checkEngineSource({ path, content }: SourceFile): PurityIssue[] 
   }
   const code = blankComments(content);
   return [
-    ...declarationFindings(content, code),
-    ...gateTokenFindings(content),
-    ...specifierFindings(path, code),
-    ...dynamicImportFindings(path, code),
+    ...declarationFindings(policy, content, code),
+    ...gateTokenFindings(policy, content),
+    ...specifierFindings(policy, path, code),
+    ...dynamicImportFindings(policy, path, code),
     ...STATELESS_LAYERS.filter(({ directory }) => isUnder(path, directory)).flatMap((layer) =>
       moduleStateFindings(layer, code),
     ),
   ]
     .sort((a, b) => a.index - b.index)
     .map(({ index, message }) => ({ file: path, line: lineAt(content, index), message }));
+}
+
+/** Every purity issue in one engine source file, in line order. */
+export function checkEngineSource(file: SourceFile): PurityIssue[] {
+  return checkSource(ENGINE_POLICY, file);
+}
+
+/**
+ * Every purity issue in one agents source file, in line order: the engine's gate rules, the agents'
+ * own import rule, and no module state (ADR 0023).
+ */
+export function checkAgentsSource(file: SourceFile): PurityIssue[] {
+  return checkSource(AGENTS_POLICY, file);
 }

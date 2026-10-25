@@ -1,11 +1,14 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { ENGINE_SRC } from "./engine-purity.ts";
+import { AGENTS_SRC, ENGINE_SRC } from "./engine-purity.ts";
+import { REPO_ROOT } from "./files.ts";
 import { createLintHarness, type DeniedGlobals, pluginPaths } from "./lint-harness.ts";
 
 /**
  * Proves that each engine purity control fires under packages/engine/src and only there, that each
  * reviewed exception covers exactly its file and its rule, and that the engine's compiler settings
- * reject host globals. Every fixture is checked with the repository's own configuration.
+ * reject host globals. It also proves that packages/agents/src shares every purity rule of the
+ * engine, with no exception, and has its own import rule (ADR 0023). Every fixture is checked with
+ * the repository's own configuration.
  */
 
 // One linter run checks many fixtures; a cold CI runner can exceed Bun's 5-second default.
@@ -15,6 +18,7 @@ const { biomeConfig, cleanup, run, scratch } = await createLintHarness();
 afterAll(cleanup);
 
 const ENGINE_TEST = "packages/engine/test";
+const AGENTS_TEST = "packages/agents/test";
 
 /** One Biome diagnostic: the scratch-relative fixture, its rule (or `plugin`), and its text. */
 type Diagnostic = { file: string; category: string; text: string };
@@ -96,8 +100,11 @@ const LOCALE_MESSAGE = "Locale-sensitive methods depend on the host";
 const CONSTRUCTOR_MESSAGE = "`.constructor` reaches the `Function` constructor";
 const RESTRICTED_IMPORT = ["lint/style/noRestrictedImports"];
 
-/** Fixture file names and the diagnostics each one must raise under packages/engine/src. */
-const PURITY_CASES: Record<string, PurityCase> = {
+/**
+ * Fixture file names and the diagnostics each one must raise under packages/engine/src and
+ * packages/agents/src alike: every purity rule but the import rule, which each package has its own.
+ */
+const SHARED_CASES: Record<string, PurityCase> = {
   ...Object.fromEntries(
     DENIED_GLOBALS.map((name) => [
       `global-${name}.ts`,
@@ -210,6 +217,10 @@ const PURITY_CASES: Record<string, PurityCase> = {
     rules: ["lint/correctness/noProcessGlobal"],
     message: "Usage of the `process` global is discouraged.",
   },
+};
+
+/** Host modules: both packages reject them through noRestrictedImports with the same message. */
+const HOST_IMPORT_CASES: Record<string, PurityCase> = {
   "node-fs.ts": {
     source: 'import { readFileSync } from "node:fs";\nexport const read = readFileSync;\n',
     rules: ["lint/correctness/noNodejsModules", ...RESTRICTED_IMPORT],
@@ -225,17 +236,71 @@ const PURITY_CASES: Record<string, PurityCase> = {
     rules: RESTRICTED_IMPORT,
     message: "`bun` and `bun:*` are host APIs",
   },
+};
+
+/** Imports of packages: one source, rejected by each package's own import rule. */
+const PACKAGE_IMPORTS = [
+  'import { parse } from "some-package";',
+  'export { helper } from "@scope/tools";',
+  "export const read = parse;\n",
+].join("\n");
+
+/** Fixture file names and the diagnostics each one must raise under packages/engine/src. */
+const PURITY_CASES: Record<string, PurityCase> = {
+  ...SHARED_CASES,
+  ...HOST_IMPORT_CASES,
   "package.ts": {
-    source: [
-      'import { parse } from "some-package";',
-      'export { helper } from "@scope/tools";',
-      "export const read = parse;\n",
-    ].join("\n"),
+    source: PACKAGE_IMPORTS,
     rules: RESTRICTED_IMPORT,
     message: "The engine depends on nothing",
     matches: 2,
   },
 };
+
+/** Starts the diagnostic of the agents' import rule, which no engine diagnostic contains. */
+const AGENTS_IMPORT_MESSAGE = "packages/agents imports only relative paths";
+
+/**
+ * The agents' import rule (ADR 0023): only relative paths and exactly `@open-origin/engine`.
+ * A deep path into the engine, a lookalike of its name, the agents' own name, and the engine
+ * itself are rejected; so is every other package.
+ */
+const AGENTS_IMPORT_CASES: Record<string, PurityCase> = {
+  ...HOST_IMPORT_CASES,
+  "package.ts": {
+    source: PACKAGE_IMPORTS,
+    rules: RESTRICTED_IMPORT,
+    message: AGENTS_IMPORT_MESSAGE,
+    matches: 2,
+  },
+  "engine-deep.ts": {
+    source: [
+      'import { floorDiv } from "@open-origin/engine/src/int.ts";',
+      'export type { Seed } from "@open-origin/engine/src/rng/mix32.ts";',
+      'import "@open-origin/engine/";',
+      'import manifest from "@open-origin/engine/package.json";',
+      "export const parts = [floorDiv, manifest];\n",
+    ].join("\n"),
+    rules: RESTRICTED_IMPORT,
+    message: AGENTS_IMPORT_MESSAGE,
+    matches: 4,
+  },
+  "engine-lookalike.ts": {
+    source: [
+      'import { a } from "@open-origin/engines";',
+      'import { b } from "@open-origin/engine-tools";',
+      'import { c } from "@open-origin/agents";',
+      'import { d } from "engine";',
+      "export const parts = [a, b, c, d];\n",
+    ].join("\n"),
+    rules: RESTRICTED_IMPORT,
+    message: AGENTS_IMPORT_MESSAGE,
+    matches: 4,
+  },
+};
+
+/** Fixture file names and the diagnostics each one must raise under packages/agents/src. */
+const AGENTS_CASES: Record<string, PurityCase> = { ...SHARED_CASES, ...AGENTS_IMPORT_CASES };
 
 /** Recommended everywhere, so only the src run can prove the engine override turns it on. */
 const EVAL_CASE: Record<string, PurityCase> = {
@@ -262,14 +327,86 @@ function lintSummary(files: Record<string, string>): LintSummary {
   return { exitCode, checked, diagnostics: biomeDiagnostics(output) };
 }
 
-describe("engine purity controls (packages/engine/src)", () => {
+/**
+ * Code that keeps every purity rule: integers, ordered loops, a frozen record, a class, and the
+ * names of plugin globals where they are not the globals. Each package adds its own imports.
+ */
+const PURE_STYLE = [
+  "export function sum(values: readonly number[]): number {",
+  "  let total = 0;",
+  "  for (const value of values) {",
+  "    total += double(value);",
+  "  }",
+  "  return total;",
+  "}",
+  "",
+  // A string that contains `**=` is not the operator.
+  'export const label = { text: "" };',
+  'label.text = "**=";',
+  "",
+  // Calling `Object` members that do not enumerate keys, and declaring a constructor, are fine.
+  "export const frozen = Object.freeze({ total: 0 });",
+  // Names of plugin globals as property names, as keys, and in types are not the globals;
+  // nor are identifiers that only start or end like them.
+  "export const holder = { Math: 1, JSON: 2, Map: 3 };",
+  "export const fields = holder.Math + holder.JSON + holder.Map;",
+  "export type Types = [Math, JSON, Map<string, number>, typeof Math, typeof JSON.parse];",
+  "export interface Named {\n  Math: number;\n  Map(): void;\n}",
+  "export const MathLike = 1;",
+  "export const isJSON = MathLike > 0;",
+  "export class Counter {",
+  "  readonly start: number;",
+  "  constructor(start: number) {",
+  "    this.start = start;",
+  "  }",
+  "}\n",
+];
+
+/** A package whose sources keep the purity rules: where they live and what they may import. */
+type PurePackage = {
+  name: string;
+  src: string;
+  /** A directory of the same package outside src, where none of these rules applies. */
+  outside: string;
+  cases: Record<string, PurityCase>;
+  /** The imports of a module that keeps every rule; they bring in `double`. */
+  imports: string[];
+};
+
+const PURE_PACKAGES: PurePackage[] = [
+  {
+    name: "engine",
+    src: ENGINE_SRC,
+    outside: ENGINE_TEST,
+    cases: PURITY_CASES,
+    imports: ['import { double } from "./integers/double.ts";'],
+  },
+  {
+    name: "agents",
+    src: AGENTS_SRC,
+    outside: AGENTS_TEST,
+    cases: AGENTS_CASES,
+    imports: [
+      'import { EngineError, type Issue } from "@open-origin/engine";',
+      'import type { Tick } from "@open-origin/engine";',
+      'import { double } from "./integers/double.ts";',
+      'export { ENGINE_VERSION } from "@open-origin/engine";',
+      'export type Engine = typeof import("@open-origin/engine");',
+      "export const fail = (issues: Issue[], tick: Tick) =>",
+      '  new EngineError("invalid_value", issues, { issueCount: tick });',
+    ],
+  },
+];
+
+describe.each(PURE_PACKAGES)("$name purity controls ($src)", (pure) => {
+  const { name, src, outside, cases, imports } = pure;
   // One Biome run lints every fixture, to bound CI time.
   let lintedSources: { exitCode: number | null; diagnostics: Diagnostic[] } | undefined;
   function srcRun(): { exitCode: number | null; diagnostics: Diagnostic[] } {
     if (lintedSources === undefined) {
       const { exitCode, output } = run("biome", {
-        ...sourcesIn(ENGINE_SRC, PURITY_CASES),
-        ...sourcesIn(ENGINE_SRC, EVAL_CASE),
+        ...sourcesIn(src, cases),
+        ...sourcesIn(src, EVAL_CASE),
       });
       lintedSources = { exitCode, diagnostics: biomeDiagnostics(output) };
     }
@@ -282,11 +419,11 @@ describe("engine purity controls (packages/engine/src)", () => {
     expect(diagnostics.filter((diagnostic) => !diagnostic.text.includes("\n\n  × "))).toEqual([]);
   });
 
-  test.each(Object.entries({ ...PURITY_CASES, ...EVAL_CASE }))(
+  test.each(Object.entries({ ...cases, ...EVAL_CASE }))(
     "Biome rejects %s under src",
-    (name, expected) => {
+    (fixture, expected) => {
       const found = srcRun().diagnostics.filter(
-        (diagnostic) => diagnostic.file === `${ENGINE_SRC}/${name}`,
+        (diagnostic) => diagnostic.file === `${src}/${fixture}`,
       );
       expect([...new Set(found.map((diagnostic) => diagnostic.category))].sort()).toEqual(
         expected.rules,
@@ -300,7 +437,7 @@ describe("engine purity controls (packages/engine/src)", () => {
   test("a computed key, quoted or in backticks, does not hide a member from the plugin", () => {
     // Biome's useLiteralKeys only informs about these keys, so the plugin is the gate.
     const { exitCode, output } = run("biome", {
-      [`${ENGINE_SRC}/computed-keys.ts`]: [
+      [`${src}/computed-keys.ts`]: [
         'export const keys = Object["keys"]({});',
         "export const values = Object[`values`]({});",
         "export const names = Object['getOwnPropertyNames']({});",
@@ -318,8 +455,8 @@ describe("engine purity controls (packages/engine/src)", () => {
     expect(plugin).toHaveLength(7);
   });
 
-  test("the same sources pass outside src: the controls are scoped to the engine core", () => {
-    const files = sourcesIn(ENGINE_TEST, PURITY_CASES);
+  test(`the same sources pass outside src: the controls are scoped to the ${name} sources`, () => {
+    const files = sourcesIn(outside, cases);
     expect(lintSummary(files)).toEqual({
       exitCode: 0,
       checked: Object.keys(files).length,
@@ -327,41 +464,10 @@ describe("engine purity controls (packages/engine/src)", () => {
     });
   });
 
-  test("engine-style code passes under src: relative imports, integers, ordered loops", () => {
+  test(`${name}-style code passes under src: its imports, integers, ordered loops`, () => {
     const summary = lintSummary({
-      [`${ENGINE_SRC}/sum.ts`]: [
-        'import { double } from "./integers/double.ts";',
-        "",
-        "export function sum(values: readonly number[]): number {",
-        "  let total = 0;",
-        "  for (const value of values) {",
-        "    total += double(value);",
-        "  }",
-        "  return total;",
-        "}",
-        "",
-        // A string that contains `**=` is not the operator.
-        'export const label = { text: "" };',
-        'label.text = "**=";',
-        "",
-        // Calling `Object` members that do not enumerate keys, and declaring a constructor, are fine.
-        "export const frozen = Object.freeze({ total: 0 });",
-        // Names of plugin globals as property names, as keys, and in types are not the globals;
-        // nor are identifiers that only start or end like them.
-        "export const holder = { Math: 1, JSON: 2, Map: 3 };",
-        "export const fields = holder.Math + holder.JSON + holder.Map;",
-        "export type Types = [Math, JSON, Map<string, number>, typeof Math, typeof JSON.parse];",
-        "export interface Named {\n  Math: number;\n  Map(): void;\n}",
-        "export const MathLike = 1;",
-        "export const isJSON = MathLike > 0;",
-        "export class Counter {",
-        "  readonly start: number;",
-        "  constructor(start: number) {",
-        "    this.start = start;",
-        "  }",
-        "}\n",
-      ].join("\n"),
-      [`${ENGINE_SRC}/integers/double.ts`]: "export const double = (x: number): number => x * 2;\n",
+      [`${src}/sum.ts`]: [...imports, "", ...PURE_STYLE].join("\n"),
+      [`${src}/integers/double.ts`]: "export const double = (x: number): number => x * 2;\n",
     });
     expect(summary).toEqual({ exitCode: 0, checked: 2, diagnostics: [] });
   });
@@ -571,8 +677,11 @@ describe("reviewed exceptions in packages/engine/src", () => {
     expect(checked).toBe(EXCEPTIONS.length + NEAR_MISSES.length);
   });
 
-  test("one override denies globals, for all of src, and it leaves the plugin globals out", () => {
-    expect(GLOBAL_OVERRIDES.map((override) => override.includes)).toEqual([[`${ENGINE_SRC}/**`]]);
+  test("one override denies globals, for all of both src, and it leaves the plugin globals out", () => {
+    // An override replaces a rule's options, so a second list could shadow the first in a file.
+    expect(GLOBAL_OVERRIDES.map((override) => [...(override.includes ?? [])].sort())).toEqual([
+      [`${AGENTS_SRC}/**`, `${ENGINE_SRC}/**`],
+    ]);
     const denied = Object.keys(ENGINE_DENIED);
     expect([...denied].sort()).toEqual([...DENIED_GLOBALS].sort());
     expect(PLUGIN_GLOBALS.filter(({ name }) => denied.includes(name))).toEqual([]);
@@ -602,6 +711,103 @@ describe("reviewed exceptions in packages/engine/src", () => {
     // global-math.grit, not int-math.grit, governs the paths that only look like int.ts.
     const allRejected = { ...expectedCounts(EXEMPTABLE, ""), [INT_MATH_PROBE.name]: 0 };
     expect(counts).toEqual(Object.fromEntries(NEAR_MISSES.map((path) => [path, allRejected])));
+  });
+});
+
+/** An override as this file reads it: where it applies, its plugins, and its import rule. */
+type ControlOverride = {
+  includes?: string[];
+  plugins?: (string | { path: string })[];
+  linter?: { rules?: { style?: { noRestrictedImports?: unknown } } };
+};
+
+const CONTROL_OVERRIDES = (
+  (await Bun.file(`${REPO_ROOT}biome.json`).json()) as { overrides?: ControlOverride[] }
+).overrides;
+
+/** The engine's purity plugins that apply to all of a src directory, with or without exception. */
+const SHARED_PLUGINS = [
+  "./packages/engine/lint/purity.grit",
+  "./packages/engine/lint/key-order.grit",
+  "./packages/engine/lint/global-json.grit",
+  "./packages/engine/lint/global-math.grit",
+  "./packages/engine/lint/global-map.grit",
+];
+
+/**
+ * packages/agents/src shares the engine's rules with no reviewed exception (ADR 0023): no Math,
+ * Map, JSON, or key enumeration at all, and int-math.grit does not apply there. Each path that
+ * names an engine exception file breaks every rule, under the agents' own import rule.
+ */
+describe("packages/agents/src has no reviewed exception", () => {
+  const AGENTS_EVERY_RULE: Probe[] = [
+    ...EVERY_RULE.filter((probe) => probe.name !== "package imports"),
+    {
+      name: "package imports",
+      source: 'import { parse } from "some-package";\nexport const parsePackage = parse;',
+      message: AGENTS_IMPORT_MESSAGE,
+    },
+  ];
+  const MIRRORS = [
+    "canonical/order.ts",
+    "canonical/encode.ts",
+    "canonical/value.ts",
+    "step/context.ts",
+    "int.ts",
+  ].map((path) => `${AGENTS_SRC}/${path}`);
+
+  let linted: LintSummary | undefined;
+  function mirrorRun(): LintSummary {
+    if (linted === undefined) {
+      const everyRule = `${[...new Set(AGENTS_EVERY_RULE.map((probe) => probe.source))].join("\n")}\n`;
+      linted = lintSummary(Object.fromEntries(MIRRORS.map((path) => [path, everyRule])));
+    }
+    return linted;
+  }
+
+  test("Biome lints every mirror of an engine exception", () => {
+    const { exitCode, checked } = mirrorRun();
+    expect(exitCode).toBe(1);
+    expect(checked).toBe(MIRRORS.length);
+  });
+
+  test.each(MIRRORS)("%s breaks every rule, and int-math.grit does not apply", (file) => {
+    const found = mirrorRun().diagnostics.filter((diagnostic) => diagnostic.file === file);
+    const counts = Object.fromEntries(
+      [...AGENTS_EVERY_RULE, INT_MATH_PROBE].map(({ name, message }) => [
+        name,
+        found.filter((diagnostic) => diagnostic.text.includes(message)).length,
+      ]),
+    );
+    expect(counts).toEqual({
+      ...Object.fromEntries(AGENTS_EVERY_RULE.map(({ name }) => [name, 1])),
+      [INT_MATH_PROBE.name]: 0,
+    });
+  });
+
+  test("the overrides for agents sources register the engine's plugins, for all of src", () => {
+    const covering = (CONTROL_OVERRIDES ?? []).filter((override) =>
+      (override.includes ?? []).includes(`${AGENTS_SRC}/**`),
+    );
+    const plugins = covering.flatMap((override) =>
+      (override.plugins ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path)),
+    );
+    expect([...plugins].sort()).toEqual([...SHARED_PLUGINS].sort());
+    // A glob that names a path under agents src, negated or not, would make an exception there.
+    const agentsGlobs = covering
+      .flatMap((override) => override.includes ?? [])
+      .filter((glob) => glob.replace(/^!/, "").startsWith(`${AGENTS_SRC}/`));
+    expect(agentsGlobs).toEqual(covering.map(() => `${AGENTS_SRC}/**`));
+  });
+
+  test("each package has its own import rule, in one override for all of its src", () => {
+    const imports = (CONTROL_OVERRIDES ?? []).filter(
+      (override) => override.linter?.rules?.style?.noRestrictedImports !== undefined,
+    );
+    expect(imports.map((override) => override.includes)).toEqual(
+      expect.arrayContaining([[`${ENGINE_SRC}/**`], [`${AGENTS_SRC}/**`]]),
+    );
+    expect(imports).toHaveLength(2);
   });
 });
 

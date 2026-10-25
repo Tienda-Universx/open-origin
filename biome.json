@@ -83,7 +83,7 @@
       }
     },
     {
-      "includes": ["packages/engine/src/**"],
+      "includes": ["packages/engine/src/**", "packages/agents/src/**"],
       "plugins": ["./packages/engine/lint/purity.grit"],
       "linter": {
         "rules": {
@@ -119,7 +119,20 @@
                   "Reflect": "Reflect.ownKeys enumerates keys in insertion order, which a resumed world may not share: iterate records in canonical order (plan §I.1)."
                 }
               }
-            },
+            }
+          },
+          "suspicious": {
+            "noConsole": "error",
+            "noForIn": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/engine/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
             "noRestrictedImports": {
               "level": "error",
               "options": {
@@ -139,10 +152,48 @@
                 ]
               }
             }
-          },
-          "suspicious": {
-            "noConsole": "error",
-            "noForIn": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/agents/src/**"],
+      "plugins": [
+        "./packages/engine/lint/key-order.grit",
+        "./packages/engine/lint/global-json.grit",
+        "./packages/engine/lint/global-math.grit",
+        "./packages/engine/lint/global-map.grit"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["bun", "bun:*"],
+                    "message": "`bun` and `bun:*` are host APIs: packages/agents is runtime-agnostic, like the engine core (ADR 0003 P5)."
+                  },
+                  {
+                    "group": ["node:*"],
+                    "message": "`node:*` modules are host APIs: packages/agents is runtime-agnostic, like the engine core (ADR 0003 P5)."
+                  },
+                  {
+                    "group": [
+                      "**",
+                      "!./**",
+                      "!../**",
+                      "!bun",
+                      "!bun:*",
+                      "!node:*",
+                      "!@open-origin/engine"
+                    ],
+                    "message": "packages/agents imports only relative paths inside packages/agents/src and the engine's public entry `@open-origin/engine`, never a path inside it (ADR 0023)."
+                  }
+                ]
+              }
+            }
           }
         }
       }
