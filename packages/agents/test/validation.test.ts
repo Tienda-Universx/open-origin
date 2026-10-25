@@ -209,6 +209,16 @@ describe("the step bounds of A*", () => {
     ]);
   });
 
+  test("ignores short entries on steps that leave the window, which are impassable anyway", () => {
+    // A window of one cell: every one of its 8 steps leaves it, so none can mislead the heuristic.
+    const grid = { side: 1, edgeMs: new Int32Array(8).fill(1) };
+    expect(aStar(grid, 0, 0, { straight: 5, diagonal: 5 })).toEqual({
+      durationMs: 0,
+      path: "",
+      expanded: 1,
+    });
+  });
+
   test("reports problems of every argument together", () => {
     const grid = anyGrid({ side: 2, edgeMs: new Int32Array(31) });
     expect(issuesOf(() => aStar(grid, 7, 0.5, { straight: 5, diagonal: 11 }))).toEqual([
