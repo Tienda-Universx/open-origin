@@ -12,6 +12,7 @@ export {
   beingIssues,
   type Cell,
   type Cooldown,
+  type CooldownRequest,
   MAX_TICK,
   type Outcome,
   type PlanStep,

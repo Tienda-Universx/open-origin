@@ -68,6 +68,12 @@ export type Outcome = { readonly result: string; readonly tick: Tick; readonly r
 /** A target the brain failed to reach, avoided until `until`. */
 export type Cooldown = { readonly cell: Cell; readonly until: Tick };
 
+/**
+ * A cooldown a brain adds: the target and how long to avoid it, in simulated milliseconds. The
+ * engine stamps the tick it ends at, because the brain does not sense the tick.
+ */
+export type CooldownRequest = { readonly cell: Cell; readonly ms: number };
+
 export type Being = {
   readonly id: EntityId;
   readonly species: string;
@@ -293,6 +299,19 @@ function checkCooldown(value: unknown, path: string, sink: IssueSink): void {
   if (cooldown === undefined) return;
   checkCell(cooldown.value("cell"), cooldown.at("cell"), sink);
   cooldown.int("until", TICKS);
+}
+
+/** Reports every problem of the cooldowns an intention adds at `value`: up to four, each bounded. */
+export function checkCooldownRequests(value: unknown, path: string, sink: IssueSink): void {
+  checkEach(value, path, { count: BEING_BOUNDS.cooldowns, entry: checkCooldownRequest }, sink);
+}
+
+/** Reports every problem of one cooldown an intention adds at `value`. */
+function checkCooldownRequest(value: unknown, path: string, sink: IssueSink): void {
+  const request = readFields(value, path, { required: ["cell", "ms"] }, sink);
+  if (request === undefined) return;
+  checkCell(request.value("cell"), request.at("cell"), sink);
+  request.int("ms", BEING_BOUNDS.durationMs);
 }
 
 /** Reports every problem of a being's body: needs, health, traits, and condition. */

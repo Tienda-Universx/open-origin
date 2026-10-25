@@ -12,7 +12,9 @@ import { readMember } from "../world/members.ts";
 import {
   type Activity,
   type Behavior,
+  type CooldownRequest,
   checkBehavior,
+  checkCooldownRequests,
   checkPlanStep,
   checkWakeConditions,
   type PlanStep,
@@ -21,13 +23,17 @@ import {
 import { DIRECTIONS, MAX_INTENTION_STEPS, type SensedWindow } from "./contracts.ts";
 import { range, readFields, readList } from "./schema.ts";
 
-/** An intention the engine accepted: the activity it starts now, and what follows. */
+/**
+ * An intention the engine accepted: the activity it starts now, what follows, and the cooldowns it
+ * adds, present only when the intention has them.
+ */
 export type Accepted = {
   readonly kind: "accepted";
   readonly activity: Activity;
   readonly plan: readonly PlanStep[];
   readonly wakeWhen: WakeConditions;
   readonly behavior: Behavior;
+  readonly cooldowns?: readonly CooldownRequest[];
 };
 
 /** An intention the engine refused, with a short reason for the being's outcome. */
@@ -41,6 +47,7 @@ type Valid = {
   readonly steps: readonly PlanStep[];
   readonly wakeWhen: WakeConditions;
   readonly behavior: Behavior;
+  readonly cooldowns?: readonly CooldownRequest[];
 };
 
 /**
@@ -66,7 +73,8 @@ function readIntention(raw: unknown): Valid | undefined {
   const issues = new IssueList();
   const copy = copyCanonicalReported(raw, issues);
   if (issues.count > 0) return undefined;
-  const intention = readFields(copy, "", { required: ["behavior", "steps", "wakeWhen"] }, issues);
+  const members = { required: ["behavior", "steps", "wakeWhen"], optional: ["cooldowns"] };
+  const intention = readFields(copy, "", members, issues);
   if (intention === undefined) return undefined;
   const steps = readList(intention.value("steps"), "/steps", range(1, MAX_INTENTION_STEPS), issues);
   steps?.forEach((step, index) => {
@@ -74,6 +82,8 @@ function readIntention(raw: unknown): Valid | undefined {
   });
   checkWakeConditions(intention.value("wakeWhen"), "/wakeWhen", issues);
   checkBehavior(intention.value("behavior"), "/behavior", issues);
+  const cooldowns = intention.value("cooldowns");
+  if (cooldowns !== undefined) checkCooldownRequests(cooldowns, "/cooldowns", issues);
   // Every check passed, so the copy is an intention.
   return issues.count === 0 ? (copy as Valid) : undefined;
 }
@@ -113,10 +123,10 @@ function activityOf(step: PlanStep, tick: Tick, arrivals: number[]): Activity {
 }
 
 /**
- * Judges `raw`, what a brain returned, at `context`: the accepted activity and plan, or a refusal
- * with one of the reasons `malformed` (not an intention of the right shape and bounds),
- * `walk_not_first` (a walk is the first step or none), and `walk_blocked` (a step of the walk
- * cannot be taken). Never throws: the canonical copy reads each member once through its own
+ * Judges `raw`, what a brain returned, at `context`: the accepted activity, plan, and cooldowns to
+ * add, or a refusal with one of the reasons `malformed` (not an intention of the right shape and
+ * bounds), `walk_not_first` (a walk is the first step or none), and `walk_blocked` (a step of the
+ * walk cannot be taken). Never throws: the canonical copy reads each member once through its own
  * descriptor, so an accessor, or a Proxy whose traps throw, is refused.
  */
 export function acceptIntention(raw: unknown, context: IntentionContext): Accepted | Refused {
@@ -128,11 +138,14 @@ export function acceptIntention(raw: unknown, context: IntentionContext): Accept
     return { kind: "rejected", reason: "walk_not_first" };
   const arrivals = first.kind === "walk" ? route(context.window, first.dirs) : [];
   if (arrivals === undefined) return { kind: "rejected", reason: "walk_blocked" };
-  return {
+  const accepted: Accepted = {
     kind: "accepted",
     activity: activityOf(first, context.tick, arrivals),
     plan: rest,
     wakeWhen: intention.wakeWhen,
     behavior: intention.behavior,
   };
+  return intention.cooldowns === undefined
+    ? accepted
+    : { ...accepted, cooldowns: intention.cooldowns };
 }

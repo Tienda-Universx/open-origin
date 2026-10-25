@@ -9,22 +9,25 @@ import { copyCanonical } from "../canonical/copy.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import type { DeepReadonly } from "../world/contracts.ts";
 import { arrivedSteps, bitesDue, idleEnd } from "./activity.ts";
-import type {
-  Activity,
-  Behavior,
-  Being,
-  Cell,
-  Cooldown,
-  Outcome,
-  PlanStep,
-  WakeConditions,
+import {
+  type Activity,
+  BEING_BOUNDS,
+  type Behavior,
+  type Being,
+  type Cell,
+  type Cooldown,
+  type CooldownRequest,
+  MAX_TICK,
+  type Outcome,
+  type PlanStep,
+  type WakeConditions,
 } from "./being.ts";
 import { type Body, bodyAt } from "./body.ts";
 import { DIRECTIONS, type SensedWindow, type Senses } from "./contracts.ts";
 import type { BeingsEnv } from "./env.ts";
 import { acceptIntention } from "./intention.ts";
 import type { Species } from "./laws.ts";
-import { NEED_MAX } from "./rates.ts";
+import { ceilDiv, least, NEED_MAX } from "./rates.ts";
 import { senseWindow } from "./senses.ts";
 
 /** How long a being idles after its brain proposed something the engine refused, in ms. */
@@ -269,8 +272,36 @@ function pending(env: BeingsEnv, work: Work, conditions: WakeConditions): WakeCo
   return kept;
 }
 
-/** Asks the being's brain, judges what it proposes, and starts the accepted first step. */
+/** The cooldowns that still hold at this tick: those whose tick has not come yet. */
+function activeCooldowns(env: BeingsEnv, cooldowns: readonly Cooldown[]): Cooldown[] {
+  return cooldowns.filter((cooldown) => cooldown.until > env.tick);
+}
+
+/**
+ * `kept` with the cooldowns a brain added, in order: each ends ⌈ms / (simSecondsPerTick·1000)⌉
+ * ticks after this one, replaces an earlier cooldown on its cell, and the newest four are kept.
+ */
+function addCooldowns(
+  env: BeingsEnv,
+  kept: readonly Cooldown[],
+  added: readonly CooldownRequest[],
+): Cooldown[] {
+  let cooldowns = [...kept];
+  for (const { cell, ms } of added) {
+    cooldowns = cooldowns.filter((old) => old.cell[0] !== cell[0] || old.cell[1] !== cell[1]);
+    const until = least(env.tick + ceilDiv(ms, env.sps * 1000), MAX_TICK);
+    cooldowns.push({ cell: [cell[0], cell[1]], until });
+  }
+  const most = BEING_BOUNDS.cooldowns.max;
+  return cooldowns.length > most ? cooldowns.slice(cooldowns.length - most) : cooldowns;
+}
+
+/**
+ * Asks the being's brain, judges what it proposes, and starts the accepted first step. Cooldowns
+ * whose tick has come are dropped before the brain senses them, since it does not sense the tick.
+ */
 function decide(env: BeingsEnv, work: Work): void {
+  work.cooldowns = activeCooldowns(env, work.cooldowns);
   const window = windowOf(env, work);
   const proposal = env.controller(work.species.id).decide(sensesOf(env, work, window));
   const judged = acceptIntention(proposal, { tick: env.tick, window });
@@ -282,6 +313,8 @@ function decide(env: BeingsEnv, work: Work): void {
   const kept = judged.behavior.kind === work.behavior.kind;
   work.behavior = { ...judged.behavior, since: kept ? work.behavior.since : env.tick };
   work.wakeWhen = pending(env, work, judged.wakeWhen);
+  if (judged.cooldowns !== undefined)
+    work.cooldowns = addCooldowns(env, work.cooldowns, judged.cooldowns);
   const [first, ...rest] = [stepOf(judged.activity), ...judged.plan];
   work.plan = rest;
   if (first !== undefined)

@@ -238,7 +238,13 @@ array ignores a write there.
   milliseconds);
 - `wakeWhen`: optional thresholds `nutritionBelow`, `restBelow`, `lightBelow`, and `lightAbove`;
   each wakes the being when the quantity reaches the threshold (at or below, or at or above);
-- `behavior`: what the brain wants to find again in its next senses.
+- `behavior`: what the brain wants to find again in its next senses;
+- `cooldowns`: optional, up to four targets to avoid for a while, each `{ cell, ms }` with a cell
+  inside the world and `ms` from 1 to 2^32. The brain does not sense the tick, so the engine stamps
+  each with `until = tick + ⌈ms / (simSecondsPerTick·1000)⌉`; one added for a cell replaces the
+  being's earlier one there, and the being keeps the newest four. Before each decision the engine
+  drops those with `until ≤ tick`, so the brain senses only cooldowns that still hold. A refused
+  intention adds none, and an intention without the member leaves them as they were.
 
 The brain receives copies of everything it senses, the window's arrays included, and the engine
 keeps its own window: a brain that writes to its senses changes nothing the engine judges by. The
