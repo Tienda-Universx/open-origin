@@ -5,6 +5,7 @@
  * rejection, which becomes the being's experience (plan §K.5); it never faults the world.
  */
 import { copyCanonicalReported } from "../canonical/copy.ts";
+import { lengthOf } from "../canonical/value.ts";
 import { IssueList } from "../errors.ts";
 import type { Tick } from "../time/tick.ts";
 import { readMember } from "../world/members.ts";
@@ -42,18 +43,25 @@ type Valid = {
   readonly behavior: Behavior;
 };
 
-/** Whether `raw` holds more steps than an intention may, read once and without copying them. */
+/**
+ * Whether `raw` has a list of steps longer than an intention may, read from its own length without
+ * reading its entries. Only a shortcut for a huge list: what cannot be read here is left to the
+ * canonical copy, which reads it again and reports it.
+ */
 function tooManySteps(raw: unknown): boolean {
-  const issues = new IssueList();
   if (typeof raw !== "object" || raw === null) return false;
-  const steps = readMember(raw, "steps", "/steps", issues);
-  const length = Array.isArray(steps) ? readMember(steps, "length", "/steps/length", issues) : 0;
-  return typeof length === "number" && length > MAX_INTENTION_STEPS;
+  const steps = readMember(raw, "steps", "/steps", new IssueList());
+  if (typeof steps !== "object" || steps === null) return false;
+  try {
+    return lengthOf(steps) > MAX_INTENTION_STEPS;
+  } catch {
+    // A Proxy whose traps throw, revoked or not: the canonical copy refuses it.
+    return false;
+  }
 }
 
 /** A canonical copy of `raw` that has the shape and bounds of an intention; undefined otherwise. */
 function readIntention(raw: unknown): Valid | undefined {
-  // A huge list is refused before the canonical copy would walk all of it.
   if (tooManySteps(raw)) return undefined;
   const issues = new IssueList();
   const copy = copyCanonicalReported(raw, issues);

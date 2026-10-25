@@ -484,6 +484,39 @@ describe("acceptIntention", () => {
     expect(accept(throwing)).toEqual({ kind: "rejected", reason: "malformed" });
   });
 
+  test("refuses a revoked Proxy as the list of steps", () => {
+    const { proxy, revoke } = Proxy.revocable([{ kind: "idle", ms: 1 }], {});
+    revoke();
+    expect(accept({ steps: proxy, wakeWhen: {}, behavior })).toEqual({
+      kind: "rejected",
+      reason: "malformed",
+    });
+  });
+
+  test("refuses a huge list of steps from its length, without reading its entries", () => {
+    let entryReads = 0;
+    const counted = (length: number) =>
+      new Proxy(
+        Array.from({ length }, () => ({ kind: "idle", ms: 1 })),
+        {
+          getOwnPropertyDescriptor: (target, key) => {
+            if (key !== "length") entryReads += 1;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        },
+      );
+    expect(accept({ steps: counted(100_000), wakeWhen: {}, behavior })).toEqual({
+      kind: "rejected",
+      reason: "malformed",
+    });
+    expect(entryReads).toBe(0);
+    // A list within the bound is still copied entry by entry.
+    expect(accept({ steps: counted(1), wakeWhen: {}, behavior })).toMatchObject({
+      kind: "accepted",
+    });
+    expect(entryReads).toBeGreaterThan(0);
+  });
+
   test("rejects a getter instead of running it, and a step that cannot be taken", () => {
     const hostile = { steps: [{ kind: "idle", ms: 1 }], wakeWhen: {}, behavior };
     Object.defineProperty(hostile, "steps", {

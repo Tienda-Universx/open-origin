@@ -211,7 +211,8 @@ deciding in the same tick and region.
 - step durations that round up, the slowest step a valid law allows within 2^31 − 1 ms, and
   `minimumSteps`;
 - accepted intentions with the cumulative arrivals of a walk of several steps; each rejection, a
-  walk as the second or third step, a huge list of steps, a getter, and a Proxy whose traps throw;
+  walk as the second or third step, a getter, a Proxy whose traps throw, a revoked Proxy as the
+  list of steps, and a huge list, refused from its length without reading its entries;
 - `sampleSurface` equal to `sampleRegion` cell for cell on random regions and at the world's edges,
   and its deposit index, `-0` and a genesis without deposits included.
 
