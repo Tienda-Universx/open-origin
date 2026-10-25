@@ -7,10 +7,17 @@
  * being, spawned hungry just before dusk away from food, is one such: it forages across dusk.
  */
 import { describe, expect, test } from "bun:test";
-import { beings, type EngineEvent, readView, step, worldgen } from "@open-origin/engine";
+import {
+  beings,
+  createWorld,
+  type EngineEvent,
+  readView,
+  step,
+  worldgen,
+} from "@open-origin/engine";
 import { DUSK_LIGHT, EXHAUSTION_GUARD } from "../src/brain/parameters.ts";
 import { utilityController } from "../src/index.ts";
-import { LABELS, SCENARIO_SPS, scenarioOf } from "./support/scenario.ts";
+import { LABELS, labelSeeds, SCENARIO_SPS, scenarioOf } from "./support/scenario.ts";
 import { sensesOf } from "./support/senses.ts";
 
 /** The senses of a being of the first decision at `cell`, with `needs`, at noon. */
@@ -120,5 +127,54 @@ describe("utility@1 in a world", () => {
       expect(reacted?.tick ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(dusk + bound);
     }
     expect(events.filter(({ type }) => type === "being.intention_rejected")).toEqual([]);
+  });
+});
+
+describe("utility@1 by the edge of the world", () => {
+  test("proposes nothing the engine refuses, beings wandering toward the edge included", () => {
+    // Eight sated beings 14 cells inside the east edge, on calibration/1's terrain, spawned by
+    // day: food lies by the edge, and the target 16 cells east of a being lies outside the world.
+    const prepared = worldgen.prepareGenesis(
+      worldgen.defaultGenesis(labelSeeds(LABELS.calibration[0] as string).terrain),
+    );
+    const inner = utilityController();
+    const toward: number[] = [];
+    const recorder: beings.Controller = {
+      brain: inner.brain,
+      decide: (senses) => {
+        const intention = inner.decide(senses);
+        // The heading its leg tried first: the being's own, or at its first decision its draw.
+        const { kind, heading } = senses.self.behavior;
+        const tried = kind === "none" ? (senses.draws[0] ?? 0) % 8 : heading;
+        if (intention.behavior.kind === "explore") toward.push(tried);
+        return intention;
+      },
+    };
+    const world = createWorld(
+      {
+        seed: [1, 2],
+        simSecondsPerTick: 12,
+        global: beings.beingsGlobal(worldgen.genesisOf(prepared), beings.defaultLife()),
+        chunks: {},
+        ruleset: beings.createBeingsRuleset({ controllers: { s1: recorder } }),
+      },
+      { audit: false },
+    );
+    const by = 1500;
+    const cell = [worldgen.MAX_CELL - 14, -8003];
+    const spawns = Array.from({ length: 8 }, (_, seq) => ({
+      applyTick: by,
+      seq,
+      type: "beings.spawn",
+      origin: { kind: "admin" as const },
+      payload: { species: "s1", cell, needs: { nutrition: 900_000, rest: 950_000 } },
+    }));
+    const events: EngineEvent[] = [];
+    for (let tick = 1; tick <= by + 400; tick += 1)
+      events.push(...step(world, tick === by ? spawns : []).events);
+    expect(events.filter(({ type }) => type === "being.spawned")).toHaveLength(8);
+    expect(events.filter(({ type }) => type === "being.intention_rejected")).toEqual([]);
+    // Some being headed east, toward the edge, when it set out to wander.
+    expect(toward.some((heading) => heading === 0 || heading === 1 || heading === 7)).toBe(true);
   });
 });

@@ -7,11 +7,11 @@
  * Routes are walks of at most 64 steps: a longer route is walked in parts, deciding again at the
  * end of each.
  */
-import { beings, floorDiv } from "@open-origin/engine";
+import { beings, floorDiv, worldgen } from "@open-origin/engine";
 import { aStar, type StepBounds } from "../navigation/astar.ts";
 import { dijkstra, pathTo } from "../navigation/dijkstra.ts";
 import { greatest, least, PERMILLE, respond } from "./curves.ts";
-import { CUE_WORTH, ROUTE_WORTH } from "./parameters.ts";
+import { CUE_WORTH, ROUTE_WORTH, SPIRAL_LEGS, TURNS } from "./parameters.ts";
 
 /** The part of the senses a recipe reads: the window, as the engine built it. */
 export type View = {
@@ -40,6 +40,17 @@ function cellOf(view: View, index: number): [number, number] {
   const column = index % view.side;
   const [x = 0, y = 0] = view.origin;
   return [x + column, y + floorDiv(index, view.side)];
+}
+
+/**
+ * Whether the window cell `index` lies inside the world. The window covers cells outside it,
+ * impassable and without food; the brain never aims at one, nor gives one a cooldown, which the
+ * engine would refuse.
+ */
+function inWorld(view: View, index: number): boolean {
+  const [x, y] = cellOf(view, index);
+  const { MIN_CELL, MAX_CELL } = worldgen;
+  return x >= MIN_CELL && x <= MAX_CELL && y >= MIN_CELL && y <= MAX_CELL;
 }
 
 /** The worth of a cell with food cue `cue`, in permille. */
@@ -121,9 +132,6 @@ function cheapest(edgeMs: Int32Array, parity: number): number {
   return found;
 }
 
-/** The turns tried from a heading, in order: ahead, then ever wider to the left and right. */
-const TURNS: readonly number[] = Object.freeze([0, 1, 7, 2, 6, 3, 5, 4]);
-
 /** A leg of exploration: its heading and walk, and the targets that had no route. */
 type Leg = {
   readonly heading: number | undefined;
@@ -159,10 +167,10 @@ type Wander = { readonly reach: number; readonly sight: number };
 
 /**
  * A leg of a wandering being: toward the cell `wander.reach` cells away along `heading`, planned
- * with A*. When that cell has a cooldown, has no food within `wander.sight` cells, or has no route,
- * the leg turns, trying each heading of TURNS in order, so that the being never wanders out of
- * sight of food; the targets without a route are returned to be avoided. The heading is undefined
- * when every target failed.
+ * with A*. When that cell lies outside the world, has a cooldown, has no food within `wander.sight`
+ * cells, or has no route, the leg turns, trying each heading of TURNS in order, so that the being
+ * never wanders out of sight of food; the targets without a route are returned to be avoided. The
+ * heading is undefined when every target failed.
  */
 export function wanderLeg(
   view: View,
@@ -177,7 +185,8 @@ export function wanderLeg(
   for (const turn of TURNS) {
     const direction = (heading + turn) % 8;
     const goal = ahead(view, direction, wander.reach);
-    if (cooled.includes(goal) || !foodNear(view, goal, wander.sight)) continue;
+    if (!inWorld(view, goal) || cooled.includes(goal)) continue;
+    if (!foodNear(view, goal, wander.sight)) continue;
     const route = aStar(grid, centerOf(view), goal, bounds);
     if (route !== undefined && route.path.length > 0)
       return { heading: direction, path: route.path, blocked };
@@ -213,23 +222,6 @@ function headingTo(dx: number, dy: number): number {
   return greatest(direction, 0);
 }
 
-/**
- * The legs a search tries from the offset (dx, dy) of the being from its anchor, in order, as
- * multiples of a tangent step counterclockwise around the anchor and of a radial step away from
- * it: around first, then around and out, then out. Every one of them ends farther from the
- * anchor than the being is.
- */
-const SPIRAL_LEGS: readonly (readonly [number, number])[] = Object.freeze([
-  Object.freeze([1, 0] as const),
-  Object.freeze([1, 1] as const),
-  Object.freeze([0, 1] as const),
-  Object.freeze([1, 2] as const),
-  Object.freeze([2, 0] as const),
-  Object.freeze([0, 2] as const),
-  Object.freeze([-1, 1] as const),
-  Object.freeze([-1, 0] as const),
-]);
-
 /** The offsets of the legs a search tries from the being's cell, by SPIRAL_LEGS or by heading. */
 function spiralLegs(spiral: Spiral, dx: number, dy: number, heading: number): [number, number][] {
   const { step } = spiral;
@@ -254,8 +246,8 @@ function spiralLegs(spiral: Spiral, dx: number, dy: number, heading: number): [n
  * anchor, counterclockwise, from wherever the being stands. Since each step ends farther from the
  * anchor, the being's path is a spiral whose turns lie about π·step cells apart, which sweeps the
  * land nearest the anchor first and never comes back to a place it passed; it needs no memory but
- * the anchor. A leg with a cooldown or no route gives way to the next of SPIRAL_LEGS. The
- * heading is undefined when every leg failed.
+ * the anchor. A leg that ends outside the world, on a cooldown, or without a route gives way to
+ * the next of SPIRAL_LEGS. The heading is undefined when every leg failed.
  */
 export function searchLeg(
   view: View,
@@ -270,7 +262,7 @@ export function searchLeg(
   const [ax = 0, ay = 0] = spiral.anchor;
   for (const [ox, oy] of spiralLegs(spiral, x - ax, y - ay, heading)) {
     const goal = nearestInWindow(view, ox, oy);
-    if (goal === center || cooled.includes(goal)) continue;
+    if (goal === center || !inWorld(view, goal) || cooled.includes(goal)) continue;
     const route = aStar({ side: view.side, edgeMs: view.edgeMs }, center, goal, bounds);
     if (route !== undefined && route.path.length > 0)
       return { heading: headingTo(ox, oy), path: route.path, blocked: [] };

@@ -311,6 +311,8 @@ export type ScenarioOptions = {
 /** A scenario ready to run: its world at tick 0, the spawns of tick 1, and what built them. */
 export type Scenario = {
   readonly terrain: Terrain;
+  /** The prepared genesis of its terrain, which a run reads deposits from. */
+  readonly prepared: worldgen.PreparedGenesis;
   readonly area: SpawnArea;
   readonly world: ScenarioWorld;
   readonly spawns: readonly Command[];
@@ -326,8 +328,12 @@ export const SCENARIO_SPS = 12;
  * spawned by the admin at tick 1. Throws for an uninhabitable label.
  */
 export function scenarioOf(label: string, options: ScenarioOptions): Scenario {
-  const terrain = terrainOf(label);
-  const area = terrain.area;
+  return scenarioFrom(terrainOf(label), options);
+}
+
+/** The scenario of a label from its terrain, measured once: what scenarioOf builds. */
+export function scenarioFrom(terrain: Terrain, options: ScenarioOptions): Scenario {
+  const { area, label } = terrain;
   if (area === undefined) throw new Error(`the label ${label} has no spawn area: uninhabitable`);
   const base = options.life ?? beings.defaultLife();
   const life = { ...base, deathEnabled: false };
@@ -347,14 +353,18 @@ export function scenarioOf(label: string, options: ScenarioOptions): Scenario {
     },
     { audit: options.audit ?? false },
   );
-  const spawns = payloads.map(
-    (payload, seq): Command => ({
-      applyTick: 1,
-      seq,
-      type: "beings.spawn",
-      origin: { kind: "admin" },
-      payload: payload as never,
-    }),
-  );
-  return { terrain, area, world, spawns, payloads };
+  const spawns = payloads.map((payload, seq) => spawnCommand(payload, seq));
+  return { terrain, prepared: terrain.prepared, area, world, spawns, payloads };
+}
+
+/** The admin spawn of `payload` at tick 1, the `seq`-th of the tick. */
+export function spawnCommand(payload: SpawnPayload, seq: number): Command {
+  const { species, cell, needs, traits } = payload;
+  return {
+    applyTick: 1,
+    seq,
+    type: "beings.spawn",
+    origin: { kind: "admin" },
+    payload: { species, cell: [cell[0], cell[1]], needs: { ...needs }, traits: { ...traits } },
+  };
 }

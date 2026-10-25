@@ -5,7 +5,7 @@
  * the calibration areas. Nothing here runs the simulation, so no label is burned.
  */
 import { describe, expect, test } from "bun:test";
-import { beings, worldgen } from "@open-origin/engine";
+import { beings, readView, worldgen } from "@open-origin/engine";
 import {
   AREA_SIDE,
   areaNeeds,
@@ -14,6 +14,7 @@ import {
   drawIn,
   LABELS,
   labelSeeds,
+  scenarioFrom,
   type Terrain,
   terrainOf,
   variantLife,
@@ -127,6 +128,51 @@ describe("the beings a label draws", () => {
       needs: { nutrition: 730_042, rest: 783_726 },
       traits: { appetite: 912, sleepiness: 1015, curiosity: 841 },
     });
+  });
+});
+
+describe("the scenario of a label", () => {
+  const measured = terrain(LABELS.calibration[0] as string);
+  const species = beings.defaultLife().species[0] as beings.Species;
+  const idle: beings.Controller = {
+    brain: "idle@1",
+    decide: () => ({
+      steps: [{ kind: "idle", ms: 60_000 }],
+      wakeWhen: {},
+      behavior: { kind: "rest", since: 0, heading: 0 },
+    }),
+  };
+  const area = measured.area;
+  if (area === undefined) throw new Error("calibration/1 is habitable");
+
+  test("is the default genesis of the terrain seed at 12 s per tick, without death, 8 spawns at 1", () => {
+    const scenario = scenarioFrom(measured, { controllers: { s1: idle } });
+    const view = readView(scenario.world);
+    // The preregistered pace, written as the number it is rather than read from the builder.
+    expect(view.simSecondsPerTick).toBe(12);
+    expect(view.tick).toBe(0);
+    expect(view.readGlobal().genesis).toEqual(worldgen.defaultGenesis(measured.seeds.terrain));
+    expect(view.readGlobal().life).toEqual({ ...beings.defaultLife(), deathEnabled: false });
+    const drawn = drawBeings(area, measured.seeds.spawn, species);
+    expect(scenario.payloads).toEqual(drawn);
+    expect(scenario.spawns).toEqual(
+      drawn.map((payload, seq) => ({
+        applyTick: 1,
+        seq,
+        type: "beings.spawn",
+        origin: { kind: "admin" },
+        payload: { ...payload, cell: [...payload.cell] },
+      })),
+    );
+  });
+
+  test("draws its beings from <label>/spawn<suffix> when given a spawn suffix", () => {
+    const word = (text: string) =>
+      Number.parseInt(new Bun.CryptoHasher("sha256").update(text).digest("hex").slice(0, 8), 16);
+    const other = scenarioFrom(measured, { controllers: { s1: idle }, spawnSuffix: "/1" });
+    const seed = word("open-origin/t4/calibration/1/spawn/1");
+    expect(other.payloads).toEqual(drawBeings(area, seed, species));
+    expect(other.payloads).not.toEqual(drawBeings(area, measured.seeds.spawn, species));
   });
 });
 

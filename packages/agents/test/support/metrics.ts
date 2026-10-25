@@ -1,17 +1,34 @@
-import { beings, type EngineEvent, readView, step, worldgen } from "@open-origin/engine";
-import { SCENARIO_SPS, type Scenario } from "./scenario.ts";
+import {
+  beings,
+  type Command,
+  type EngineEvent,
+  readView,
+  step,
+  worldgen,
+} from "@open-origin/engine";
+import type { ScenarioWorld, SpawnPayload } from "./scenario.ts";
 
 /**
  * What a run of the preregistered scenario did, read from its events and from the state at the
  * ticks they happened, against the acceptance of docs/architecture/beings.md ("Evaluation"). The
- * runner only observes: it reads the world after each step and never changes what happens.
+ * runner only observes: it reads the world after each step and never changes what happens. Every
+ * event of every tick is counted; the state is read only at the ticks whose events need it.
  */
+
+/** What a run needs: its world, the spawns of tick 1 and their payloads, and its terrain. */
+export type RunInput = {
+  readonly world: ScenarioWorld;
+  readonly spawns: readonly Command[];
+  readonly payloads: readonly SpawnPayload[];
+  readonly prepared: worldgen.PreparedGenesis;
+};
 
 /** What one being did over a run. */
 export type BeingRecord = {
   readonly id: number;
   readonly born: readonly [number, number];
   incapacitated: number;
+  died: number;
   exhausted: number;
   rejected: number;
   /** The cells it ate in, as "x,y", and whether one lies outside the window it was born in. */
@@ -54,8 +71,9 @@ type Walk = { readonly start: number; readonly ms: readonly number[] };
 
 /** What the runner keeps between ticks for each being and cell. */
 type Tracker = {
-  readonly scenario: Scenario;
+  readonly run: RunInput;
   readonly species: beings.Species;
+  readonly sps: number;
   readonly records: Map<number, BeingRecord>;
   readonly mealStart: Map<number, number>;
   readonly walks: Map<number, Walk>;
@@ -67,7 +85,7 @@ type Tracker = {
 
 /** The beings of the world after its last step, by id. */
 function beingsNow(tracker: Tracker): Map<number, beings.Being> {
-  const view = readView(tracker.scenario.world);
+  const view = readView(tracker.run.world);
   const found = new Map<number, beings.Being>();
   for (const key of view.readGlobal().occupancy) {
     for (const being of view.readChunk(key)?.beings ?? [])
@@ -78,7 +96,7 @@ function beingsNow(tracker: Tracker): Map<number, beings.Being> {
 
 /** The body of `being` at `tick`, in closed form. */
 function bodyOf(tracker: Tracker, being: beings.Being, tick: number): beings.Body {
-  return beings.bodyAt(tracker.species, being, tick, SCENARIO_SPS);
+  return beings.bodyAt(tracker.species, being, tick, tracker.sps);
 }
 
 /** The deposit of `cell` before anything ate it. */
@@ -88,21 +106,21 @@ function baseOf(tracker: Tracker, cell: readonly [number, number]): number {
   if (known !== undefined) return known;
   const rect = { x: cell[0], y: cell[1], width: 1, height: 1 };
   const deposit =
-    worldgen.sampleSurface(tracker.scenario.terrain.prepared, rect, tracker.species.diet.deposit)
-      .deposit[0] ?? 0;
+    worldgen.sampleSurface(tracker.run.prepared, rect, tracker.species.diet.deposit).deposit[0] ??
+    0;
   tracker.base.set(key, deposit);
   return deposit;
 }
 
 /** The food left in `cell` after the tick `tick`, from its chunk's depletion. */
 function foodLeft(tracker: Tracker, cell: readonly [number, number], tick: number): number {
-  const view = readView(tracker.scenario.world);
+  const view = readView(tracker.run.world);
   const key = `${worldgen.chunkOfCell(cell[0])},${worldgen.chunkOfCell(cell[1])}`;
   const index = worldgen.cellOffset(cell[1]) * worldgen.CHUNK_CELLS + worldgen.cellOffset(cell[0]);
   const entry = view.readChunk(key)?.depletion.find((candidate) => candidate.cell === index);
   const base = baseOf(tracker, cell);
   if (entry === undefined) return base;
-  const seconds = (tick - entry.since) * SCENARIO_SPS;
+  const seconds = (tick - entry.since) * tracker.sps;
   return Math.max(0, base - beings.takenAt(entry, tracker.species.regrowth, seconds));
 }
 
@@ -153,9 +171,9 @@ function recordMealCell(
   return key;
 }
 
-/** The steps of `walk` that arrived by `tick`. */
-function arrivedBy(walk: Walk, tick: number): number {
-  return walk.ms.filter((ms) => walk.start + Math.ceil(ms / (SCENARIO_SPS * 1000)) <= tick).length;
+/** The steps of `walk` that arrived by `tick`, at `sps` seconds per tick. */
+function arrivedBy(walk: Walk, tick: number, sps: number): number {
+  return walk.ms.filter((ms) => walk.start + Math.ceil(ms / (sps * 1000)) <= tick).length;
 }
 
 /** Records one event of one being, read against its state after the tick. */
@@ -164,6 +182,7 @@ function recordEvent(tracker: Tracker, event: EngineEvent, being: beings.Being |
   const record = tracker.records.get(payload.id);
   if (record === undefined) return;
   if (event.type === "being.incapacitated") record.incapacitated += 1;
+  if (event.type === "being.died") record.died += 1;
   if (event.type === "being.exhausted") record.exhausted += 1;
   if (event.type === "being.intention_rejected") record.rejected += 1;
   if (being === undefined) return;
@@ -205,20 +224,22 @@ function finished(
   if (activity === "sleep" && body.rest >= ACCEPTANCE.restedWake) record.restedWakes += 1;
   const walk = tracker.walks.get(record.id);
   if (activity === "walk" && walk !== undefined) {
-    record.walked += arrivedBy(walk, event.tick);
+    record.walked += arrivedBy(walk, event.tick, tracker.sps);
     tracker.walks.delete(record.id);
   }
 }
 
-/** The records of a new run, one per payload of the scenario, ids from 1 in spawn order. */
-function newTracker(scenario: Scenario): Tracker {
-  const species = readView(scenario.world).readGlobal().life.species[0] as beings.Species;
+/** The records of a new run, one per payload, ids from 1 in spawn order. */
+function newTracker(run: RunInput): Tracker {
+  const view = readView(run.world);
+  const species = view.readGlobal().life.species[0] as beings.Species;
   const records = new Map<number, BeingRecord>();
-  scenario.payloads.forEach((payload, index) => {
+  run.payloads.forEach((payload, index) => {
     records.set(index + 1, {
       id: index + 1,
       born: payload.cell,
       incapacitated: 0,
+      died: 0,
       exhausted: 0,
       rejected: 0,
       mealCells: [],
@@ -233,33 +254,36 @@ function newTracker(scenario: Scenario): Tracker {
     });
   });
   const maps = { mealStart: new Map(), walks: new Map(), base: new Map() };
-  return { scenario, species, records, ...maps, emptied: new Set(), regrewAndEaten: false };
+  const sps = view.simSecondsPerTick;
+  return { run, species, sps, records, ...maps, emptied: new Set(), regrewAndEaten: false };
 }
 
-/** Whether the runner must read the state for `events`. */
+/**
+ * The events after which the runner reads the state: those whose metrics need the body, the
+ * cell, or the activity of a being. Every other event is counted from its payload alone.
+ */
 const READ_FOR = new Set(["being.started", "being.finished", "being.ate", "being.incapacitated"]);
 
 /**
- * Runs `scenario` to tick `ticks`, the spawns at tick 1, and records what its beings did. The
+ * Runs `run` to tick `ticks`, the spawns at tick 1, and records what its beings did. The
  * decisions are counted by `counted`, which the caller wraps around the brain.
  */
 export function runScenario(
-  scenario: Scenario,
+  run: RunInput,
   ticks: number,
   counted: { readonly decisions: () => number },
 ): RunRecord {
-  const tracker = newTracker(scenario);
+  const tracker = newTracker(run);
   const started = performance.now();
   for (let tick = 1; tick <= ticks; tick += 1) {
-    const { events } = step(scenario.world, tick === 1 ? scenario.spawns : []);
-    if (!events.some((event) => READ_FOR.has(event.type))) continue;
-    const now = beingsNow(tracker);
+    const { events } = step(run.world, tick === 1 ? run.spawns : []);
+    const now = events.some((event) => READ_FOR.has(event.type)) ? beingsNow(tracker) : undefined;
     for (const event of events) {
       const id = (event.payload as { id?: number }).id ?? 0;
-      recordEvent(tracker, event, now.get(id));
+      recordEvent(tracker, event, now?.get(id));
     }
     const ate = events.filter((event) => event.type === "being.ate");
-    if (ate.length > 0) recordMeals(tracker, tick, ate, now);
+    if (now !== undefined && ate.length > 0) recordMeals(tracker, tick, ate, now);
   }
   return {
     beings: [...tracker.records.values()],
@@ -287,15 +311,17 @@ export function countingBrain(inner: beings.Controller): {
 
 /** The acceptance items a being's record misses, by name; empty when it meets them all. */
 export function misses(record: BeingRecord): string[] {
-  const missed: string[] = [];
-  if (record.incapacitated > 0) missed.push("incapacitated");
-  if (record.exhausted > 0) missed.push("rest 0");
-  if (record.rejected > 0) missed.push("rejected");
-  if (record.mealCells.length < ACCEPTANCE.mealCells) missed.push("meal cells");
-  if (!record.ateOutsideBirthWindow) missed.push("outside birth window");
-  if (record.bigMeals < ACCEPTANCE.bigMeals) missed.push("big meals");
-  if (record.sleeps < ACCEPTANCE.sleeps) missed.push("sleeps");
-  if (record.restedWakes < ACCEPTANCE.restedWakes) missed.push("rested wakes");
-  if (record.walked < ACCEPTANCE.walked) missed.push("walked");
-  return missed;
+  const items: [string, boolean][] = [
+    ["incapacitated", record.incapacitated > 0],
+    ["died", record.died > 0],
+    ["rest 0", record.exhausted > 0],
+    ["rejected", record.rejected > 0],
+    ["meal cells", record.mealCells.length < ACCEPTANCE.mealCells],
+    ["outside birth window", !record.ateOutsideBirthWindow],
+    ["big meals", record.bigMeals < ACCEPTANCE.bigMeals],
+    ["sleeps", record.sleeps < ACCEPTANCE.sleeps],
+    ["rested wakes", record.restedWakes < ACCEPTANCE.restedWakes],
+    ["walked", record.walked < ACCEPTANCE.walked],
+  ];
+  return items.filter(([, missed]) => missed).map(([name]) => name);
 }

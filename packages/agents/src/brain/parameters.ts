@@ -77,6 +77,26 @@ export const REST_SCORE = 250;
 export const COMMITMENT = 100;
 export const SWITCH_MARGIN = 50;
 
+/** The turns an exploring being tries from its heading, in order: ahead, then wider each side. */
+export const TURNS: readonly number[] = Object.freeze([0, 1, 7, 2, 6, 3, 5, 4]);
+
+/**
+ * The legs a search tries from the offset (dx, dy) of the being from its anchor, in order, as
+ * multiples of a tangent step counterclockwise around the anchor and of a radial step away from
+ * it: around first, then around and out, then out. Every one of them ends farther from the
+ * anchor than the being is.
+ */
+export const SPIRAL_LEGS: readonly (readonly [number, number])[] = Object.freeze([
+  Object.freeze([1, 0] as const),
+  Object.freeze([1, 1] as const),
+  Object.freeze([0, 1] as const),
+  Object.freeze([1, 2] as const),
+  Object.freeze([2, 0] as const),
+  Object.freeze([0, 2] as const),
+  Object.freeze([-1, 1] as const),
+  Object.freeze([-1, 0] as const),
+]);
+
 /** How far a wandering being aims along its heading. */
 export const WANDER_REACH = 16;
 
