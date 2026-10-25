@@ -125,7 +125,9 @@ Every failure is an `EngineError` with a `code` (`invalid_value` here, `tick_ove
 
 A digest detects accidental divergence: a replay, a recovery, or a replica that computed something
 else. Code: `packages/engine/src/digest/`, `src/canonical/utf8.ts`, and `src/int.ts`. Tests:
-`packages/engine/test/` (`murmur3`, `digest`, `lanes`, `utf8`, and `int`).
+`packages/engine/test/` (`murmur3`, `digest`, `lanes`, `utf8`, and `int`). `int.ts` also holds
+`floorDiv(a, b)`, ⌊a / b⌋, and `floorMod(a, b)`, in [0, b), for a safe integer `a` and a positive safe
+integer `b` that the caller guarantees: both are exact, and neither returns -0.
 
 `digest(value)` is MurmurHash3 x86_128 with seed 0 over the UTF-8 bytes of `canonicalize(value)`,
 written as the words h1, h2, h3, and h4 in 8 lowercase hexadecimal digits each: 32 characters. A
@@ -206,6 +208,48 @@ What the generator does not do:
   ruleset check that rejects colliding stream ids, streams shared by two owners, and the reserved
   `engine.` prefix is part of [the world](#world).
 
+### ChaCha20
+
+Terrain draws from the ChaCha20 block function of RFC 8439 §2.3, with 20 fixed rounds, keyed by the
+terrain seed and never by anything derived from the world seed
+([ADR 0021](../decisions/0021-procedural-world.md)). Code: `packages/engine/src/rng/chacha.ts`,
+which reads words through `src/rng/words.ts`, as `mix32` does. Tests:
+`packages/engine/test/chacha.test.ts`.
+
+| Function | Contract |
+|---|---|
+| `chacha20Block(key, input)` | One block. `key` is 8 u32 words and `input` 4 u32 words, which become state words 12 to 15 (in RFC 8439, the block counter and the nonce). It returns a fresh array of 16 u32 words: the state after the rounds plus the initial state, word by word modulo 2^32, which is the RFC's serialized block read as little-endian words. Each word is read once, by index, as `mix32` reads its key, with the same messages; all problems are reported at once, as `invalid_value`, at `/key`, `/key/i`, `/input`, and `/input/i` |
+| `new ChaCha20Key(key)` | Validates and copies the key once, with the same issues as `chacha20Block`, for hot loops |
+| `prepared.blockInto(input, output)` | Writes the block for the first 4 words of the `Uint32Array` `input` to words 0 to 15 of the `Uint32Array` `output`, without validating or allocating. The caller guarantees the lengths. `input` is read before `output` is written, so the two may share memory. Each prepared key has working words of its own, so keys share no state |
+
+The rounds keep the state in an `Int32Array` with a quarter-round helper: about 225 ns per block on
+the two-core Codespace (Bun 1.4.4, indicative), against about 130 ns with the 16 words in local
+variables, which no function of 50 lines or fewer can hold. The lint limit stays.
+
+What the tests check:
+
+- the block function vectors of RFC 8439 (§2.3.2 and appendix A.1, #1 to #5), each against the
+  serialized bytes and the final state words that the RFC prints;
+- two blocks whose key and input words have the high bit set, which no RFC vector has,
+  cross-checked against OpenSSL 3.5.8's `chacha20` when they were written;
+- every validation problem with its path, reported together, holes and getters included;
+- `blockInto` equals `chacha20Block` on 1,024 random blocks, all distinct; it leaves its inputs
+  unchanged, writes only words 0 to 15, and two prepared keys interleaved give what each gives alone;
+- when the tests were written, each deliberate defect made them fail: a wrong rotation, no final
+  addition, swapped diagonal words, 18 rounds, reversed input words, a wrong constant, a key buffer
+  shared by all keys, unchecked holes and lengths, a word read twice, and a write past word 15.
+
+What it guarantees, and what it does not:
+
+- **Determinism.** The same key and input give the same words on every ECMAScript engine, because
+  the block uses only 32-bit addition, xor, and rotation, which ECMA-262 defines exactly.
+- **Unpredictability, under an assumption.** Without the key, blocks nobody observed cannot be
+  computed from observed ones, under the standard assumption that ChaCha20 is a pseudorandom
+  function with a 256-bit key. Public cryptanalysis supports it; nothing proves it.
+- **Generator security.** It also needs the terrain seed to stay secret (C3) and no two uses to
+  share an input. Observed terrain still reveals the dominant shape within the coarsest lattice cell
+  it touches, and nothing here replaces the kernel's `ctr-mix32@1`.
+
 ## Time
 
 The engine knows only ticks (ADR 0020). Code: `packages/engine/src/time/tick.ts`. Tests:
@@ -220,6 +264,9 @@ The engine knows only ticks (ADR 0020). Code: `packages/engine/src/time/tick.ts`
   needs no division.
 - Anything that is not a tick, or a seconds per tick that is not a positive safe integer, throws
   `invalid_value` with every invalid argument.
+- The host's view and the tick context expose the world's `simSecondsPerTick`. The host's read
+  throws `world_faulted` once the world is poisoned and `world_busy` during a step; the context's
+  read throws `context_expired` after its step returns ([ADR 0021](../decisions/0021-procedural-world.md)).
 
 Pacing ticks in real time (`TICK_RATE_HZ`) belongs to the scheduler (T6). The calendar belongs to
 worldgen, which defines the length of a day as a law of each world
@@ -430,6 +477,7 @@ method is a fault at the system or command that made it.
 | Method | Behavior |
 |---|---|
 | `tick`, `readChunk`, `readGlobal` | The tick being computed, and the live values. Their `DeepReadonly` types are a compiler aid only |
+| `simSecondsPerTick` | The world's seconds per tick, from its configuration, which never changes: an instant read inside the step that computes tick T equals one read outside at tick T ([ADR 0021](../decisions/0021-procedural-world.md)) |
 | `chunkKeys()` | A fresh array of the committed keys, sorted |
 | `writeChunk(key)`, `writeGlobal()` | The live value, marked as changed, so that the commit hashes it |
 | `createChunk(key, initial)` | Validates the key and copies `initial`. The chunk can be read and written at once, and `chunkKeys` lists it from the next tick on. A key that exists is a fault |
@@ -503,8 +551,8 @@ reads, and changes nothing. The rule for the read is exact:
 | poisons the world after it completed | That fault: `encodeSnapshot` whose recomputed root differs throws `integrity_violation`, which a refusal does not replace |
 | throws, with no refusal | Its own error: `invalid_value` at the value's path for `fullChecksum`, `readChunk`, and `readGlobal`, and `integrity_violation` for the encoders |
 
-`chunkHashes`, `stateRoot`, `worldStatus`, `versionDifferences`, and the view's `tick` and
-`chunkKeys` read only what the engine keeps (cached digests, keys, the kernel, and the header), so
+`chunkHashes`, `stateRoot`, `worldStatus`, `versionDifferences`, and the view's `tick`,
+`simSecondsPerTick`, and `chunkKeys` read only what the engine keeps (cached digests, keys, the kernel, and the header), so
 no trap can run during them. `world-reentry.test.ts` checks each reader against `step`,
 `readView`, and `encodeSnapshot` called from a trap, each way a trap can fail after a refusal, an
 encoding that poisons the world after a trap caught a refusal, and each reader's own error when a
@@ -791,7 +839,7 @@ it. The list therefore stays one list, in one override.
 | `canonical/encode.ts` | The global `JSON` | `global-json.grit` |
 | `canonical/value.ts` | The global `Map`, to look up the objects a walk has entered; it never iterates one | `global-map.grit` |
 | `step/context.ts` | The global `Map`, to look up the draw sequences of a tick by stream and id; it never iterates one | `global-map.grit` |
-| `int.ts` | The global `Math`, for `Math.imul` and `Math.floor`, which ECMA-262 defines exactly | `global-math.grit` |
+| `int.ts` | The global `Math`, only as `Math.imul` and `Math.floor` (called or used as values), which ECMA-262 defines exactly; `int-math.grit`, registered for `int.ts` alone, rejects every other reference to `Math` | `global-math.grit` (excepted), `int-math.grit` |
 
 A global's plugin reports every reference to the name outside a type: member access, calls, `new`, aliasing,
 arguments, shorthand properties, and `typeof`, even where a local declaration shadows the global.
@@ -800,7 +848,8 @@ rejected everywhere by Biome's recommended `noGlobalAssign`.
 
 `tests/repo/engine-lint.test.ts` proves that each plugin reports those references and not names,
 keys, or types; that each exception covers its exact path; that look-alike paths are still rejected;
-and that every other purity rule applies to the excepted files.
+that every other purity rule applies to the excepted files; and that `int-math.grit` holds `int.ts`
+to `Math.imul` and `Math.floor` and applies to no other file.
 
 ## Determinism suite
 
