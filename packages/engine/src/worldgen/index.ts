@@ -51,4 +51,11 @@ export {
   MIN_CELL,
   MIN_CHUNK,
 } from "./space.ts";
+export {
+  generateChunk,
+  sampleRegion,
+  type TerrainChunk,
+  type TerrainRegion,
+  terrainDigest,
+} from "./terrain.ts";
 export { WORLDGEN_VERSION } from "./version.ts";

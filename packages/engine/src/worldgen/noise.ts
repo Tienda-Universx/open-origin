@@ -278,8 +278,14 @@ function addOctave(sums: Float64Array, grid: OctaveGrid): void {
   }
 }
 
-/** The fBm of `spec` over `rect`, row by row, for inputs that sampleNoiseRegion validated. */
-function noiseRegion(key: ChaCha20Key, spec: NoiseSpec, rect: CellRect): Int32Array {
+/**
+ * Not for hosts: the fBm of `spec` over `rect`, row by row, in a fresh array, as
+ * sampleNoiseRegion returns it, without validating anything. Worldgen's own modules call it after
+ * validating their inputs once, so that one call can sample several fields under one key.
+ * Precondition: `key` is the terrain seed's, `spec` is within NOISE_BOUNDS, and `rect` passed
+ * readRegion.
+ */
+export function noiseRegion(key: ChaCha20Key, spec: NoiseSpec, rect: CellRect): Int32Array {
   const sums = new Float64Array(rect.width * rect.height);
   let wavelength = spec.wavelength;
   let amplitude = spec.amplitude;
@@ -409,9 +415,10 @@ function endsInside(start: number, length: number, path: string, sink: IssueSink
  * The host value `value` as a region, a fresh record; undefined after every problem is reported
  * under /rect. Its first cell is read as readCell reads a cell (space.ts), its width and height
  * are integers from 1 to 256, and its last cell must lie in the world, which is checked once the
- * first cell, the width, and the height are valid.
+ * first cell, the width, and the height are valid. Worldgen's regions share these rules, so
+ * terrain reads its regions here too.
  */
-function readRegion(value: unknown, sink: IssueSink): CellRect | undefined {
+export function readRegion(value: unknown, sink: IssueSink): CellRect | undefined {
   const shape = "the region must be a record { x, y, width, height }";
   if (!expectRecord(value, "/rect", shape, sink)) return undefined;
   const first = readCell(value, "/rect", sink);

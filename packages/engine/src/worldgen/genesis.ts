@@ -97,12 +97,21 @@ const MAX_WAVELENGTH = 0x1_0000;
 const MAX_DAY_LENGTH = 0x10_0000_0000;
 
 /**
+ * 2^28, the steepest lapse per unit of relief amplitude: |lapse.num| × amplitude ≤ 2^28 × lapse.den
+ * keeps the lapse term below 1.56 × 10^9 in magnitude, so that thermalBase fits an Int32Array
+ * (terrain.ts, bounds). Both products stay below 2^49.
+ */
+const STEEPEST_LAPSE = 0x1000_0000;
+
+/**
  * The bounds of every genesis parameter, which keep every intermediate value of worldgen a safe
  * integer. Two bounds depend on another parameter: a wavelength is at least 8·2^(octaves − 1), so
  * the finest octave spans 8 cells or more (its `min` here is for one octave), and radiance's night
- * is at most its peak. One rule joins the day's two parameters: its light period, lightPeriod(day),
- * lasts at least one second, so no day of 1 second is valid. Counts bound the lengths of the lists.
- * Frozen at every level.
+ * is at most its peak. Two rules join parameters, and neither is a range of this table: the day's
+ * light period, lightPeriod(day), lasts at least one second, so no day of 1 second is valid; and
+ * the lapse is no steeper than the relief allows, |lapse.num| × relief.amplitude ≤ 2^28 ×
+ * lapse.den, so that thermalBase fits an Int32Array. Counts bound the lengths of the lists. Frozen
+ * at every level.
  */
 export const GENESIS_BOUNDS = Object.freeze({
   terrainSeedWords: range(8, 8),
@@ -366,23 +375,47 @@ function readLiquid(value: unknown, path: string, sink: IssueSink): LiquidLaw | 
   return level === undefined ? undefined : Object.freeze({ level });
 }
 
-function readLapse(value: unknown, path: string, sink: IssueSink): Ratio | undefined {
+/**
+ * The lapse; with the relief's amplitude A, |num| × A must be at most 2^28 × den (STEEPEST_LAPSE).
+ * The rule is checked only when num, den, and the amplitude are all in bounds, `amplitude` being
+ * undefined otherwise, and reported at the lapse itself, as both of its members decide it.
+ */
+function readLapse(
+  value: unknown,
+  path: string,
+  amplitude: number | undefined,
+  sink: IssueSink,
+): Ratio | undefined {
   const lapse = readRecord(value, path, ["num", "den"], sink);
   if (lapse === undefined) return undefined;
   const bounds = GENESIS_BOUNDS.laws.thermal.lapse;
   const num = lapse.int("num", bounds.num);
   const den = lapse.int("den", bounds.den);
   if (num === undefined || den === undefined) return undefined;
-  return Object.freeze({ num, den });
+  const law = Object.freeze({ num, den });
+  if (amplitude === undefined) return law;
+  // 0 − num, not −num, which is −0 for 0.
+  const steepness = (num < 0 ? 0 - num : num) * amplitude;
+  if (steepness <= STEEPEST_LAPSE * den) return law;
+  sink.report(
+    path,
+    `the lapse ${num}/${den} is too steep for a relief of amplitude ${amplitude}: |num| × amplitude is ${steepness}, and it must be at most 2^28 × den, ${STEEPEST_LAPSE * den}, so that thermalBase fits an Int32Array`,
+  );
+  return undefined;
 }
 
-function readThermal(value: unknown, path: string, sink: IssueSink): ThermalLaw | undefined {
+function readThermal(
+  value: unknown,
+  path: string,
+  amplitude: number | undefined,
+  sink: IssueSink,
+): ThermalLaw | undefined {
   const thermal = readRecord(value, path, ["base", "spread", "lapse", "diurnal"], sink);
   if (thermal === undefined) return undefined;
   const bounds = GENESIS_BOUNDS.laws.thermal;
   const base = thermal.int("base", bounds.base);
   const spread = thermal.int("spread", bounds.spread);
-  const lapse = readLapse(thermal.value("lapse"), thermal.at("lapse"), sink);
+  const lapse = readLapse(thermal.value("lapse"), thermal.at("lapse"), amplitude, sink);
   const diurnal = thermal.int("diurnal", bounds.diurnal);
   if (base === undefined || spread === undefined || lapse === undefined) return undefined;
   return diurnal === undefined ? undefined : Object.freeze({ base, spread, lapse, diurnal });
@@ -399,12 +432,18 @@ function readRadiance(value: unknown, path: string, sink: IssueSink): RadianceLa
   return Object.freeze({ peak, night });
 }
 
-function readLaws(value: unknown, path: string, sink: IssueSink): Laws | undefined {
+/** The laws; `amplitude` is the relief's, for the lapse rule, or undefined when it is invalid. */
+function readLaws(
+  value: unknown,
+  path: string,
+  amplitude: number | undefined,
+  sink: IssueSink,
+): Laws | undefined {
   const laws = readRecord(value, path, ["day", "liquid", "thermal", "radiance"], sink);
   if (laws === undefined) return undefined;
   const day = readDay(laws.value("day"), laws.at("day"), sink);
   const liquid = readLiquid(laws.value("liquid"), laws.at("liquid"), sink);
-  const thermal = readThermal(laws.value("thermal"), laws.at("thermal"), sink);
+  const thermal = readThermal(laws.value("thermal"), laws.at("thermal"), amplitude, sink);
   const radiance = readRadiance(laws.value("radiance"), laws.at("radiance"), sink);
   if (day === undefined || liquid === undefined || thermal === undefined) return undefined;
   return radiance === undefined ? undefined : Object.freeze({ day, liquid, thermal, radiance });
@@ -489,6 +528,23 @@ function readTerrain(value: unknown, path: string, sink: IssueSink): TerrainPara
   return Object.freeze({ relief, substrate, deposits });
 }
 
+/** The own member `name` of `value`, a part of the canonical copy, if it is a record. */
+function memberOf(value: unknown, name: string): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return Object.getOwnPropertyDescriptor(value, name)?.value;
+}
+
+/**
+ * The relief's amplitude in `copy`, the canonical copy of a genesis, if it is an integer within its
+ * bounds; otherwise undefined, and readRelief reports why. The laws come before the terrain in
+ * schema order, so the lapse rule reads the amplitude ahead, without reporting anything.
+ */
+function reliefAmplitude(copy: unknown): number | undefined {
+  const amplitude = memberOf(memberOf(memberOf(copy, "terrain"), "relief"), "amplitude");
+  const bounds = GENESIS_BOUNDS.terrain.relief.amplitude;
+  return typeof amplitude === "number" && inRange(amplitude, bounds) ? amplitude : undefined;
+}
+
 /**
  * Reads the host value `value` as a genesis and reports every problem to `sink`: first the
  * canonical walk's, in canonical order, then the schema's, in schema order. The genesis it returns
@@ -508,7 +564,7 @@ function readGenesis(value: unknown, sink: IssueSink): Genesis | undefined {
     },
     sink,
   );
-  const laws = readLaws(genesis.value("laws"), "/laws", sink);
+  const laws = readLaws(genesis.value("laws"), "/laws", reliefAmplitude(copy), sink);
   const terrain = readTerrain(genesis.value("terrain"), "/terrain", sink);
   if (terrainSeed === undefined || laws === undefined || terrain === undefined) return undefined;
   return Object.freeze({ terrainSeed, laws, terrain });
@@ -550,8 +606,8 @@ export function defaultGenesis(terrainSeed: readonly number[]): Genesis {
       relief: { wavelength: 2048, octaves: 7, amplitude: 60_000 },
       substrate: { cell: 64, weights: [5, 3, 2, 1] },
       deposits: [
-        { wavelength: 256, octaves: 3, threshold: 600, peak: 1000 },
-        { wavelength: 512, octaves: 2, threshold: 700, peak: 1000 },
+        { wavelength: 256, octaves: 3, threshold: 300, peak: 1000 },
+        { wavelength: 512, octaves: 2, threshold: 450, peak: 1000 },
       ],
     },
   });
