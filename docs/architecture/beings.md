@@ -498,7 +498,8 @@ The spawn areas, computed with this rule on `worldgen@1` before any law of life 
 | `heldout/5` | 89,380 (8.52%) | 786 | (10, −10) | 9,216 | 901 |
 | `heldout/6` | 83,655 (7.98%) | 736 | (−5, −5) | 9,216 | 1,766 |
 
-The scenario fixture of T4-7 recomputes this table, and a test pins it.
+`packages/agents/test/support/scenario.ts` builds the scenario of a label by this rule, and
+`packages/agents/test/scenario.test.ts` recomputes this table from the terrain alone and pins it.
 
 ### Ecological targets
 
