@@ -126,11 +126,16 @@ describe("floorDiv and floorMod", () => {
 
   test("agree with BigInt for random safe integers and divisors of every size", () => {
     const random = new Sfc32(21);
+    let largeDivisors = 0;
     for (let sample = 0; sample < 5_000; sample += 1) {
       const a = randomSafe(random);
-      const b = Math.max(1, Math.abs(randomSafe(random)) >>> (random.next() % 53));
+      // Dividing, not shifting: `>>>` would truncate the divisor to 32 bits.
+      const b = Math.max(1, Math.floor(Math.abs(randomSafe(random)) / 2 ** (random.next() % 53)));
+      if (b > 0xffffffff) largeDivisors += 1;
       expect([floorDiv(a, b), floorMod(a, b)]).toEqual(floorReference(a, b));
     }
+    // The divisors span every size, beyond 32 bits too.
+    expect(largeDivisors).toBeGreaterThan(500);
   });
 
   test.each([
