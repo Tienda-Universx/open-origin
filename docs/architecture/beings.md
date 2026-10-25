@@ -13,7 +13,7 @@ requests implement, and the preregistration of its scenarios.
 | Senses and validation of intentions | `packages/engine/src/beings`: `senses.ts`, `locomotion.ts`, `intention.ts`; `sampleSurface` in `worldgen/terrain.ts` | T4-3 |
 | Navigation | `packages/agents/src/navigation` | T4-4 |
 | The tick, actions, spawn, and occupancy | `packages/engine/src/beings`: `body.ts`, `light.ts`, `activity.ts`, `env.ts`, `advance.ts`, `resolve.ts`, `system.ts`, `ruleset.ts` | T4-5a |
-| Contests, incapacity, fuzz, and call counts | tests of the same modules | T4-5b (*planned*) |
+| Contests, incapacity, fuzz, and call counts | `packages/engine/test`: `beings-contest.test.ts`, `beings-fuzz.test.ts` | T4-5b |
 | The brain `utility@1` | `packages/agents` | T4-6 (*planned*) |
 | Scenarios, survival, and controls | `packages/agents/test`, `bench` | T4-7 (*planned*) |
 
@@ -398,6 +398,36 @@ judged, steps due at exhaustion dropped, no event for the interrupted activity o
 a sleep that waits out a target it met, no wake at recovery, the next planned step run instead of
 asking the brain, a condition ignored at the tick the activity ends, and a walk whose last step
 arrived at exhaustion reported as interrupted.
+
+### What the tests check (contests, incapacity, fuzz)
+
+`packages/engine/test/beings-contest.test.ts` and `beings-fuzz.test.ts`:
+
+- three rivals on a cell with two whole bites, and with two bites and a part: the drawn order, the
+  bites of each, their nutrition and the cell's depletion read from the state, and the outcome of
+  the one left short; two rivals that the food covers, at the boundary, eat without a contest;
+- the draw is keyed by the lowest claimant id: rivals 1, 2, 3 and rivals 1, 2, 4 are ordered alike
+  on each of 8 seeds, which draw different orders;
+- across 120 world seeds, the rival left short is each id about as often: the chi-square statistic
+  of the three counts stays below 13.82, its 0.999 quantile with 2 degrees of freedom;
+- with faster laws, a starving being incapacitated at the exact tick its health reaches 0, its walk
+  refused or interrupted where it stands, a meal allowed, and its recovery at the exact tick its
+  health passes `recoverAbove`; with death enabled, the being dies, leaves its chunk, and the chunk
+  leaves the occupancy index at the next day;
+- three seeded runs of 250 ticks with random spawns, valid and not, and a random brain whose choices
+  come from its draws, valid and not, on a patch of food: after every tick, ids are unique, each
+  being is in the chunk of its cell, chunks with beings ⊆ occupancy ⊆ materialized chunks, `due` is
+  the least `wake`, every `wake` is after the tick, every cell's food lies within its deposit, and
+  each cell lost exactly what the beings on it ate; beings ate in every run;
+- a quiet tick of ten beings reads each listed chunk once, never lists every chunk, and writes the
+  global value at most once; the daily prune and the daily processing read each chunk once more.
+
+When these tests were written, each of 14 deliberate defects made them fail: contests ordered by
+id, contests keyed by the highest claimant id, a contest when the food covers every claim, no
+contests, no wake at recovery, a walk not interrupted at the collapse, death ignored, food taken
+twice, a grant of the whole claim, the occupancy index not grown, depletion not recorded, a stale
+`due`, a being left in the chunk it left, and every chunk listed each tick. One more, a wake
+at the tick itself, is equivalent: every candidate for `wake` already lies after the tick.
 
 ## Preregistration
 
