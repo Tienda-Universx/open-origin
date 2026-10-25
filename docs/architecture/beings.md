@@ -126,6 +126,16 @@ At each decision the engine builds a square window of side `2R + 1` centered on 
 | `self` | The being's own state, including `behavior`, `outcome`, and `cooldowns` |
 | `draws` | Two u32 draws from the system's stream `beings.brain`, keyed by the being |
 
+Indexing, shared by the engine, the brain, and every oracle:
+
+- the window's cell `(x, y)` has index `(y − origin.y)·side + (x − origin.x)`, and its edge in
+  direction d is entry `index·8 + d` of `stepMs`; the being's own cell is the center, so `origin`
+  is its cell minus `(R, R)`;
+- direction d moves by `(dx, dy)`: 0 E `(1, 0)`, 1 NE `(1, 1)`, 2 N `(0, 1)`, 3 NW `(−1, 1)`,
+  4 W `(−1, 0)`, 5 SW `(−1, −1)`, 6 S `(0, −1)`, 7 SE `(1, −1)`: counterclockwise from east, with y
+  growing northward, the same axes as worldgen's cells;
+- a walk is a string of the digits of its directions, from the being's cell.
+
 A step lasts `⌈stepMs·(1000 or 1414)/1000 · (1 + risePenalty·|Δelevation| + wadePenalty·depth)⌉`
 milliseconds. Terrain is read by regions with `sampleRegion` (or a reader of selected fields that
 returns exactly its values), through a memo local to one run of the system. The arrays are copied for
