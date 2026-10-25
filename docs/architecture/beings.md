@@ -11,7 +11,7 @@ requests implement, and the preregistration of its scenarios.
 | Layering and module-state scans | `tests/repo/engine-purity.ts` | T4-2 |
 | State, laws, and exact arithmetic | `packages/engine/src/beings`: `rates.ts`, `food.ts`, `laws.ts`, `being.ts`, `chunk.ts`, `occupancy.ts`, `contracts.ts` | T4-2 |
 | Senses and validation of intentions | `packages/engine/src/beings` | T4-3 (*planned*) |
-| Navigation | `packages/agents` | T4-4 (*planned*) |
+| Navigation | `packages/agents/src/navigation` | T4-4 |
 | The tick, actions, and contests | `packages/engine/src/beings` | T4-5 (*planned*) |
 | The brain `utility@1` | `packages/agents` | T4-6 (*planned*) |
 | Scenarios, survival, and controls | `packages/agents/test`, `bench` | T4-7 (*planned*) |
@@ -215,6 +215,51 @@ brain version composes each species with its brain, in species order.
 explore, and rest. It keeps hysteresis, a commitment bonus with a minimum margin to switch, and
 cooldowns on failed targets. It plans with one Dijkstra over the window for food and A* with an
 octile heuristic for a single target; ties break by (f, h, cell index).
+
+## Navigation
+
+`@open-origin/agents` searches the window of the senses (`packages/agents/src/navigation`):
+
+- `dijkstra(grid, start)` gives, for every cell, the exact duration in milliseconds of its shortest
+  walk from `start`, or −1 when no walk reaches it, the direction of its last step, and the number
+  of cells expanded. `pathTo(paths, target)` returns that walk as direction digits: `""` for the
+  start, undefined for an unreachable cell.
+- `aStar(grid, start, goal, bounds)` returns `{ durationMs, path, expanded }` for a shortest walk to
+  one goal, or undefined. `bounds = { straight, diagonal }` are the shortest possible orthogonal and
+  diagonal steps of the species (the engine's `minimumSteps`), integers with
+  `0 < straight ≤ diagonal ≤ 2·straight` and `straight < 2^31`. The heuristic is octile,
+  `straight·(dmax − dmin) + diagonal·dmin` (`octileMs`), admissible and consistent under those
+  bounds; a grid with a passable step shorter than its bound is rejected.
+
+Contract and guarantees:
+
+- A grid is `{ side, edgeMs }`: `side` from 1 to 65, and `edgeMs` an `Int32Array` of `side²·8`
+  entries indexed as in [Senses](#senses), each −1 or a positive duration. A step that leaves the
+  window is impassable whatever its entry. Durations add up as doubles, exact below 2^53, so a walk
+  of 65² − 1 steps of 2^31 − 1 ms stays exact.
+- Determinism: an indexed binary heap over typed arrays orders cells by (g, cell index) for
+  Dijkstra and by (f, h, cell index) for A*. Each cell is expanded at most once, which bounds the
+  nodes expanded by the window's cell count; a cell keeps the first walk that reached it with its
+  shortest duration, and edges are offered in direction order, so equal-duration alternatives
+  always resolve the same way.
+- Invalid inputs throw `EngineError("invalid_value")` with every issue at its path: `/grid`,
+  `/grid/side`, `/grid/edgeMs`, `/grid/edgeMs/<i>`, `/start`, `/goal`, `/target`,
+  `/bounds/straight`, `/bounds/diagonal`, `/dx`, `/dy`, and `/paths/arrival` when a caller changed
+  the arrival directions of a result so that they no longer lead back to its start.
+- Every buffer belongs to one search: no module state, `Map`, `Set`, `Math`, `JSON`, or key
+  enumeration.
+- A route may exceed the 64 steps a walk allows: the brain walks its first part and decides again.
+
+### What the tests check
+
+`packages/agents/test`: an O(V²) Dijkstra with no heap on 1,000 seeded random windows of sides 1 to
+17, with corner cutting as the engine encodes it; breadth-first search on uniform-cost windows; and
+an enumeration of every simple walk on 4 × 4 windows (40 pairs). On every random window the costs
+equal the oracle's, every path is valid and sums to its cost, reachability agrees, and the heuristic
+is admissible and consistent; ties, window edges, and every validation error are pinned. When the
+tests were written, each of 12 deliberate defects made them fail; two more, off-by-one steps at the
+window's north and south edges, are equivalent, because the index they reach lies outside the
+window's arrays, which every caller already treats as impassable.
 
 ## The tick
 
