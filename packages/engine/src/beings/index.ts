@@ -4,6 +4,20 @@
  */
 export { type Depletion, takenAt } from "./food.ts";
 export {
+  checkLife,
+  defaultLife,
+  LIFE_BOUNDS,
+  LIFE_VERSION,
+  type LifeConfig,
+  lifeSeal,
+  type NutritionLaw,
+  type RestLaw,
+  type Species,
+  STAGES,
+  sealedLifeIssues,
+  sealLife,
+} from "./laws.ts";
+export {
   ceilDiv,
   levelAt,
   NEED_MAX,
