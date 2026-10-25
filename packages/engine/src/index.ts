@@ -42,3 +42,4 @@ export { createWorld } from "./world/create.ts";
 export { versionDifferences } from "./world/versions.ts";
 export { readView } from "./world/view.ts";
 export { World, type WorldStatus, worldStatus } from "./world/world.ts";
+export * as worldgen from "./worldgen/index.ts";

@@ -1,0 +1,42 @@
+/**
+ * The public worldgen API (ADR 0021), exported by the engine as the `worldgen` namespace. The
+ * readers that report to an issue sink and sharedGenesis are building blocks for worldgen's own
+ * modules, so they are not exported here.
+ */
+export {
+  type DayLaw,
+  type Deposit,
+  defaultGenesis,
+  GENESIS_BOUNDS,
+  type Genesis,
+  genesisIssues,
+  genesisOf,
+  genesisSeal,
+  type IntRange,
+  type Laws,
+  type LiquidLaw,
+  PreparedGenesis,
+  prepareGenesis,
+  type RadianceLaw,
+  type Ratio,
+  type Relief,
+  type Substrate,
+  sealedGenesisIssues,
+  sealOf,
+  type TerrainParams,
+  type ThermalLaw,
+} from "./genesis.ts";
+export {
+  type CellCoord,
+  CHUNK_CELLS,
+  cellIndex,
+  cellOffset,
+  chunkFirstCell,
+  chunkKeyIssues,
+  chunkOfCell,
+  MAX_CELL,
+  MAX_CHUNK,
+  MIN_CELL,
+  MIN_CHUNK,
+} from "./space.ts";
+export { WORLDGEN_VERSION } from "./version.ts";
