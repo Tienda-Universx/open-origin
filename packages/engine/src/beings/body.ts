@@ -14,7 +14,7 @@ import { ceilDiv, levelAt, NEED_MAX, type Ratio, secondsToReach, type Trend } fr
 export type Body = { readonly nutrition: number; readonly rest: number; readonly health: number };
 
 /** The rates that move a being's needs and health from its anchor. */
-export type Rates = { readonly nutrition: Trend; readonly rest: Trend; readonly health: Trend };
+type Rates = { readonly nutrition: Trend; readonly rest: Trend; readonly health: Trend };
 
 const STILL: Ratio = Object.freeze({ num: 0, den: 1 });
 
@@ -61,7 +61,7 @@ function healthTrend(law: Species["health"], body: Body): Trend {
 }
 
 /** The body `seconds` after `body`, each value moved by its rate and clamped to [0, NEED_MAX]. */
-export function bodyAfter(body: Body, rates: Rates, seconds: number): Body {
+function bodyAfter(body: Body, rates: Rates, seconds: number): Body {
   return {
     nutrition: levelAt(body.nutrition, rates.nutrition, seconds),
     rest: levelAt(body.rest, rates.rest, seconds),
@@ -153,6 +153,6 @@ export function sameRates(a: Rates, b: Rates): boolean {
 }
 
 /** The simulated seconds from the start of `from` to the start of `to`. */
-export function secondsBetween(from: Tick, to: Tick, simSecondsPerTick: number): number {
+function secondsBetween(from: Tick, to: Tick, simSecondsPerTick: number): number {
   return simSeconds(to, simSecondsPerTick) - simSeconds(from, simSecondsPerTick);
 }

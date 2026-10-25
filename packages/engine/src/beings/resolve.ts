@@ -160,7 +160,7 @@ function lightTicks(env: BeingsEnv, work: Work): (Tick | undefined)[] {
  * changed, and kept on its old anchor otherwise, so that its values never depend on how often it
  * was processed; with its next wake, at least the next tick and at most a day away.
  */
-export function finalBeing(env: BeingsEnv, work: Work): Being {
+function finalBeing(env: BeingsEnv, work: Work): Being {
   const old = work.old;
   const rates = ratesOf(work.species, work.activity.kind, work.body);
   const before = ratesOf(work.species, old.activity.kind, storedBody(old as Being));

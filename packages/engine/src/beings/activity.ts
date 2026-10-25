@@ -12,7 +12,7 @@ type Eat = Extract<Activity, { kind: "eat" }>;
 type Idle = Extract<Activity, { kind: "idle" }>;
 
 /** The tick at which a moment `ms` simulated milliseconds after the start of `start` is reached. */
-export function tickAtMs(start: Tick, ms: number, simSecondsPerTick: number): Tick {
+function tickAtMs(start: Tick, ms: number, simSecondsPerTick: number): Tick {
   return start + ceilDiv(ms, simSecondsPerTick * 1000);
 }
 
