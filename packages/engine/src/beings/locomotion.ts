@@ -13,9 +13,6 @@ export type StepGeometry = {
   readonly diagonal: boolean;
 };
 
-/** Each penalty adds at most 2^30 ms, so a step lasts at most about 3 × 10^9 ms, below 2^32. */
-const PENALTY_CAP = 0x4000_0000;
-
 /** Thousandths of a flat step that an orthogonal and a diagonal step take: 1 and ⌊1000·√2⌋. */
 const ORTHOGONAL = 1000;
 const DIAGONAL = 1414;
@@ -23,14 +20,15 @@ const DIAGONAL = 1414;
 /**
  * The milliseconds of a step of `geometry` under `law`, or −1 when it rises more than `maxRise` or
  * enters liquid deeper than `maxWade`: ⌈f·(stepMs + ⌊rise·Δ⌋ + ⌊wade·depth⌋)/1000⌉, with f = 1000
- * for an orthogonal step and 1414 for a diagonal one. The caller guarantees a valid law, and a
- * non-negative rise and depth.
+ * for an orthogonal step and 1414 for a diagonal one. The caller guarantees a valid law, whose
+ * slowest step makes this at most 2^31 − 1 (laws.ts, SLOWEST_STEP_INNER), and a non-negative rise
+ * and depth.
  */
 export function stepDuration(law: Species["locomotion"], geometry: StepGeometry): number {
   if (geometry.rise > law.maxRise || geometry.depth > law.maxWade) return -1;
+  const cap = Number.MAX_SAFE_INTEGER;
   const extra =
-    scaledFloor(law.rise, geometry.rise, PENALTY_CAP) +
-    scaledFloor(law.wade, geometry.depth, PENALTY_CAP);
+    scaledFloor(law.rise, geometry.rise, cap) + scaledFloor(law.wade, geometry.depth, cap);
   const factor = geometry.diagonal ? DIAGONAL : ORTHOGONAL;
   return ceilDiv(factor * (law.stepMs + extra), 1000);
 }

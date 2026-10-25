@@ -318,10 +318,13 @@ Every intermediate stays below 2^53 at `GENESIS_BOUNDS`, and every field fits it
 | Function | Result | Problems |
 |---|---|---|
 | `sampleRegion(prepared, rect)` | The `TerrainRegion` of a rectangle, row by row, with the same rect rules and cap as the noise | `invalid_value` at `/prepared` and `/rect/...`, all at once |
+| `sampleSurface(prepared, rect, k)` | `{ elevation, deposit }`: the elevation and deposit `k` of a rectangle, each equal to the field of the same name from `sampleRegion`, computed by the same functions without the other fields. Added in T4 for the senses of beings ([0023](../decisions/0023-autonomous-beings.md)); it changes no output of `worldgen@1`, and a test compares it with `sampleRegion` cell for cell | `invalid_value` at `/prepared` and `/rect/...`, as `sampleRegion`, and at `/deposit` for an index the genesis has no deposit for |
 | `generateChunk(prepared, key)` | The region of the chunk, with its `key` (`TerrainChunk`) | `invalid_value` at `/key`, with the messages of `chunkKeyIssues` |
 | `terrainDigest(chunk)` | The digest of the chunk's fields | `invalid_value` for anything that is not a chunk: a record with a key, typed arrays of 1,024 cells, at most 8 deposits |
 
-Their cost is in [Measured cost](#measured-cost-indicative).
+Their cost is in [Measured cost](#measured-cost-indicative). `sampleSurface` skips the substrate, the thermal base, and the other deposits: on a 49 × 49 region it took about a quarter of `sampleRegion`'s time (0.78 against 2.98 ms on a loaded Codespace, indicative).
+
+`liquidLevel(genesis)` is exported too: the level below which a cell is under liquid, so that a ruleset computes `liquid.depth` with the same formula as `observe`.
 
 ### The terrain digest
 

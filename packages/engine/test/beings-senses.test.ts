@@ -12,8 +12,14 @@ const { DIRECTIONS, acceptIntention, defaultLife, minimumSteps, senseWindow, ste
 type Species = beings.Species;
 type Window = beings.SensedWindow;
 
-const [SPECIES] = defaultLife().species;
-if (SPECIES === undefined) throw new Error("the default laws have a species");
+/** The default species, which the default laws always have. */
+function defaultSpecies(): Species {
+  const [species] = defaultLife().species;
+  if (species === undefined) throw new Error("the default laws have a species");
+  return species;
+}
+
+const SPECIES = defaultSpecies();
 const LAW = SPECIES.locomotion;
 
 describe("stepDuration", () => {
@@ -31,17 +37,19 @@ describe("stepDuration", () => {
     expect(stepDuration(LAW, { rise: 0, depth: 601, diagonal: false })).toBe(-1);
   });
 
-  test("stays within 2^32 milliseconds for the steepest laws the bounds allow", () => {
+  test("lasts at most 2^31 − 1 ms for the slowest step a valid law allows", () => {
+    // stepMs + ⌊rise·maxRise⌋ lies 594 ms below SLOWEST_STEP_INNER, the bound of the laws.
     const steep = {
-      stepMs: 3_600_000,
-      maxRise: 0x4000_0000,
-      rise: { num: 0x10_0000, den: 1 },
-      maxWade: 0x4000_0000,
-      wade: { num: 0x10_0000, den: 1 },
+      stepMs: 45_000,
+      maxRise: 1_518_684,
+      rise: { num: 1000, den: 1 },
+      maxWade: 0,
+      wade: { num: 0, den: 1 },
     };
-    const ms = stepDuration(steep, { rise: 0x4000_0000, depth: 0x4000_0000, diagonal: true });
-    expect(ms).toBeGreaterThan(0);
-    expect(ms).toBeLessThanOrEqual(0x1_0000_0000);
+    expect(steep.stepMs + steep.maxRise * steep.rise.num).toBe(beings.SLOWEST_STEP_INNER - 594);
+    const ms = stepDuration(steep, { rise: steep.maxRise, depth: 0, diagonal: true });
+    expect(ms).toBe(Math.ceil((1414 * (steep.stepMs + steep.maxRise * 1000)) / 1000));
+    expect(ms).toBeLessThanOrEqual(2 ** 31 - 1);
   });
 
   test("minimumSteps gives the cheapest orthogonal and diagonal steps, a ≤ b ≤ 2a", () => {
