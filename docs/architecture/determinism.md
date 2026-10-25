@@ -599,29 +599,32 @@ one machine, before and after a change to a hot path; never compare across machi
 
 | Measurement | Result |
 |---|---|
-| A tick with D = 10 small changed chunks, N = 1,000 / 10,000 / 100,000 / 1,000,000 | 72.1 / 73.3 / 73.5 / 71.9 µs |
-| A changed chunk of 1.0 KB of canonical text | 43 µs (25 MB/s) |
-| A changed chunk of 7.0 KB | 253 µs (28 MB/s) |
-| A changed chunk of 49.3 KB | 1,885 µs (27 MB/s) |
-| `encodeSnapshot` / `decodeSnapshot`, 0.2 MB | 9.1 ms (23 MB/s) / 14.4 ms (14 MB/s) |
-| `encodeSnapshot` / `decodeSnapshot`, 10.2 MB | 468 ms (22 MB/s) / 891 ms (11 MB/s) |
-| Kernel memory per chunk (key, entry, term, index), N = 100,000 | 274 B |
-| MurmurHash3 x86_128 over 1 MiB | 2,481 MB/s |
-| Draws of one `DrawSequence` (`u32`) | 35.0 million per second |
+| A tick with D = 10 small changed chunks, N = 1,000 / 10,000 / 100,000 / 1,000,000 | 67.7 / 66.1 / 66.5 / 67.5 µs |
+| A changed chunk of 1.0 KB of canonical text | 42 µs (25 MB/s) |
+| A changed chunk of 7.0 KB | 261 µs (27 MB/s) |
+| A changed chunk of 49.3 KB | 1,723 µs (29 MB/s) |
+| `encodeSnapshot` / `decodeSnapshot`, 0.2 MB | 7.9 ms (26 MB/s) / 13.9 ms (15 MB/s) |
+| `encodeSnapshot` / `decodeSnapshot`, 10.2 MB | 454 ms (23 MB/s) / 877 ms (12 MB/s) |
+| Kernel memory per chunk (key, entry, term, index), N = 100,000 | 208 B |
+| MurmurHash3 x86_128 over 1 MiB | 1,948 MB/s |
+| Draws of one `DrawSequence` (`u32`) | 33.5 million per second |
 
 What they show:
 
 - A tick costs the same at every N, as the cost model says.
-- The pipeline of a changed chunk (canonical text, validation, term) runs at about 25 to 28 MB/s
+- The pipeline of a changed chunk (canonical text, validation, term) runs at about 25 to 29 MB/s
   per core. ADR 0020's prototype estimate was 55 to 80 MB/s, so it is about half as fast. One
   core at 5 Hz then handles about 5 to 6 MB of changed state per tick, not 11 to 16 MB; v0.1
-  needs a few KB. Hashing is not what limits it: it runs at about 2.5 GB/s.
+  needs a few KB. Hashing is not what limits it: it runs at about 2 to 2.5 GB/s.
 - The throughput is about the same from 1 KB to 50 KB, so above about 1 KB a changed chunk costs
   in proportion to its bytes. Below that, the fixed cost of each walk dominates, as the CPU
   profiles of [tally runs](#golden-fuzz-and-isolation) found.
-- The kernel keeps about 270 bytes per chunk. The 16 bytes of a 128-bit term are a small part of
-  that; the rest is JavaScript's objects, arrays, and strings for the key, the entry, and the index.
-  A million chunks would take about 270 MB before any chunk value.
+- The kernel keeps about 170 to 210 bytes per chunk: this run measured 208 B, and three separate
+  builds of 100,000 chunks 167 to 198 B. The 16 bytes of a 128-bit term are a small part of that; the rest is
+  JavaScript's objects, arrays, and strings for the key, the entry, and the index. A million chunks
+  would take about 200 MB before any chunk value. The memory rows read JSC's `heapSize` alone after
+  a full collection (`bench/measure.ts`), since it already holds the extra memory JSC tracks; the
+  figure of 274 B recorded before added `extraMemorySize` and counted that memory twice.
 
 ### What the tests check
 
@@ -853,8 +856,9 @@ to `Math.imul` and `Math.floor` and applies to no other file.
 
 ## Determinism suite
 
-The suite is the one harness that every ruleset runs: tally in T2, and the rulesets of T3 to T5,
-which ADR 0020 requires to pass it with audit on (plan §1 item 8, §2.5, §8). Code:
+The suite is the one harness that every ruleset runs: tally in T2, the probe ruleset in T3
+([worldgen integration](worldgen.md#integration)), and the rulesets of T4 and T5, which ADR 0020
+requires to pass it with audit on (plan §1 item 8, §2.5, §8). Code:
 `packages/engine/test/support/` (`determinism-suite.ts`, `determinism-records.ts`, and
 `resume-child.ts`), with its negative controls in `broken-rulesets.ts`. Tests:
 `packages/engine/test/determinism-suite.test.ts`.
@@ -871,7 +875,7 @@ the record of each tick: its checksum, events, changed chunks, and statistics, a
 | `audit` | A run under audit gives the same records, so the incremental root equals the full one at every tick | A write behind the barrier, at the tick it happens |
 | `resume` | At each cut, the snapshot of that tick, decoded with a fresh ruleset under audit, gives the same records from the next tick, and the same final snapshot text. The snapshots come from a run of their own, so an encoding that poisons its world changes no other run | Behavior that depends on insertion order, which a decoded world does not keep; state kept in the ruleset object; a write behind the barrier, which encoding refuses, and which audit finds at its tick even when only a resumed world makes it |
 | `child-resume` | The same, in a fresh child process for each child cut, also under audit | State kept at module level, which an in-process resume shares with the first run |
-| `interleave` | The world, a world with the second seed, and a replica of the first, sharing one ruleset object and stepped in a seeded random interleaving, give what each gives alone | State shared between worlds, through a module or the ruleset object |
+| `interleave` | The world, a world with the second seed, and a replica of the first, sharing one ruleset object and stepped in a seeded random interleaving, give what each gives alone: the first seed's worlds the reference run, and the second seed's world its run alone in a fresh child process | State shared between worlds, through the ruleset object or a module. A module cache keyed without the seed agrees with itself within one process, whose runs all start from what the first seed left in it, so only a process that has seen no other world can give the second seed's own run |
 
 It returns a report and asserts nothing, so the negative controls can prove that it fails. Each
 failure names its property, the first tick at which it failed, and, for a resume, the cut (for an
@@ -881,15 +885,17 @@ ran nothing shows, and holds the reference records and the final snapshot text.
 
 ### How a batch uses it
 
+The T3 subject, from `worldgen-suite.test.ts`:
+
 ```ts
 const report = await runDeterminismSuite({
-  ruleset: { module: import.meta.resolve("./fixtures/terrain-ruleset.ts"), name: "terrainRuleset" },
-  world: (seed, ruleset, audit) => terrainWorld(seed, ruleset, audit),
-  seeds: [[1, 2], [3, 4]],
-  ticks: 1_000,
-  commands: terrainCommands,
-  cuts: [0, 1, 37, 999],
-  childCuts: [37],
+  ruleset: { module: import.meta.resolve("./fixtures/probe-ruleset.ts"), name: "probeRuleset" },
+  world: probeWorld,
+  seeds: [[11, 22], [33, 44]],
+  ticks: 600,
+  commands: (tick) => SCRIPT.commands[tick - 1] ?? [],
+  cuts: CUTS, // around calendar boundaries and materializations, and at seeded random ticks
+  childCuts: CHILD_CUTS,
 });
 expect(report.failures).toEqual([]);
 ```
@@ -904,25 +910,37 @@ expect(report.failures).toEqual([]);
 - Cuts are ticks in [0, ticks), and a subject needs at least one, in `cuts` or `childCuts`, since
   with none the resume checks would pass without running. A subject that breaks these rules is
   refused before anything runs.
+- The resumes compare only the ticks after their cuts, so a subject cuts where its rules change
+  state, at t − 1 and at t: the probe cuts around calendar boundaries and ticks that create
+  chunks, and at seeded random ticks (tracker L33). It computes its cut lists and pins them.
 - The optional second argument, `{ childTimeoutMs }`, sets the
   [child processes'](#the-child-process) time limit; it must be a positive integer.
 
 ### The child process
 
-The suite starts one child process per child cut, `bun resume-child.ts` with `process.execPath`,
-in the repository root, so `bunfig.toml` keeps telemetry off. Its input is one JSON document on
-stdin: the ruleset's module and name, the snapshot text, the tick to continue from, and the whole
-script. Its output is one JSON document on stdout: the record of every tick it ran, and its final
-snapshot or what encoding it threw. It decodes the snapshot under audit, as the in-process resume
-does. Nothing touches the disk, so there is nothing to clean up.
+The suite starts one child process per child cut, and one for the interleaving's run of the second
+seed alone: `bun resume-child.ts` with `process.execPath`, in the repository root, so
+`bunfig.toml` keeps telemetry off. Its input is one JSON document on stdin: the ruleset's module
+and name, the snapshot text, the tick to continue from, the whole script, and whether to audit.
+Its output is one JSON document on stdout: the record of every tick it ran, and its final snapshot
+or what encoding it threw. A resume decodes its snapshot under audit, as the in-process resume
+does. The second seed's run starts from that world's snapshot at tick 0, built before any child
+starts, and decodes it without audit, as the interleaving's worlds run. `createWorld` copies the
+initial values canonically, as decoding does, so a world decoded at tick 0 runs as the one its
+factory created; the resumes from cut 0 of tally and the probe check it. The factory itself runs in
+the parent only, so state that a world factory keeps is outside what the suite checks; the subject
+is the ruleset. A second seed's world whose snapshot cannot be encoded starts no child, and what
+encoding threw is the `interleave` failure of world 1 at tick 0. Nothing touches the disk, so there
+is nothing to clean up.
 
 The processes start together and run while the parent does its in-process resumes and the
 interleaving. Those are synchronous, so meanwhile the parent neither feeds a child's stdin nor
 drains its stdout; each child's time limit therefore starts only when the parent waits for it.
 Past that limit, 30 s by default (`CHILD_TIMEOUT_MS`, or `childTimeoutMs`), the process is killed
 with SIGKILL and reaped, and if an in-process check throws, every child is killed and reaped before
-the error propagates, so no process outlives the suite. Each of these is a `child-resume` failure
-at its cut that names the problem:
+the error propagates, so no process outlives the suite. Each of these is a failure that names the
+problem: a `child-resume` failure at its cut, or, for the second seed's run, an `interleave`
+failure of world 1 at tick 0, while the first seed's worlds are still compared:
 
 - a process that ran past its limit, with the end of its stderr;
 - a process that exited with an error, with its exit code, the signal that killed it if any, and
@@ -942,6 +960,7 @@ the suite reports for it:
 | `dependsOnInsertionOrder` | Remembers the first key of a record by `Object.keys` | `resume` and `child-resume` at the tick after a cut with two keys or more |
 | `keepsModuleCache` | A module-level `const` `Map` of the tick each chunk was first written | `child-resume` only, at the tick after the cut |
 | `keepsRulesetCache` | The same cache, in the ruleset object | `resume` at the tick after the cut |
+| `keepsModuleCacheOfSeed` | A module-level `const` `Map` of the first draw of the process, keyed without the world seed | `interleave` only, for the second seed's world at tick 1 |
 | `returnsPromise` | A system that returns a `Promise` | `fault` at tick 1 |
 | `sharesCounter` | A counter shared by every run in the process | `repeat`, `audit`, `resume`, and `interleave` at their first tick |
 | `keepsLastTick` | The tick its ruleset object last ran, kept in the object | `interleave` only, at the first tick at which each world finds another world's tick |
@@ -949,8 +968,10 @@ the suite reports for it:
 
 Other rulesets in `broken-rulesets.ts` count as tally does in the parent, but make the child
 process exit with an error, hang, or write nothing, text that is not JSON, or JSON of another
-shape; a test asserts the `child-resume` failure each gives, and that a child that hangs is killed
-and reaped.
+shape; a test asserts the `child-resume` failure and the `interleave` failure of the second seed's
+run that each gives, and that a child that hangs is killed and reaped. Another shows that a second
+seed's world whose snapshot cannot be encoded is an `interleave` failure, and that the first seed's
+worlds are still compared then.
 
 Tally, the positive control, passes every check on the golden run and on 200 ticks of generated
 commands. A test of the comparison itself shows that a divergence that heals is still found, at its
@@ -982,7 +1003,8 @@ about 2 s, most of it creating the large world.
 ### Time
 
 On the 2-core Codespace with Bun 1.4.4 (2026-10-25; indicative), the golden subject takes about
-10 s: about 13,000 ticks in process, about 6,400 of them under audit (the audit run and the
-resumes), and three child processes, which resume under audit too. The test of a child that hangs
-waits for its time limit of 1 s. The whole `bun test` takes about 26 to 29 s.
+11 s: about 12,400 ticks in process, about 6,400 of them under audit (the audit run and the
+resumes), and four child processes: three resumes, under audit too, and the second seed's run
+alone. The test of a child that hangs waits for its time limit of 1 s. The whole `bun test` takes
+about 45 to 55 s with T3's tests.
 

@@ -168,7 +168,8 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 
 - [Determinism](determinism.md): the rules that make the engine reproducible, section by
   section as T2 implements them.
-- [Worldgen](worldgen.md): space, the sealed genesis and its bounds, and what the worldgen tests
+- [Worldgen](worldgen.md): space, the sealed genesis, noise, terrain, time, the observables, the
+  probe ruleset that runs them inside `step`, their measured cost, and what the worldgen tests
   check ([0021](../decisions/0021-procedural-world.md)).
 - [Interfaces](interfaces.md): planes, message flow, acceptance criteria, and roadmap of both
   interfaces.

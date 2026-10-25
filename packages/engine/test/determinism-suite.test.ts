@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { Seed } from "../src/index.ts";
+import { type Seed, step } from "../src/index.ts";
 import { GOLDEN_TALLY } from "./fixtures/golden-tally.ts";
 import { tallyCommands, tallyWorld } from "./fixtures/tally-ruleset.ts";
 import { STALE_CHUNK } from "./support/barrier-rulesets.ts";
-import { BYPASS_TICK, controlSubject } from "./support/broken-rulesets.ts";
+import { BYPASS_TICK, controlSubject, writesThroughReadChunk } from "./support/broken-rulesets.ts";
 import { firstDivergence, type TickRecord } from "./support/determinism-records.ts";
 import {
   type DeterminismSubject,
@@ -18,9 +18,10 @@ import { validCommands } from "./support/tally-fuzz.ts";
  * the golden run and on generated commands; each deliberately broken ruleset fails exactly the
  * property that must catch it, at the tick it diverges; and the comparison is made tick by tick.
  *
- * Time: the golden subject runs about 13,000 ticks in process, about 6,400 of them under audit
- * (the audit run and the resumes), and three child processes, which resume under audit too: about
- * 10 s on the 2-core Codespace (Bun 1.4.4, 2026-10-25; indicative). The tests are asynchronous,
+ * Time: the golden subject runs about 12,400 ticks in process, about 6,400 of them under audit
+ * (the audit run and the resumes), and four child processes: three resumes, under audit too, and
+ * the second seed's run alone: about 11 s on the 2-core Codespace (Bun 1.4.4, 2026-10-25;
+ * indicative). The tests are asynchronous,
  * but each run is synchronous between its awaits, so a timeout is a budget, as in
  * step-fuzz.test.ts: 60 s allows about six times it.
  */
@@ -111,6 +112,12 @@ const CONTROLS: readonly (readonly [string, number[], number[], Failure[]])[] = 
     [{ property: "resume", tick: 5, at: 4, detail: "checksum differs" }],
   ],
   [
+    "keepsModuleCacheOfSeed",
+    [0, 4],
+    [],
+    [{ property: "interleave", tick: 1, at: 1, detail: "checksum differs" }],
+  ],
+  [
     "returnsPromise",
     [0, 4],
     [0],
@@ -180,8 +187,13 @@ describe("a child process that does not resume", () => {
     const report = await runDeterminismSuite(controlSubject(name, [0], [4]), { childTimeoutMs });
     return report.failures;
   };
-  const failure = (detail: string): Failure[] => [
-    { property: "child-resume", tick: 4, at: 4, detail },
+  /**
+   * The failures of a ruleset that fails in every child process: the resume from 4, and the run
+   * of the second seed alone, which the interleaving compares with, from 0.
+   */
+  const failure = (resume: string, second = resume): Failure[] => [
+    { property: "child-resume", tick: 4, at: 4, detail: resume },
+    { property: "interleave", tick: 0, at: 1, detail: second },
   ];
 
   test("that exits with an error is a child-resume failure with the end of its stderr", async () => {
@@ -192,13 +204,13 @@ describe("a child process that does not resume", () => {
 
   test("that runs past its time limit is killed, reaped, and reported", async () => {
     const failures = await childFailures("hangsInChild", 1_000);
-    // The child writes its process id to stderr before it hangs.
-    const pid = Number(/child (\d+) hangs$/.exec(failures[0]?.detail ?? "")?.[1]);
-    expect(failures).toEqual(
-      failure(`the child process ran past 1000 ms and was killed with SIGKILL: child ${pid} hangs`),
-    );
-    // Signal 0 only checks that the process exists: it was killed and reaped, so none is left.
-    expect(() => process.kill(pid, 0)).toThrow("ESRCH");
+    // Each child writes its process id to stderr before it hangs.
+    const pids = failures.map(({ detail }) => Number(/child (\d+) hangs$/.exec(detail)?.[1]));
+    const killed = (pid?: number) =>
+      `the child process ran past 1000 ms and was killed with SIGKILL: child ${pid} hangs`;
+    expect(failures).toEqual(failure(killed(pids[0]), killed(pids[1])));
+    // Signal 0 only checks that a process exists: each was killed and reaped, so none is left.
+    for (const pid of pids) expect(() => process.kill(pid, 0)).toThrow("ESRCH");
   }, 60_000);
 
   test("that still runs when an in-process check throws is killed before the error propagates", async () => {
@@ -213,18 +225,51 @@ describe("a child process that does not resume", () => {
         });
     const subject = controlSubject("hangsInChild", [], [4]);
     let running: string[] = [];
+    let secondWorlds = 0;
     const failing: DeterminismSubject = {
       ...subject,
-      // Only the interleaving builds a world with the second seed, while the child runs.
+      // The first world with the second seed is built before any child starts, for the run of
+      // that seed alone; the next one, the interleaving's, while both children run.
       world: (seed, ruleset, audit) => {
-        if (seed !== subject.seeds[1]) return subject.world(seed, ruleset, audit);
+        if (seed !== subject.seeds[1] || secondWorlds++ === 0) {
+          return subject.world(seed, ruleset, audit);
+        }
         running = resumeChildren();
         throw new Error("no world for the second seed");
       },
     };
     await expect(runDeterminismSuite(failing)).rejects.toThrow("no world for the second seed");
-    expect(running).toHaveLength(1);
+    expect(running).toHaveLength(2);
     expect(resumeChildren()).toEqual([]);
+  }, 60_000);
+
+  test("whose world cannot be encoded is an interleave failure, and the first seed's worlds are still compared", async () => {
+    const subject = controlSubject("keepsLastTick", [0]);
+    let secondWorlds = 0;
+    const report = await runDeterminismSuite({
+      ...subject,
+      // The first world with the second seed, built for its run alone, runs a ruleset that writes
+      // behind the barrier, stepped past that write, so its snapshot cannot be encoded. The
+      // interleaving's worlds run keepsLastTick, which only the interleaving catches.
+      world: (seed, ruleset, audit) => {
+        if (seed !== subject.seeds[1] || secondWorlds++ > 0) {
+          return subject.world(seed, ruleset, audit);
+        }
+        const world = subject.world(seed, writesThroughReadChunk(), false);
+        for (let tick = 1; tick <= BYPASS_TICK; tick += 1) step(world, []);
+        return world;
+      },
+    });
+    expect(report.failures).toEqual([
+      { property: "interleave", tick: 2, at: 0, detail: "checksum, stats differ" },
+      {
+        property: "interleave",
+        tick: 0,
+        at: 1,
+        detail: `encodeSnapshot of the second seed's world threw ${STALE}`,
+      },
+      { property: "interleave", tick: 1, at: 2, detail: "checksum differs" },
+    ]);
   }, 60_000);
 
   test.each([

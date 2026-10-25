@@ -3,10 +3,12 @@
 Worldgen is the procedural world generator: the world is a latent field that the engine evaluates
 and never stores, a pure function of the generator version, the genesis, and the cell.
 [ADR 0021](../decisions/0021-procedural-world.md) records that design and why. This document
-specifies what the code implements: space, the sealed genesis, noise, terrain, time, and the observables. Code:
-`packages/engine/src/worldgen/`, exported by `packages/engine` as the `worldgen` namespace. Tests:
-`packages/engine/test/` (`worldgen-space`, `worldgen-genesis`, `worldgen-lattice`, `worldgen-noise`,
-`worldgen-terrain`, `worldgen-calendar`, and `worldgen-observables`).
+specifies what the code implements: space, the sealed genesis, noise, terrain, time, the
+observables, and how they run inside the kernel. Code: `packages/engine/src/worldgen/`, exported by
+`packages/engine` as the `worldgen` namespace. Tests: `packages/engine/test/` (`worldgen-space`,
+`worldgen-genesis`, `worldgen-lattice`, `worldgen-noise`, `worldgen-terrain`, `worldgen-calendar`,
+`worldgen-observables`, `worldgen-scale`, `worldgen-suite`, and `worldgen-observer`). Benchmark:
+`packages/engine/bench/worldgen.ts`.
 
 `WORLDGEN_VERSION` is `"worldgen@1"`. The seal of a genesis contains it, so a seal made under any
 other version does not match; [ADR 0021](../decisions/0021-procedural-world.md#decision)
@@ -319,15 +321,7 @@ Every intermediate stays below 2^53 at `GENESIS_BOUNDS`, and every field fits it
 | `generateChunk(prepared, key)` | The region of the chunk, with its `key` (`TerrainChunk`) | `invalid_value` at `/key`, with the messages of `chunkKeyIssues` |
 | `terrainDigest(chunk)` | The digest of the chunk's fields | `invalid_value` for anything that is not a chunk: a record with a key, typed arrays of 1,024 cells, at most 8 deposits |
 
-| Genesis | 32×32 chunk | One cell | 9×9 region |
-|---|---|---|---|
-| Default | 0.555 ms | 44.3 µs | 91.5 µs |
-| Maximum | 1.80 ms | 122 µs | 292 µs |
-
-These figures are medians on the two-core Codespace with Bun 1.4.4, and only indicative. One default
-cell passes the plan's 50 µs gate with a thin margin, so the generator keeps one ChaCha20 block per
-field, octave, and lattice point. Reading regions in batches, as a ruleset should, costs far less
-per cell.
+Their cost is in [Measured cost](#measured-cost-indicative).
 
 ### The terrain digest
 
@@ -459,9 +453,8 @@ validates it. The query is read once, member by member, and every problem is rep
 that is not a record; at `/query/id` for an id that names nothing or a deposit the genesis lacks; and
 under `/query/cell` and `/query/instant` as `readCell` and `readInstant` report.
 
-A static id or `thermal` costs one 1×1 terrain region, about 34–54 µs with the default genesis, and
-`radiance` about 1.5 µs (indicative, on the two-core Codespace with Bun 1.4.4). A ruleset that reads
-many cells should read regions.
+A static id or `thermal` costs one 1×1 terrain region, and `radiance` far less
+([Measured cost](#measured-cost-indicative)). A ruleset that reads many cells should read regions.
 
 ### Golden observation values
 
@@ -474,6 +467,97 @@ genesis, with one terrain seed of the terrain goldens.
   mid-light at 7, and a drifting instant at 13.
 - Two runs of the recording agreed. The values hold inside the steps of worlds with different world
   seeds, and other time laws change only the temporal ones.
+
+## Integration
+
+No production ruleset exists in T3, so a test-only probe ruleset proves that worldgen runs inside
+`step` and keeps the kernel deterministic ([ADR 0021](../decisions/0021-procedural-world.md),
+"Proof without a production ruleset"); the first ruleset of T4 runs the
+[determinism suite](determinism.md#determinism-suite) again. Code, in `packages/engine/test/`:
+`fixtures/probe-ruleset.ts`, `support/probe-world.ts`, and `support/broken-probe.ts`. Tests:
+`worldgen-suite` and `worldgen-observer`.
+
+| Part | Rule |
+|---|---|
+| Global value | `{ genesis, genesisSeal, watch }`. `validateGlobal` calls `sealedGenesisIssues`, rejects unknown members, and accepts at most 16 distinct chunks of the world in `watch` |
+| Chunk | `{ at, terrain, readings }`: the tick it was materialized at, `terrainDigest(generateChunk(prepared, key))` computed inside that tick, and the calendar boundaries it saw while watched. No chunk stores terrain |
+| `probe.materialize { x, y }` | Admin only. `check` rejects `admin_only`, `outside_world` (with the messages of `chunkKeyIssues`), and `materialized`, never faulting; `apply` creates the chunk and watches it while `watch` has room |
+| `probe.measure { id, cell }` | Emits `probe.reading { id, cell, value }`, the value of `observe` at `instantOf(ctx)`; `check` rejects what `observe` rejects, as `invalid_query` |
+| System `probe.daylight` | When the day or the light state differs from the previous tick's, emits `probe.boundary { day, light }` and adds 1 to the readings of every watched chunk |
+| State | None: each system and handler prepares the genesis from the global value it reads, in its own run |
+
+`probeWorld` gives each world seed its own terrain seed, so the suite's interleaving covers terrain
+too. Its day lasts 600 seconds at 12 seconds per tick, so a run crosses many boundaries, and it
+checks `timeLawIssues` before `createWorld`, as the host must. A world starts with no chunk: only
+commands materialize the latent world.
+
+The tests check:
+
+- the determinism suite, under audit, over 600 ticks of a seeded script that materializes chunks
+  at the origin, its negative neighbors, the edges, and the corners, and measures every observable
+  at random and edge cells; it cuts around calendar boundaries and materializations and at seeded
+  random ticks, and the resumed cuts are pinned (test 13);
+- boundaries at exactly the ticks the laws give; chunks created only by accepted materializations;
+  each chunk's readings; and the exact rejections of a chunk outside the world, a duplicate, a
+  materialization from an inhabitant, and an invalid query;
+- the probe's validators report every problem of a global value and its chunks at once, with its
+  path: an unknown member, a watch list too long, a duplicate, or a chunk outside the world, and
+  each member of a chunk that breaks its schema;
+- every stored terrain digest and every reading equal to what worldgen computes outside, for the
+  same genesis, chunk, cell, and instant, under each world's terrain seed (tests 16 and 21, I7);
+- each path of ADR 0021's seal table (test 14, I8): a change through `writeGlobal` faults that tick
+  at `/global/genesisSeal` and poisons the world; a change behind the barrier is found by audit at
+  that tick, and without audit `encodeSnapshot` refuses the world and its next global write fails at
+  the seal; an edited genesis with a stale seal fails decoding at `/world/global/genesisSeal`; after
+  the suite, the genesis is the initial one;
+- the same records and final snapshot under three observer regimes (test 15, I4): no observer; one
+  that, between ticks, reads the view, the global value, and every chunk, and generates terrain
+  under another genesis and the world's own; and the same through a memo keyed by seal and chunk
+  that the probe shares. Negative controls: a memo keyed by chunk alone, shared by the observer and
+  the probe, changes the records and fails the suite's interleaving; the same memo kept in a module
+  fails the interleaving too; and a host that materializes what its observer looks at changes the
+  records from tick 1;
+- at scale, 24 × 24 chunks: seams within the Lipschitz bound, every chunk equal to its rows in the
+  regions that hold it, and the same digests generated by rows or by columns (`worldgen-scale`).
+
+## Measured cost (indicative)
+
+`bun packages/engine/bench/worldgen.ts` prints these numbers. They are indicative: one run on the
+two-core Codespace, with Bun 1.4.4, on 2026-10-25, on an otherwise idle machine, which took about
+20 s. The Codespace's two hardware threads share one physical core, so concurrent work slowed rows
+by up to 1.8 times in other runs. Compare several runs on one machine, before and after a change to
+worldgen; never compare across machines.
+
+| Measurement | Result |
+|---|---|
+| 32×32 chunk, default genesis, at the origin / the top edge | 0.497 / 0.520 ms |
+| 32×32 chunk, maximum genesis, at the origin / the top edge | 1.371 / 1.413 ms |
+| 1×1 / 9×9 region, default genesis | 39.6 / 84.0 µs |
+| 1×1 / 9×9 region, maximum genesis | 124.1 / 239.6 µs |
+| ChaCha20 blocks | 4.29 million per second |
+| Heap kept alive per chunk, default / maximum genesis, 1,000 chunks held | 17.4 / 41.6 KB |
+| One default chunk, after 0 / after 10,000 other generations | 0.494 / 0.498 ms |
+| `observe`, `elevation` / `radiance`, default genesis | 32.9 / 0.6 µs |
+| `prepareGenesis`, default / maximum genesis | 60.7 / 108.9 µs |
+| `sealedGenesisIssues`, default / maximum genesis | 70.8 / 100.3 µs |
+| A tick that writes the global value, validated by `sealedGenesisIssues` / by a validator that accepts everything | 80.9 / 36.8 µs |
+| A probe tick that materializes a chunk / with no command | 742 / 64.7 µs |
+
+What they show:
+
+- A chunk costs about 0.5 ms with the default genesis and 1.4 ms with the maximum one, at the origin
+  and at the edge alike. T3's targets are 2 ms and 4 ms.
+- A chunk of the maximum genesis keeps 41.6 KB alive, its fields' typed arrays, under the target of
+  48 KB. The figure reads JSC's `heapSize` alone, as `bench/measure.ts` explains.
+- A chunk costs the same after 10,000 other generations: a ratio of 1.01, against a target of 2.
+- One default cell costs about 40 µs, under T3's gate of 50 µs (T3-5 measured 44.3 µs), so the
+  generator keeps one ChaCha20 block per field, octave, and lattice point. A 9×9 region costs about
+  twice a cell for 81 times the cells, which is why a ruleset should read regions.
+- Checking the seal adds about 44 µs to a tick that writes the global value. A tick that does not
+  write it never runs `validateGlobal`.
+- A probe tick costs about 65 µs, most of it preparing the genesis, which the probe does in every
+  run of a system or handler. Materializing a chunk adds about 0.7 ms, most of it generating the
+  chunk.
 
 ## What the tests check
 
