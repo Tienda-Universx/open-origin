@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  type CanonicalValue,
   type Command,
-  canonicalize,
   EngineError,
   fullChecksum,
   type Seed,
@@ -11,6 +9,7 @@ import {
   type World,
 } from "../src/index.ts";
 import { tallyWorld } from "./fixtures/tally-ruleset.ts";
+import { type TickRecord, tickRecord } from "./support/determinism-records.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 import { validCommands } from "./support/tally-fuzz.ts";
 
@@ -61,11 +60,8 @@ function commandAt(tick: number): Command {
   return { applyTick: tick, seq: 0, type: "birth", origin: { kind: "admin" }, payload: {} };
 }
 
-/** Steps `world` with the valid `commands` and returns what the tick did, as one line. */
-function record(world: World, commands: readonly Command[]): string {
-  const { tick, checksum, events, changedChunks, stats } = step(world, commands);
-  return canonicalize([tick, checksum, events as CanonicalValue, changedChunks, stats]);
-}
+/** Steps `world` with the valid `commands` and returns what the tick did. */
+const record = (world: World, commands: readonly Command[]) => tickRecord(step(world, commands));
 
 /** Steps `world` with the broken `commands`, which must be rejected whole, changing nothing. */
 function expectRejected(world: World, commands: readonly unknown[]): void {
@@ -90,7 +86,7 @@ function run(seed: number) {
   const worldSeed: Seed = [seed, (seed * 7 + 1) >>> 0];
   const audited = tallyWorld(worldSeed, true);
   const control = tallyWorld(worldSeed);
-  const records = { audited: [] as string[], control: [] as string[] };
+  const records = { audited: [] as TickRecord[], control: [] as TickRecord[] };
   let broken = 0;
   for (let tick = 1; tick <= TICKS; tick += 1) {
     const commands = validCommands(random, tick);

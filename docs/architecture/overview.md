@@ -127,7 +127,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `apps/web/` | T8 | Public interface (React + PixiJS) |
 | `apps/admin/` | T8, T9 | Local admin panel; AI controls in T9 |
 | `packages/ui/` | T8 | Design system: tokens + components (CSS Modules) |
-| `packages/engine/` | T2 | Deterministic core: time, rng, world, worldgen, beings, needs, actions, events, perception, snapshot, canonical |
+| `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 and T4 add the content the kernel runs as rulesets, each passing the determinism suite: worldgen and the calendar (T3), and beings, needs, actions, perception, and the activity index (T4). T7 adds the migration chain of snapshot versions (plan §5.2) |
 | `packages/agents/` | T4 | Policies, memory, prompts, provenance |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |

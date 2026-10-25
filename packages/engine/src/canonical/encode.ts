@@ -44,13 +44,17 @@ const ENCODER: Builder<string> = {
   record: recordText,
 };
 
-/** Stops a walk at its first issue. */
-const FAIL_FAST: IssueSink = {
-  report(path, message, cause) {
-    const options = cause === undefined ? {} : { cause };
-    throw new EngineError("invalid_value", [{ path, message }], options);
-  },
-};
+/** Stops a walk at its first issue, reported at its path under `prefix`. */
+function failFastAt(prefix: string): IssueSink {
+  return {
+    report(path, message, cause) {
+      const options = cause === undefined ? {} : { cause };
+      throw new EngineError("invalid_value", [{ path: `${prefix}${path}`, message }], options);
+    },
+  };
+}
+
+const FAIL_FAST = failFastAt("");
 
 function invalidText(message: string, cause?: unknown): EngineError {
   const options = cause === undefined ? {} : { cause };
@@ -70,6 +74,14 @@ function firstDifference(a: string, b: string): number {
  */
 export function canonicalize(value: unknown): string {
   return walkCanonical(value, ENCODER, FAIL_FAST);
+}
+
+/**
+ * canonicalize(value) for a value that lives at the JSON Pointer `path` inside a larger one, such
+ * as `/chunks/0,0` in a world: the issue's path is its path in `value` under `path`.
+ */
+export function canonicalizeAt(value: unknown, path: string): string {
+  return walkCanonical(value, ENCODER, failFastAt(path));
 }
 
 /**

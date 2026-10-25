@@ -188,6 +188,10 @@ function readDefinition(init: unknown, options: unknown): Definition {
  *    checked by the ruleset's validators; `options` is a record whose `audit` is a boolean, and
  *    every other option is an issue at `/options/<key>` (readAudit).
  *
+ * The options are strict on purpose: a misspelled option, such as `{ audti: true }`, must not
+ * silently turn audit off, so an unknown key is refused rather than ignored. A host written for a
+ * later engine that adds options fails here loudly instead of running without them.
+ *
  * Each member of `init` and `options` is read once, through its own descriptor. The validators
  * receive the values the world keeps, not copies of them, as ruleset code does during a tick: a
  * validator must not change or keep what it is given. The digests are taken before the

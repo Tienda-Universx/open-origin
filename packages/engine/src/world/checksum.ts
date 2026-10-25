@@ -14,11 +14,10 @@
  * global digest, and the root; the kernel digest has a fixed size and is recomputed. A step
  * updates them for what it changed (step/commit.ts); fullChecksum recomputes them all.
  */
-import { arrayText, canonicalize } from "../canonical/encode.ts";
+import { arrayText, canonicalize, canonicalizeAt } from "../canonical/encode.ts";
 import { type CanonicalValue, pointer } from "../canonical/value.ts";
 import { type Digest, Digester, digest, digestWords, hexOf } from "../digest/digest.ts";
 import { addLanes, type Lanes } from "../digest/lanes.ts";
-import { EngineError } from "../errors.ts";
 import type { ChunkKey } from "./chunk.ts";
 import type { ChunkIndex } from "./chunk-index.ts";
 import {
@@ -26,6 +25,7 @@ import {
   type DigestCache,
   healthyState,
   type Kernel,
+  readState,
   type World,
   type WorldState,
 } from "./world.ts";
@@ -113,25 +113,6 @@ export function relocatePath(at: string, tagged: readonly unknown[], valuePath: 
 const GLOBAL_TAG = canonicalize("global");
 const CHUNK_TAG = canonicalize("chunk");
 
-/**
- * The canonical text of `value`, which lives at `valuePath` in the world. Throws, as canonicalize
- * does, EngineError("invalid_value") at its first problem, with the path moved under `valuePath`
- * and the value thrown while reading it, if any, as the cause.
- */
-function textAt(value: CanonicalValue, valuePath: string): string {
-  try {
-    return canonicalize(value);
-  } catch (error) {
-    if (!EngineError.isEngineError(error)) throw error;
-    const issues = error.issues.map(({ path, message }) => ({
-      path: `${valuePath}${path}`,
-      message,
-    }));
-    const options = { issueCount: error.issueCount, cause: error.cause };
-    throw new EngineError(error.code, issues, options);
-  }
-}
-
 /** The canonical texts of the values of a state, and the root recomputed from them. */
 export type StateText = {
   readonly global: string;
@@ -141,31 +122,46 @@ export type StateText = {
 };
 
 /**
- * The state root of `state` recomputed from its values alone, never from a cached digest, and the
- * canonical text of each value, written once: O(N) for N chunks. Each digest hashes the text of a
- * tagged array built from that text, so encodeSnapshot hashes the very text it writes. Throws
- * EngineError("invalid_value") at the path of the first value that is not canonical, as
- * `/chunks/<key>/...` or `/global/...`, which only a write that bypassed the barrier can cause.
+ * The state root of `state` recomputed from its values alone, never from a cached digest: O(N)
+ * for N chunks. Each value is canonicalized once, and each digest hashes the text of a tagged
+ * array built from that text, so encodeSnapshot hashes the very text it writes. `keep`, when
+ * given, receives each chunk's text; otherwise each text is dropped once it is hashed, so only
+ * encodeSnapshot holds them all at once. Throws EngineError("invalid_value") at the path of the
+ * first value that is not canonical, as `/chunks/<key>/...` or `/global/...`, which only a write
+ * that bypassed the barrier can cause, with what a Proxy threw while read, if anything, as the
+ * cause.
  */
-export function recomputeState({ kernel, global, chunks }: WorldState): StateText {
+function recompute(
+  { kernel, global, chunks }: WorldState,
+  keep?: (key: ChunkKey, text: string) => void,
+): { readonly root: Digest; readonly global: string } {
   const digester = new Digester();
   let chunkSum = ZERO;
-  const texts = chunks.sortedEntries().map(([key, entry]): [ChunkKey, string] => {
-    const text = textAt(entry.value, `/chunks${pointer([key])}`);
+  for (const [key, entry] of chunks.sortedEntries()) {
+    const text = canonicalizeAt(entry.value, `/chunks${pointer([key])}`);
     const term = digester.textWords(arrayText([CHUNK_TAG, canonicalize(key), text]));
     chunkSum = addLanes(chunkSum, term);
-    return [key, text];
-  });
-  const globalText = textAt(global, "/global");
+    keep?.(key, text);
+  }
+  const globalText = canonicalizeAt(global, "/global");
   const globalPart = hexOf(digester.textWords(arrayText([GLOBAL_TAG, globalText])));
   const parts = { kernel: kernelDigest(kernel, digester), global: globalPart, chunkSum };
-  const root = composeRoot({ ...parts, chunkCount: texts.length }, digester);
-  return { global: globalText, chunks: texts, root };
+  const root = composeRoot({ ...parts, chunkCount: chunks.size }, digester);
+  return { root, global: globalText };
 }
 
-/** recomputeState(state).root, the root that fullChecksum and audit compare. */
+/** The root of `state` recomputed as recompute does, with the canonical text of every value. */
+export function recomputeState(state: WorldState): StateText {
+  const texts: [ChunkKey, string][] = [];
+  const { root, global } = recompute(state, (key, text) => {
+    texts.push([key, text]);
+  });
+  return { global, chunks: texts, root };
+}
+
+/** The root of `state` recomputed as recompute does, keeping no text: what fullChecksum and audit compare. */
 export function recomputeRoot(state: WorldState): Digest {
-  return recomputeState(state).root;
+  return recompute(state).root;
 }
 
 /**
@@ -181,12 +177,14 @@ export function stateRoot(world: World): Digest {
  * The state root of `world` recomputed from its state alone, never from a cached digest: O(N)
  * for N chunks, for audits and checkpoints. It equals stateRoot unless something changed the
  * state without the engine knowing. Throws EngineError("invalid_input") when `world` is not a
- * world, EngineError("world_busy") while a step runs on it, EngineError("world_faulted") when its
- * tick failed, and EngineError("invalid_value") at `/chunks/<key>/...` or `/global/...` when a
- * write that bypassed the barrier left a value that is not canonical.
+ * world, EngineError("world_busy") while a step runs on it or a read runs, EngineError
+ * ("world_faulted") when its tick failed, and EngineError("invalid_value") at `/chunks/<key>/...`
+ * or `/global/...` when a write that bypassed the barrier left a value that is not canonical. It
+ * reads every value, so it reads as readState does: a Proxy in the state that uses the world
+ * meanwhile is refused, and a read that then fails throws that refusal.
  */
 export function fullChecksum(world: World): Digest {
-  return recomputeRoot(healthyState(world, "fullChecksum"));
+  return readState(world, "fullChecksum", "read", (state) => recomputeRoot(state));
 }
 
 /**

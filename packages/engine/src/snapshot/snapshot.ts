@@ -35,63 +35,32 @@ import { type CapturedRuleset, captureRuleset } from "../world/ruleset.ts";
 import { runValidator } from "../world/validators.ts";
 import {
   type ChunkEntry,
-  healthyState,
   newWorld,
   poison,
+  type Reading,
+  readState,
   type World,
-  type WorldActivity,
   type WorldState,
 } from "../world/world.ts";
 import { readSnapshot, SNAPSHOT_SCHEMA_VERSION, type SnapshotV1 } from "./schema.ts";
 
 /**
- * What a world is busy with while `encoder`, encodeSnapshot or snapshotBytes, reads it: every use
- * of the world meanwhile, which only a Proxy in its state can make, is refused, and the first
- * refusal is kept.
- */
-class Encoding implements WorldActivity {
-  readonly #encoder: string;
-  #refusal: EngineError | undefined;
-
-  constructor(encoder: string) {
-    this.#encoder = encoder;
-  }
-
-  /** The first use of the world this encoding refused, if any. */
-  get refusal(): EngineError | undefined {
-    return this.#refusal;
-  }
-
-  refuse(api: string): EngineError {
-    const message =
-      `${api} was called while ${this.#encoder} read this world: ` +
-      "no function may use a world while it is encoded";
-    const refusal = new EngineError("world_busy", [{ path: "", message }]);
-    this.#refusal ??= refusal;
-    return refusal;
-  }
-}
-
-/**
- * The encoding of `state`, whose recomputed root equals its incremental one. Throws, and returns
- * no encoding, in three ways:
+ * The encoding of `state`, whose recomputed root equals its incremental one. Otherwise it throws
+ * and returns no encoding:
  *
- * - a Proxy in the state let the refusal of its use of the world escape its trap: that refusal,
- *   world_busy, which leaves the world as it was, as every refused use does;
- * - a value is not canonical, or the root differs: a write bypassed the barrier, so it poisons
- *   the world and throws its integrity_violation, which names each stale chunk and the global
- *   value;
- * - anything else keeps its own error.
+ * - after a refusal, a read that fails is the trap's failure, not the state's: it throws without
+ *   poisoning, and readState throws the first refusal instead (world/world.ts);
+ * - a value that is not canonical, or a root that differs, means a write bypassed the barrier:
+ *   it poisons the world and throws its integrity_violation, which names each stale chunk and
+ *   the global value;
+ * - any other error keeps its own classification.
  */
-function verifiedEncoding(state: WorldState, encoding: Encoding): StateText {
+function verifiedEncoding(state: WorldState, reading: Reading): StateText {
   let encoded: StateText | undefined;
   try {
     encoded = recomputeState(state);
   } catch (error) {
-    const { refusal } = encoding;
-    if (refusal !== undefined && EngineError.isEngineError(error) && error.cause === refusal) {
-      throw refusal;
-    }
+    if (reading.refusal !== undefined) throw error;
     // Only a value that is not canonical, which integrityError names, blames the state.
     if (!EngineError.isEngineError(error) || error.code !== "invalid_value") throw error;
   }
@@ -102,9 +71,9 @@ function verifiedEncoding(state: WorldState, encoding: Encoding): StateText {
 }
 
 /** The text of `state`, whose members are written in canonical key order. */
-function snapshotText(state: WorldState, encoding: Encoding): string {
+function snapshotText(state: WorldState, reading: Reading): string {
   const { header, kernel } = state;
-  const { global, chunks, root } = verifiedEncoding(state, encoding);
+  const { global, chunks, root } = verifiedEncoding(state, reading);
   const { epoch, tick, nextEntityId, rng, config } = kernel;
   const world = recordText([
     ["chunks", recordText(chunks)],
@@ -124,14 +93,7 @@ function snapshotText(state: WorldState, encoding: Encoding): string {
 
 /** The snapshot text of `world`, for a call of `api`, with the world busy while it is read. */
 function encodeFor(world: World, api: string): string {
-  const state = healthyState(world, api);
-  const encoding = new Encoding(api);
-  state.active = encoding;
-  try {
-    return snapshotText(state, encoding);
-  } finally {
-    state.active = undefined;
-  }
+  return readState(world, api, "encoded", snapshotText);
 }
 
 /**
@@ -210,7 +172,9 @@ function decodedState(snapshot: SnapshotV1, ruleset: CapturedRuleset, audit: boo
  * The world that the snapshot `text` holds, run by `ruleset` (ADR 0020, snapshots). The checks run
  * in this order, and each stops the next:
  *
- * 1. `options` is undefined or a record whose `audit` is a boolean: otherwise invalid_input.
+ * 1. `options` is undefined or a record whose only member is `audit`, a boolean: otherwise
+ *    invalid_input, with every unknown key at `/options/<key>`. The options are strict on
+ *    purpose, as in createWorld: a misspelled option must not silently turn audit off.
  * 2. `text` is canonical text (parseCanonical) of a version 1 snapshot (snapshot/schema.ts):
  *    otherwise unsupported_schema for another schema version, alone, and invalid_snapshot with
  *    every problem of the text or the schema.

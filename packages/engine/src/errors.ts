@@ -24,9 +24,10 @@ export type Issue = { readonly path: string; readonly message: string };
  * - `integrity_violation` for a state that disagrees with its incremental digests, which audit
  *   and encodeSnapshot find after a write that bypassed the barrier;
  * - `world_faulted` for any use but worldStatus of a world whose tick failed;
- * - `world_busy` for any use of a world, read or step, while a step runs on it or while
- *   encodeSnapshot reads it: from ruleset code during the tick, which also faults the tick, or
- *   from a host Proxy while step reads commands or a Proxy in the state while it is encoded;
+ * - `world_busy` for any use of a world, read or step, while a step runs on it or while a
+ *   function reads values of its state (readState): from ruleset code during the tick, which
+ *   also faults the tick, or from a host Proxy while step reads commands or a Proxy in the state
+ *   while it is read;
  * - `context_expired` for a tick context, or the view `check` receives, used after its step;
  * - `id_exhausted` for an entity id that would leave nextEntityId beyond the safe integers.
  *

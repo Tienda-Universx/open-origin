@@ -40,4 +40,5 @@ export type {
 } from "./world/contracts.ts";
 export { createWorld } from "./world/create.ts";
 export { versionDifferences } from "./world/versions.ts";
-export { readView, World, type WorldStatus, worldStatus } from "./world/world.ts";
+export { readView } from "./world/view.ts";
+export { World, type WorldStatus, worldStatus } from "./world/world.ts";

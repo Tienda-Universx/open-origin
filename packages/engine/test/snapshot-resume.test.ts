@@ -14,7 +14,6 @@ import {
   type World,
   worldStatus,
 } from "../src/index.ts";
-import { GOLDEN_TALLY } from "./fixtures/golden-tally.ts";
 import {
   TALLY_VERSIONS,
   tallyCommands,
@@ -27,8 +26,9 @@ import type { System } from "./support/step-rulesets.ts";
 /**
  * Replay and resumption (ADR 0020, snapshots; plan §5.2 "Versiones", §8 "Ida y vuelta",
  * "Reanudación"): a decoded world keeps the versions its snapshot records, step refuses to replay
- * it under other versions, and a world resumed from a snapshot continues exactly as the world
- * that was never interrupted.
+ * it under other versions, and a world recovers from its last snapshot with a corrected ruleset.
+ * Resumption at cuts of the golden run, in process and in a child process, is a check of the
+ * determinism suite (determinism-suite.test.ts).
  */
 
 /** The snapshot of a tally world at tick 3, with `header` merged into its header. */
@@ -155,52 +155,6 @@ describe("the replay gate", () => {
     expect(versionDifferences(decodeSnapshot(encodeSnapshot(world), tallyRuleset()))).toEqual([]);
     expect(versionDifferences(world)).not.toBe(versionDifferences(world));
   });
-});
-
-/** Where the resumption tests cut the golden run: its edges, a pinned tick, and near its end. */
-const CUTS = [0, 1, 2, 37, 299, 300, 999] as const;
-
-/**
- * The uninterrupted golden run: the checksum of every tick, the snapshot text at each cut, and
- * the final text. Encoding at a cut does not change the world, so one run serves every cut.
- */
-function goldenRun() {
-  const world = tallyWorld([GOLDEN_TALLY.seed[0], GOLDEN_TALLY.seed[1]]);
-  const checksums: string[] = [];
-  const cuts = new Map<number, string>();
-  for (let tick = 0; tick <= GOLDEN_TALLY.ticks; tick += 1) {
-    if (tick > 0) checksums[tick] = step(world, tallyCommands(tick)).checksum;
-    if (CUTS.some((cut) => cut === tick)) cuts.set(tick, encodeSnapshot(world));
-  }
-  return { checksums, cuts, final: encodeSnapshot(world) };
-}
-
-describe("resumption from a snapshot", () => {
-  /**
-   * Time: the uninterrupted run is 1,000 ticks and the resumptions 5,362 more, about 1.5 s on the
-   * 2-core Codespace (Bun 1.4.4, 2026-10-24; later ticks cost more, as tally's chunks grow). The
-   * test is synchronous, so its timeout is a budget that only fails a slower run
-   * (step-fuzz.test.ts explains why): 12 s allows about eight times it, as the fuzz does.
-   */
-  test(`cut at ticks ${CUTS.join(", ")}, decoded with a fresh ruleset, continues exactly`, () => {
-    const run = goldenRun();
-    expect(run.checksums[1000]).toBe(GOLDEN_TALLY.checksums[1000]);
-    for (const cut of CUTS) {
-      const text = run.cuts.get(cut);
-      if (text === undefined) throw new Error(`no snapshot at tick ${cut}`);
-      const world = decodeSnapshot(text, tallyRuleset());
-      for (let tick = cut + 1; tick <= GOLDEN_TALLY.ticks; tick += 1) {
-        const { checksum } = step(world, tallyCommands(tick));
-        if (checksum !== run.checksums[tick]) {
-          throw new Error(
-            `resumed at ${cut}, tick ${tick} gave ${checksum}, not ${run.checksums[tick]}`,
-          );
-        }
-      }
-      expect(encodeSnapshot(world)).toBe(run.final);
-      expect(stateRoot(world)).toBe(GOLDEN_TALLY.stateRoot);
-    }
-  }, 12_000);
 });
 
 /**

@@ -270,8 +270,12 @@ checks run in this order:
      `validateChunk(key, chunk)`, so the problems of every chunk are reported;
    - `options`, when given, is a record whose only member is `audit`, a boolean when present.
      Every other key is an issue at `/options/<key>`, all of them in canonical order before the
-     problems of `audit`, so a misspelled option such as `{ audti: true }` is refused instead of
-     turning audit off; symbol keys are one issue at `/options`.
+     problems of `audit`; symbol keys are one issue at `/options`.
+
+The options are strict on purpose, here and in `decodeSnapshot`: a misspelled option such as
+`{ audti: true }` must not silently turn audit off, so an unknown key is refused instead of
+ignored. The cost is compatibility: a host written for a later engine that adds an option fails
+loudly on this one instead of running without it.
 
 Every member of `init`, `options`, and the ruleset is read once, through its own descriptor: a
 getter never runs, and an accessor or a property that is not enumerable is an issue, as in
@@ -476,6 +480,26 @@ world (`step`, `readView` and the methods of every view, `fullChecksum`, `stateR
   step then throws `world_busy`, naming the engine defect, and poisons the world, which keeps its
   first fault if it already had one.
 
+### A world is busy while it is read
+
+Every function that reads a value of the state, and so can run the traps of a Proxy in it, marks
+the world busy while it reads: `fullChecksum`, the view's `readChunk` and `readGlobal`,
+`encodeSnapshot`, and `snapshotBytes` (`readState` in `world/world.ts`). A call of any engine
+function from a trap meanwhile throws `world_busy`, naming the function called and the one that
+reads, and changes nothing. The rule for the read is exact:
+
+| The read | Result |
+|---|---|
+| completes | Its result, even when a trap caught a refusal and then answered as data |
+| throws after a refusal | The first refusal, `world_busy`, and nothing is poisoned: whether the trap let the refusal escape, caught it and threw something else, threw a copy, or was refused again, the failure is the trap's and the state may be sound |
+| poisons the world after it completed | That fault: `encodeSnapshot` whose recomputed root differs throws `integrity_violation`, which a refusal does not replace |
+| throws, with no refusal | Its own error: `invalid_value` at the value's path for `fullChecksum`, `readChunk`, and `readGlobal`, and `integrity_violation` for the encoders |
+
+`chunkHashes`, `stateRoot`, `worldStatus`, `versionDifferences`, and the view's `tick` and
+`chunkKeys` read only what the engine keeps (cached digests, keys, the kernel, and the header), so
+no trap can run during them. `world-reentry.test.ts` checks each reader against `step`,
+`readView`, and `encodeSnapshot` called from a trap, and each way a trap can fail after a refusal.
+
 ### What is detected, and when
 
 Inside the tick, isolation is checked, not prevented (ADR 0020, ownership):
@@ -505,6 +529,41 @@ it.
 written, and of the kernel, state, events, and tick arrays. Audit's full recomputation is O(N),
 for tests, and is not counted, so a step returns the same result with or without audit.
 
+The [complexity test](#the-complexity-test) enforces this in CI, and the
+[benchmark](#measured-cost-indicative) measures it.
+
+### Measured cost (indicative)
+
+`bun packages/engine/bench/step.ts` prints these numbers. They are indicative: one run on the
+2-core Codespace, with Bun 1.4.4, on 2026-10-25. Compare runs of the benchmark on one machine,
+before and after a change to a hot path; never compare across machines.
+
+| Measurement | Result |
+|---|---|
+| A tick with D = 10 small changed chunks, N = 1,000 / 10,000 / 100,000 | 63.7 / 62.8 / 63.3 µs |
+| A changed chunk of 1.0 KB of canonical text | 42 µs (25 MB/s) |
+| A changed chunk of 7.0 KB | 233 µs (31 MB/s) |
+| A changed chunk of 49.3 KB | 1,928 µs (26 MB/s) |
+| `encodeSnapshot` / `decodeSnapshot`, 0.2 MB | 8.7 ms (24 MB/s) / 13.2 ms (16 MB/s) |
+| `encodeSnapshot` / `decodeSnapshot`, 10.2 MB | 437 ms (23 MB/s) / 910 ms (11 MB/s) |
+| Kernel memory per chunk (key, entry, term, index), N = 100,000 | 273 B |
+| MurmurHash3 x86_128 over 1 MiB | 2,942 MB/s |
+| Draws of one `DrawSequence` (`u32`) | 35.5 million per second |
+
+What they show:
+
+- A tick costs the same at every N, as the cost model says.
+- The pipeline of a changed chunk (canonical text, validation, term) runs at about 25 to 31 MB/s
+  per core. ADR 0020's prototype estimate was 55 to 80 MB/s, so it is about half as fast. One
+  core at 5 Hz then handles about 6 MB of changed state per tick, not 11 to 16 MB; v0.1 needs a
+  few KB. Hashing is not what limits it: it runs at about 3 GB/s.
+- The throughput is about the same from 1 KB to 50 KB, so above about 1 KB a changed chunk costs
+  in proportion to its bytes. Below that, the fixed cost of each walk dominates, as the CPU
+  profiles of [tally runs](#golden-fuzz-and-isolation) found.
+- The kernel keeps about 270 bytes per chunk. The 16 bytes of a 128-bit term are a small part of
+  that; the rest is JavaScript's objects, arrays, and strings for the key, the entry, and the index.
+  A million chunks would take about 270 MB before any chunk value.
+
 ### What the tests check
 
 - the order: commands in seq order, each checked then applied, then systems in declared order;
@@ -525,14 +584,13 @@ for tests, and is not counted, so a step returns the same result with or without
   and of everything a step returns;
 - randomness: counters per (stream, id) that continue within a tick and restart the next, and
   independence from other entities and streams;
-- cost: the exact `hashedBytes`, a world of 10,000 chunks with one changed, and a lazy index;
+- cost: the exact `hashedBytes`, a world of 10,000 chunks with one changed, a lazy index, and the
+  [complexity test](#the-complexity-test);
 - a fault swallowed outside the systems and handlers: each context method used by a validator at
   the commit, chunk and global, a Proxy trap at the commit and at the audit, and a commit that
   stops at the validator that faulted;
 - a busy world: each read and `step`, from a system and from a command handler, and from a host
   Proxy while the commands are read, including one whose own step would fault;
-- not yet: that the commit's work does not grow with the number of chunks, which the complexity
-  test of PR 8 measures.
 
 ### Golden, fuzz, and isolation
 
@@ -547,7 +605,8 @@ keeps no module state.
 |---|---|
 | Golden (`golden-tally`) | A fixed seed and a scripted command list give, over 1,000 ticks, the checksums pinned at ticks 1, 10, 100, and 1000 and the pinned final state root, and the pinned digest of every tick's checksum, under the pinned `ENGINE_VERSION` and tally versions. The run is checked to reach every event type and every rejection reason tally has. The values pin behavior and do not prove it correct; a change that alters them must bump a version and record the new values (`fixtures/golden-tally.ts`) |
 | Fuzz (`step-fuzz`) | 64 seeds of 200 ticks, with random valid command lists from `sfc32`. Each seed runs two worlds on the same lists. The first, under audit, also receives on about one tick in eight a list broken in one of seven ways, before the valid one: step must throw `invalid_input` and leave `stateRoot` and `fullChecksum` unchanged, and audit makes the incremental root equal the full one after every tick. The second, without audit, never receives a broken list. Both must give the same checksum, events, changed chunks, and statistics at every tick |
-| Isolation (`world-isolation`) | Three worlds (two of them replicas) stepped in turn, in a random interleaving, and sharing one ruleset object, give exactly what each gives alone |
+| Isolation (`world-isolation`) | Three worlds (two of them replicas) stepped in turn, in a random interleaving, and sharing one ruleset object, give exactly what each gives alone, record by record (`interleave` and `recordRun` of the [determinism suite](#determinism-suite)) |
+| Determinism suite (`determinism-suite`) | The golden run, and 200 ticks of generated commands, pass every check of the [suite](#determinism-suite), including resumption at ticks 0, 1, 2, 37, 299, 300, and 999 in process and at 0, 37, and 999 in child processes |
 
 The fuzz runs 64 seeds, about 8 seconds on the 2-core Codespace: a tally tick costs about 110 µs,
 and about 300 µs with audit, which recomputes every chunk. The plan's estimate of 200 seeds took
@@ -563,8 +622,8 @@ Measured observation (indicative: CPU profiles of tally runs, Bun 1.4.4 on the 2
 `walkCanonical` call (its `Map` of visited objects, path arrays, descriptor reads, and key lists)
 dominate, and a commit spends about 70% of its time walking values. A small changed chunk costs
 about 10 µs at the commit, far more than the per-byte figure of ADR 0020 (68 to 110 µs per 7 KB)
-predicts, so that figure underestimates the cost of small chunks. The benchmark of the next
-pull requests measures it properly.
+predicts, so that figure underestimates the cost of small chunks. The
+[benchmark](#measured-cost-indicative) confirms it: about 40 µs for a chunk of 1 KB.
 
 ## Snapshots
 
@@ -613,12 +672,12 @@ does, and no text is returned. This is how such a write is found when audit is o
 `fullChecksum` and audit recompute the root with the same function (`recomputeState` in
 `world/checksum.ts`), so the three cannot disagree about the composition.
 
-Only a value that is not canonical, or a root that differs, blames the state. When a Proxy in the
-state uses the world during the encoding, the use is refused with `world_busy`; if the trap lets
-that refusal escape, so that the value cannot be read, encoding throws the refusal itself and
-leaves the world healthy and unchanged, as every refused use does. A trap that throws anything
-else leaves a value that cannot be read, which is not canonical: `integrity_violation`. Either
-way, no text is returned.
+Only a value that is not canonical, or a root that differs, blames the state. A use of the world
+from a Proxy's trap during the encoding is refused, and what follows it is decided by the rule of
+[a world that is read](#a-world-is-busy-while-it-is-read): a read that fails after a refusal
+throws `world_busy` and poisons nothing. A trap that throws without using the world leaves a
+value that cannot be read, which is not canonical: `integrity_violation`. Either way, no text is
+returned.
 
 ### Gates
 
@@ -683,9 +742,9 @@ A world poisoned at tick N recovers from the last snapshot taken before N:
   versions, each leaving the world unchanged; and that it runs before any command is read;
 - recovery after a fault with a corrected ruleset, with the same version labels and with a bumped
   version;
-- resumption at ticks 0, 1, 2, 37, 299, 300, and 999 of the golden run: every later checksum and
-  the final text equal the uninterrupted run's (in memory; a child-process resume arrives with the
-  next pull request);
+- resumption of the golden run, in process at ticks 0, 1, 2, 37, 299, 300, and 999 and in child
+  processes at 0, 37, and 999: every later tick and the final text equal the uninterrupted run's
+  (the [determinism suite](#determinism-suite));
 - each write behind the barrier, without audit, found by `encodeSnapshot`, which poisons the world
   and returns no text; several stale chunks and the global value, each named, at encoding and by
   audit;
@@ -693,7 +752,8 @@ A world poisoned at tick N recovers from the last snapshot taken before N:
   handler, and a Proxy in the state whose trap steps the world while `encodeSnapshot` or
   `snapshotBytes` reads it, refused with a message that names that function; a trap that lets the
   refusal escape fails the encoding with that `world_busy` and leaves the world healthy, and one
-  that throws anything else is an `integrity_violation`;
+  that throws without using the world is an `integrity_violation`
+  ([a world that is read](#a-world-is-busy-while-it-is-read) has the whole rule);
 - the snapshot's `stateRoot` equal to the root computed independently from the formulas, on 200
   random worlds;
 - unknown options refused at both entry points, every unknown key listed in canonical order, and
@@ -727,3 +787,106 @@ rejected everywhere by Biome's recommended `noGlobalAssign`.
 `tests/repo/engine-lint.test.ts` proves that each plugin reports those references and not names,
 keys, or types; that each exception covers its exact path; that look-alike paths are still rejected;
 and that every other purity rule applies to the excepted files.
+
+## Determinism suite
+
+The suite is the one harness that every ruleset runs: tally in T2, and the rulesets of T3 to T5,
+which ADR 0020 requires to pass it with audit on (plan §1 item 8, §2.5, §8). Code:
+`packages/engine/test/support/` (`determinism-suite.ts`, `determinism-records.ts`, and
+`resume-child.ts`), with its negative controls in `broken-rulesets.ts`. Tests:
+`packages/engine/test/determinism-suite.test.ts`.
+
+### What it checks
+
+`runDeterminismSuite(subject)` runs the subject's world several times and compares, tick by tick,
+the record of each tick: its checksum, events, changed chunks, and statistics, as canonical text.
+
+| Property | Check | What it catches |
+|---|---|---|
+| `fault` | The uninterrupted run, the reference, completes every tick | A tick that faults, such as a system that returns a `Promise` |
+| `repeat` | A second run, with a fresh ruleset, gives the same records | State that changes across runs, such as a counter shared between them |
+| `audit` | A run under audit gives the same records, so the incremental root equals the full one at every tick | A write behind the barrier, at the tick it happens |
+| `resume` | At each cut, the snapshot of that tick, decoded with a fresh ruleset, gives the same records from the next tick, and the same final snapshot text. The snapshots come from a run of their own, so an encoding that poisons its world changes no other run | Behavior that depends on insertion order, which a decoded world does not keep; state kept in the ruleset object; a write behind the barrier, which encoding refuses |
+| `child-resume` | The same, in a fresh child process for each child cut | State kept at module level, which an in-process resume shares with the first run |
+| `interleave` | The world, a world with the second seed, and a replica of the first, sharing one ruleset object and stepped in a seeded random interleaving, give what each gives alone | State shared between worlds, through a module or the ruleset object |
+
+It returns a report and asserts nothing, so the negative controls can prove that it fails. Each
+failure names its property, the first tick at which it failed, and, for a resume, the cut (for an
+interleaving, the world). Only the first divergence of each comparison is reported, since the
+ticks after it follow from it. The report also lists the cuts each resume ran, so a check that
+ran nothing shows, and holds the reference records and the final snapshot text.
+
+### How a batch uses it
+
+```ts
+const report = await runDeterminismSuite({
+  ruleset: { module: import.meta.resolve("./fixtures/terrain-ruleset.ts"), name: "terrainRuleset" },
+  world: (seed, ruleset, audit) => terrainWorld(seed, ruleset, audit),
+  seeds: [[1, 2], [3, 4]],
+  ticks: 1_000,
+  commands: terrainCommands,
+  cuts: [0, 1, 37, 999],
+  childCuts: [37],
+});
+expect(report.failures).toEqual([]);
+```
+
+- `ruleset` names a module and the function it exports, which returns a fresh ruleset on every
+  call; the child process imports it by that path, so the module must load on its own.
+- `commands(tick)` is called once per tick, in order from 1, before any run, so a generator such
+  as `sfc32` may keep state: every run, the child processes included, gets the same script.
+- Cuts are ticks in [0, ticks); a subject that breaks these rules is refused before anything runs.
+
+### The child process
+
+The suite starts one child process per child cut, `bun resume-child.ts` with `process.execPath`,
+in the repository root, so `bunfig.toml` keeps telemetry off. Its input is one JSON document on
+stdin: the ruleset's module and name, the snapshot text, the tick to continue from, and the whole
+script. Its output is one JSON document on stdout: the record of every tick it ran, and its final
+snapshot or what encoding it threw. Nothing touches the disk, so there is nothing to clean up. Each
+process is killed with SIGKILL after 30 s (`CHILD_TIMEOUT_MS`), and a process that fails or is
+killed is a `child-resume` failure with its exit code and the end of its stderr. The processes
+start together and run while the parent does its in-process checks.
+
+### Negative controls
+
+Each control in `broken-rulesets.ts` is broken on purpose, and a test asserts the exact failures
+the suite reports for it:
+
+| Control | Defect | Reported |
+|---|---|---|
+| `writesThroughReadChunk` | Writes through `readChunk` at tick 5 | `audit` at tick 5; `resume`: the encoding at the cut after it throws `integrity_violation`, and so does the final snapshot of each resume from before it |
+| `dependsOnInsertionOrder` | Remembers the first key of a record by `Object.keys` | `resume` and `child-resume` at the tick after a cut with two keys or more |
+| `keepsModuleCache` | A module-level `const` `Map` of the tick each chunk was first written | `child-resume` only, at the tick after the cut |
+| `keepsRulesetCache` | The same cache, in the ruleset object | `resume` at the tick after the cut |
+| `returnsPromise` | A system that returns a `Promise` | `fault` at tick 1 |
+| `sharesCounter` | A counter shared by every run in the process | `repeat`, `audit`, `resume`, and `interleave` at their first tick |
+
+Tally, the positive control, passes every check on the golden run and on 200 ticks of generated
+commands. A test of the comparison itself shows that a divergence that heals is still found, at its
+tick, so comparing only the final checksum would fail it.
+
+### The complexity test
+
+`step-cost.test.ts` proves in CI that the kernel's work per tick does not depend on the number of
+chunks N (plan §2.4, criterion 9). Two worlds, of 1,000 and 200,000 chunks, change D = 10 chunks
+per tick. Their `stats.hashedBytes` must equal the canonical bytes of the changed chunks plus the
+fixed digests, and the median tick of the large world must cost less than 4 times that of the
+small one. The measured ratio is about 1.0. A scan or a sort of every key added to the commit
+gives about 100; an O(N) term is caught once it costs more than about 1.5 ns per chunk per tick.
+A bare copy of the key list costs less than that (3.6 times) and is caught instead by the lazy
+index test in the same file.
+
+Against flakiness, the test collects garbage before it measures, steps both worlds alternately so
+they share the machine's conditions, warms up for 100 ticks, takes the median of 300, and repeats a
+failed measurement once: an O(N) bug fails both attempts, and noise rarely does. A test of the
+bound itself checks that 3.99 passes and 4 fails. If the test still fails intermittently, plan R11
+moves it to the benchmark, with the reason recorded. It takes about 2 s, most of it creating the
+large world.
+
+### Time
+
+On the 2-core Codespace with Bun 1.4.4 (2026-10-25; indicative), the golden subject takes about
+5.3 s: about 13,000 ticks in process, one run under audit, and three child processes. The whole
+`bun test` takes about 20 s.
+

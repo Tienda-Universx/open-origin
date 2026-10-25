@@ -3,18 +3,16 @@
  * field: the host can hold a world and pass it back, but no reflection reaches its state, and the
  * brand check rejects a forged object without running a Proxy trap. Only the engine's modules
  * reach the state, through worldState, which index.ts does not export. Everything the host reads
- * is a detached copy or a primitive.
+ * (world/view.ts) is a detached copy or a primitive.
  */
-import { copyCanonical } from "../canonical/copy.ts";
 import type { CanonicalValue } from "../canonical/value.ts";
 import type { Digest } from "../digest/digest.ts";
 import type { Lanes } from "../digest/lanes.ts";
 import { EngineError, type EngineErrorCode, type Issue } from "../errors.ts";
 import type { Seed } from "../rng/mix32.ts";
 import type { Tick } from "../time/tick.ts";
-import { parseChunkKey } from "./chunk.ts";
 import type { ChunkIndex } from "./chunk-index.ts";
-import type { DeepReadonly, EntityId, ReadView } from "./contracts.ts";
+import type { EntityId } from "./contracts.ts";
 import type { CapturedRuleset } from "./ruleset.ts";
 
 /** The versions that a snapshot header records, so that replay can require equal ones. */
@@ -66,8 +64,7 @@ export interface WorldActivity {
   /**
    * The world_busy error for a call of `api` while the world is busy. During a tick it also records
    * a fault of the tick at the ruleset code that made the call, so that catching it hides nothing;
-   * during an encoding it keeps the first refusal, so that an encoding that fails because of it
-   * throws it instead of blaming the state.
+   * during a read it keeps the first refusal (Reading, readState).
    */
   refuse(api: string): EngineError;
 }
@@ -185,6 +182,68 @@ export function healthyState(value: unknown, api: string): WorldState {
 }
 
 /**
+ * What a world is busy with while `reader` reads values of its state, which can run the traps of a
+ * Proxy in it: every use of the world meanwhile is refused with world_busy, and the first refusal
+ * is kept. The message says the world is `verb`: "read", or "encoded" by the encoders.
+ */
+export class Reading implements WorldActivity {
+  readonly #reader: string;
+  readonly #verb: string;
+  #refusal: EngineError | undefined;
+
+  constructor(reader: string, verb: string) {
+    this.#reader = reader;
+    this.#verb = verb;
+  }
+
+  /** The first use of the world this read refused, if any. */
+  get refusal(): EngineError | undefined {
+    return this.#refusal;
+  }
+
+  refuse(api: string): EngineError {
+    const message =
+      `${api} was called while ${this.#reader} read this world: ` +
+      `no function may use a world while it is ${this.#verb}`;
+    const refusal = new EngineError("world_busy", [{ path: "", message }]);
+    this.#refusal ??= refusal;
+    return refusal;
+  }
+}
+
+/**
+ * The result of `read` on the state of `world`, for a call of `api`, with the world busy while it
+ * reads (Reading). Throws as healthyState does, before `read` runs. A use of the world from a trap
+ * during the read is refused and changes nothing, so the rule for the read is:
+ *
+ * - a read that completes returns its result, even when a trap caught a refusal;
+ * - a read that throws after a refusal throws the first refusal, world_busy, whatever it threw
+ *   and however the trap handled the refusal (caught it, copied it, or was refused again), and
+ *   poisons nothing: the failure is the trap's, not the state's;
+ * - a read that poisoned the world after it completed, as encodeSnapshot does when the root
+ *   differs, throws that fault, which a refusal does not replace.
+ */
+export function readState<T>(
+  world: unknown,
+  api: string,
+  verb: string,
+  read: (state: WorldState, reading: Reading) => T,
+): T {
+  const state = healthyState(world, api);
+  const reading = new Reading(api, verb);
+  state.active = reading;
+  try {
+    return read(state, reading);
+  } catch (error) {
+    const { refusal } = reading;
+    if (refusal !== undefined && state.status.kind === "ok") throw refusal;
+    throw error;
+  } finally {
+    state.active = undefined;
+  }
+}
+
+/**
  * Poisons `state` with `fault`, at the tick its kernel is at. A world keeps its first fault, which
  * is the diagnosis worldStatus gives: poisoning a world that is already poisoned changes nothing.
  */
@@ -213,32 +272,4 @@ export function worldStatus(world: World): WorldStatus {
   if (status.kind === "ok") return { kind: "ok", tick: kernel.tick };
   const issues = status.issues.map(({ path, message }) => ({ path, message }));
   return { kind: "faulted", tick: status.tick, code: status.code, issues };
-}
-
-/**
- * Reads of `world` for the host. Each call reads the world as it is then and returns a detached
- * copy: changing what it returns never changes the world. readChunk throws
- * EngineError("invalid_value") for a key that is not a chunk key, and returns undefined for a key
- * that has no chunk. readView and every method of the view throw EngineError("world_faulted")
- * once the world is poisoned, and EngineError("world_busy") while a step runs on it.
- */
-export function readView<G extends CanonicalValue, C extends CanonicalValue>(
-  world: World<G, C>,
-): ReadView<G, C> {
-  healthyState(world, "readView");
-  // The ruleset's validators accepted these values as a G and as Cs when they entered the world.
-  return {
-    get tick() {
-      return healthyState(world, "view.tick").kernel.tick;
-    },
-    chunkKeys: () => healthyState(world, "view.chunkKeys").chunks.sortedKeys(),
-    readChunk(key) {
-      const { chunks } = healthyState(world, "view.readChunk");
-      parseChunkKey(key);
-      const entry = chunks.get(key);
-      return entry === undefined ? undefined : (copyCanonical(entry.value) as DeepReadonly<C>);
-    },
-    readGlobal: () =>
-      copyCanonical(healthyState(world, "view.readGlobal").global) as DeepReadonly<G>,
-  };
 }
