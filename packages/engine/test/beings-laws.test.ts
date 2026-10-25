@@ -267,22 +267,28 @@ describe("every law, one bad value at a time", () => {
   });
 
   test("bounds the slowest step a locomotion law allows, so every step fits an Int32", () => {
-    const steep = (maxRise: number) =>
+    const law = (stepMs: number, wade: { num: number; den: number }) =>
       withMember("/species/0/locomotion", {
-        stepMs: 45_000,
-        maxRise,
+        stepMs,
+        maxRise: 1_518_684,
         rise: { num: 1000, den: 1 },
-        maxWade: 0,
-        wade: { num: 0, den: 1 },
+        maxWade: 1_000,
+        wade,
       });
-    // 45,000 + 1,000·1,518,684 = SLOWEST_STEP_INNER exactly; one more unit of rise is too slow.
-    expect(lifeIssues(steep(1_518_684))).toEqual([]);
-    expect(lifeIssues(steep(1_518_685))).toEqual([
+    const free = { num: 0, den: 1 };
+    // 45,594 + 1,000·1,518,684 is SLOWEST_STEP_INNER exactly; one more millisecond is too slow.
+    expect(lifeIssues(law(45_594, free))).toEqual([]);
+    expect(lifeIssues(law(45_595, free))).toEqual([
       {
         path: "/species/0/locomotion",
         message:
-          "the slowest step this law allows costs stepMs + ⌊rise·maxRise⌋ + ⌊wade·maxWade⌋ = 1518730000 ms before its diagonal factor: it must be at most 1518729594, so that every step lasts at most 2^31 − 1 ms",
+          "the slowest step this law allows costs stepMs + ⌊rise·maxRise⌋ + ⌊wade·maxWade⌋ = 1518729595 ms before its diagonal factor: it must be at most 1518729594, so that every step lasts at most 2^31 − 1 ms",
       },
+    ]);
+    // The wade term counts too: ⌊1·1,000/2⌋ = 500 ms pushes a step 594 ms below the bound over it.
+    expect(lifeIssues(law(45_000, { num: 1, den: 2 }))).toEqual([]);
+    expect(lifeIssues(law(45_095, { num: 1, den: 2 })).map((issue) => issue.path)).toEqual([
+      "/species/0/locomotion",
     ]);
     expect(beings.SLOWEST_STEP_INNER * 1414).toBeLessThanOrEqual((2 ** 31 - 1) * 1000);
     expect((beings.SLOWEST_STEP_INNER + 1) * 1414).toBeGreaterThan((2 ** 31 - 1) * 1000);
