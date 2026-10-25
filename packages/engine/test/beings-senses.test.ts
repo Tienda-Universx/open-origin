@@ -229,7 +229,9 @@ describe("senseWindow", () => {
     expect(center(sense(found, species, chunk(base - 30, 100)))).toBe(1);
     // All taken at tick 100: nothing has regrown by 1,200 s.
     expect(center(sense(found, species, chunk(base, 100)))).toBe(0);
-    // All taken at tick 0: 1,200 s of regrowth at 1/504 per second is 2 units, below "some".
+    // All taken at tick 0: 1,200 s of the default regrowth give back fewer units than "some".
+    const regrown = beings.scaledFloor(species.regrowth, 1_200, base);
+    expect(regrown).toBeLessThan(species.diet.cue.some);
     expect(center(sense(found, species, chunk(base, 0)))).toBe(0);
   });
 });
@@ -264,10 +266,11 @@ describe("senseWindow, at the edges of its rules", () => {
   });
 
   test("adds regrowth since the take, counted in seconds from its tick", () => {
-    // Regrowth is 1 unit per 504 s; the window is sensed at 1,200 s.
+    // A regrowth of 1 unit per 504 s, which 1,200 s can show; the window is sensed at 1,200 s.
+    const regrowing = { ...species, regrowth: { num: 1, den: 504 } };
     const cueTakenAt = (since: number) =>
       centerCue(
-        sense(cell, species, withEntries([{ cell: index, taken: base - (some - 2), since }])),
+        sense(cell, regrowing, withEntries([{ cell: index, taken: base - (some - 2), since }])),
       );
     // Taken at tick 50 (600 s): 600 s later 1 unit regrew, one short of "some".
     expect(cueTakenAt(50)).toBe(0);

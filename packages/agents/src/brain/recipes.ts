@@ -155,7 +155,7 @@ function foodNear(view: View, goal: number, sight: number): boolean {
 }
 
 /** How far a wandering being aims along its heading, and how near food its target must lie. */
-export type Wander = { readonly reach: number; readonly sight: number };
+type Wander = { readonly reach: number; readonly sight: number };
 
 /**
  * A leg of a wandering being: toward the cell `wander.reach` cells away along `heading`, planned
@@ -187,10 +187,10 @@ export function wanderLeg(
 }
 
 /** The spiral of a search: the cell where it began, and the length of each of its steps. */
-export type Spiral = { readonly anchor: readonly number[]; readonly step: number };
+type Spiral = { readonly anchor: readonly number[]; readonly step: number };
 
 /** ⌊√n⌋ for a safe integer n ≥ 0, by Newton's method on integers. */
-export function isqrt(n: number): number {
+function isqrt(n: number): number {
   if (n < 2) return n;
   let x = n;
   let y = floorDiv(x + 1, 2);

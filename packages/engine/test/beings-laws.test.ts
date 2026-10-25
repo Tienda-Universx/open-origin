@@ -152,8 +152,9 @@ describe("checkLife", () => {
     expect(lifeIssues(withMember("/species", [first, same]))).toEqual([]);
     const message = `${LIFE_VERSION} has one food deposit: every species eats deposit 0 with the regrowth of the first`;
     const otherDeposit = { ...first, id: "s2", diet: { ...first.diet, deposit: 1 } };
-    const otherRegrowth = { ...first, id: "s3", regrowth: { num: 1, den: 505 } };
-    const otherRate = { ...first, id: "s4", regrowth: { num: 2, den: 504 } };
+    const { num, den } = first.regrowth;
+    const otherRegrowth = { ...first, id: "s3", regrowth: { num, den: den + 1 } };
+    const otherRate = { ...first, id: "s4", regrowth: { num: num + 1, den } };
     expect(
       lifeIssues(withMember("/species", [first, otherDeposit, otherRegrowth, otherRate])),
     ).toEqual([
@@ -249,6 +250,24 @@ describe("the default laws against the registered targets", () => {
     expect(perSecond(rest.walking) / perSecond(rest.awake)).toBeWithin(1, 1.5001);
     expect(span(species.sleep.recover) / L).toBeWithin(0.25, 0.45);
     expect((32 * species.locomotion.stepMs) / 1000 / L).toBeWithin(0.01, 0.03);
+  });
+
+  test("keep every numerator at most ⌊2^20·10/11⌋, so the adverse variant stays a valid ratio", () => {
+    const numerators = [
+      ...Object.values(nutrition),
+      ...Object.values(rest),
+      species.sleep.recover,
+      species.health.starve,
+      species.health.recover,
+      species.regrowth,
+      species.locomotion.rise,
+      species.locomotion.wade,
+    ].map(({ num }) => num);
+    expect(numerators).toHaveLength(11);
+    for (const num of numerators) expect(num).toBeLessThanOrEqual(953_250);
+    expect(Math.floor((2 ** 20 * 10) / 11)).toBe(953_250);
+    // Rounded to the nearest integer, each numerator moves by ±10%: none is so small that it does not.
+    for (const num of numerators.slice(0, 9)) expect(Math.round(num * 1.1)).toBeGreaterThan(num);
   });
 
   test("one cell alone cannot sustain a being, and the stationary horizon stays within 60 days", () => {

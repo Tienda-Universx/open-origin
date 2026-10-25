@@ -168,7 +168,7 @@ describe("the variants of the laws", () => {
   });
 });
 
-describe("the typical food cell", () => {
+describe("the targets that depend on the typical food cell", () => {
   /** f: the lower median of the positive values of deposit 0 over the calibration areas, pooled. */
   function typicalFood(terrains: readonly Terrain[]): number {
     const values: number[] = [];
@@ -183,8 +183,20 @@ describe("the typical food cell", () => {
   }
 
   const f = typicalFood(LABELS.calibration.map((label) => terrain(label)));
+  const species = beings.defaultLife().species[0] as beings.Species;
+  const L = worldgen.defaultGenesis([1, 2, 3, 4, 5, 6, 7, 8]).laws.day.length;
 
   test("f is 84 units", () => {
     expect(f).toBe(84);
+  });
+
+  test("a full meal, from 400,000 to 1,000,000, needs 0.5 f to 1.5 f units", () => {
+    const units = 600_000 / species.diet.nutritionPerUnit;
+    expect(units / f).toBeWithin(0.5, 1.5);
+  });
+
+  test("an emptied cell regrows to f units in 1 L to 3 L", () => {
+    const seconds = (f * species.regrowth.den) / species.regrowth.num;
+    expect(seconds / L).toBeWithin(1, 3);
   });
 });

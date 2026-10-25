@@ -11,8 +11,8 @@ import { beings, type DeepReadonly } from "@open-origin/engine";
 export type Senses = DeepReadonly<beings.Senses>;
 
 /** The flat steps of the default species: 45 s straight, ⌈1.414·45 s⌉ diagonal. */
-export const STRAIGHT_MS = 45_000;
-export const DIAGONAL_MS = 63_630;
+const STRAIGHT_MS = 45_000;
+const DIAGONAL_MS = 63_630;
 
 /** A cell of a window, as an offset from its center. */
 export type Offset = readonly [number, number];
@@ -84,7 +84,7 @@ export const NOON = 1000;
 export const NIGHT = 40;
 
 /** The neutral traits. */
-export const NEUTRAL = Object.freeze({ appetite: 1000, sleepiness: 1000, curiosity: 1000 });
+const NEUTRAL = Object.freeze({ appetite: 1000, sleepiness: 1000, curiosity: 1000 });
 
 /** A sated, rested being at noon at the cell (0, 0), which already decided once and rested. */
 const DEFAULT_BEING = Object.freeze({
@@ -125,7 +125,7 @@ export function sensesOf(window: beings.SensedWindow, being: Being = {}): Senses
 }
 
 /** The cells a walk `dirs` from the center of a window of `radius` passes, as offsets. */
-export function walkCells(dirs: string): Offset[] {
+function walkCells(dirs: string): Offset[] {
   const cells: Offset[] = [];
   let [x, y] = [0, 0];
   for (const digit of dirs) {

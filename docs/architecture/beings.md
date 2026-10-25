@@ -16,6 +16,7 @@ requests implement, and the preregistration of its scenarios.
 | Contests, incapacity, fuzz, and call counts | `packages/engine/test`: `beings-contest.test.ts`, `beings-fuzz.test.ts` | T4-5b |
 | Cooldowns that an intention adds | `packages/engine/src/beings`: `intention.ts`, `advance.ts` | T4-6 |
 | The brain `utility@1` | `packages/agents/src/brain`: `curves.ts`, `parameters.ts`, `recipes.ts`, `utility.ts` | T4-6 |
+| The preregistered scenario and the calibration | `packages/agents/test/support`: `scenario.ts`, `metrics.ts`; `packages/agents/bench/calibration.ts`; `defaultLife` in `laws.ts` | T4-6 |
 | Scenarios, survival, and controls | `packages/agents/test`, `bench` | T4-7 (*planned*) |
 
 ## Layers
@@ -159,7 +160,9 @@ are integer simulated milliseconds.
   passes them; a host copies an arbitrary value first with `copyCanonical`;
 - the seal, and a diet that names a deposit the genesis does not have;
 - the default laws against the registered targets that depend on the laws alone, including one
-  cell's regrowth against the cheapest day and the stationary horizon H;
+  cell's regrowth against the cheapest day and the stationary horizon H, and numerators of at most
+  953,250 that a variant of ±10% moves; the targets that depend on the typical food cell f are
+  checked in `packages/agents/test/scenario.test.ts`, which measures f on the calibration areas;
 - each being in the chunk of its cell, on both sides of the origin, ids rising strictly, and `due`
   equal to the earliest wake.
 
@@ -265,7 +268,8 @@ brain version composes each species with its brain, in species order.
 `utilityController()` of `@open-origin/agents` is a Utility AI (plan §5.3, L1) with the recipes
 of L2 (plan §5.4). It is a pure function of its senses: it keeps no state, what it must remember
 travels in `behavior` and `cooldowns`, and its only randomness is `draws[0] mod 8`, its heading at
-its first decision. Its parameters are in `packages/agents/src/brain/parameters.ts`.
+its first decision. Its parameters are in `packages/agents/src/brain/parameters.ts`, calibrated
+and frozen with the laws (see [Calibration](#calibration)).
 
 **Considerations**, integers in permille, each from a piecewise-linear response curve whose
 values between points are rounded down:
@@ -665,3 +669,89 @@ nutrition is 0, a fraction `(c − g) / c` of the time.
   Some cell was emptied, regrew to at least half its deposit, and was eaten again.
 - Negative controls: a brain that never eats is incapacitated at the tick the laws give; a
   stationary brain, which only eats in its own cell and sleeps, is incapacitated by H on every seed.
+
+## Calibration
+
+Laws and brain were calibrated together on the four calibration labels only, as the
+preregistration requires, and frozen together; no simulation ran on the default label or any
+held-out label. `bun packages/agents/bench/calibration.ts [1 to 4] [adverse | favorable]
+[--ticks N] [--spawn K]` reruns it; it refuses every other label.
+
+### The laws
+
+The typical food cell of the calibration areas is f = 84 units (the lower median of 11,921 positive
+values), far below the deposit's peak of 1000. Three provisional laws missed the targets that
+depend on f, and changed:
+
+| Law | Provisional | Calibrated | Why |
+|---|---|---|---|
+| `diet.nutritionPerUnit` | 2000 | 8000 | a full meal needed 300 units, 3.6 f; it needs 75, 0.89 f |
+| `regrowth` | 1/504 per s | 100/240,000 per s (1/2400) | f regrew in 0.56 L; it regrows in 2.67 L. The numerator 100 lets the ±10% variants move it, which 1 cannot |
+| `diet.cue.plenty` | 200 | 40 | no cell of the calibration areas cued plenty at 200 in two of them; 40 units feed 320,000, a meal of the acceptance list |
+
+Every other law kept its provisional value. With them, the default laws give: nutrition from full
+to 0 awake in 2 L, walking 1.5 and asleep 0.5 times as fast; health from full to 0 in 1.5 L;
+rest from full to 0 in 1.6 L, walking 1.25 times as fast; rest restored in 0.35 L; 32 flat steps
+in 0.019 L; one cell's day of regrowth g = 252,000, 0.55 of the cheapest day c = 455,128; and a
+stationary horizon H = 47.7 days. Every numerator is at most 953,250.
+
+### The brain
+
+The parameters of `utility@1` in `packages/agents/src/brain/parameters.ts` are frozen with these
+laws. Calibration changed the brain itself three times:
+
+- on `calibration/3`, sated beings wandered out of sight of food and starved, so wandering keeps
+  food in sight;
+- on `calibration/3`, beings spawned out of sight of food searched in a straight line into a
+  barren region. A search bounced inside a square around where it began passed the four labels,
+  but on `calibration/3` with another spawn draw (below) it fell into a loop of five legs; a
+  square spiral on a lattice then looped where its points were blocked, so the search became the
+  spiral whose every step leads farther out;
+- while its tests were written, a sleep woken by starvation turned out to outweigh the meal, so a
+  wake condition releases the commitment.
+
+### Results
+
+Each calibration label, 63,000 ticks (10 days), audit off, with the brain `utility@1` and the
+default laws; the minimum over the eight beings of each acceptance item:
+
+| Label | Incapacitated, rest 0, rejected | Meal cells | Ate outside birth window | Meals ≥ 300,000 | Sleeps; rested wakes | Walked | Lowest nutrition |
+|---|---|---|---|---|---|---|---|
+| `calibration/1` | 0, 0, 0 | 13 | all | 10 | 30; 30 | 535 | 523,974 |
+| `calibration/2` | 0, 0, 0 | 13 | all | 9 | 30; 30 | 544 | 463,941 |
+| `calibration/3` | 0, 0, 0 | 13 | all | 9 | 30; 30 | 589 | 452,077 |
+| `calibration/4` | 0, 0, 0 | 12 | all | 11 | 21; 21 | 622 | 309,208 |
+
+On every label some cell was emptied, regrew to half its deposit, and was eaten again; health
+never fell, because nutrition never reached 0. The same holds, with the frozen laws and brain:
+
+- under the adverse and the favorable variants of the laws, on all four labels (lowest nutrition
+  278,726 and 339,101);
+- over 20 days (126,000 ticks) on all four (lowest nutrition 309,208);
+- on each calibration terrain with three other spawn draws, `--spawn 1` to `3`, the spawn
+  generator seeded from `<label>/spawn/1` to `/3` instead of `<label>/spawn` (lowest nutrition
+  299,847). These are
+  calibration terrains, not registered scenarios; the first of them led to the spiral search, and
+  none changed a parameter after it.
+
+Measured on the two-core Codespace with Bun 1.4.4 (indicative): a 10-day run of eight beings,
+audit off, takes 5.3 to 6.1 s, of which the brain takes 0.15 to 0.2 s, and 5.9 to 6.5 s with the
+metrics. A being decides 11.2 to 12.3 times a simulated day.
+
+### What the tests check (calibration)
+
+`packages/agents/test/scenario.test.ts` and `packages/engine/test/beings-laws.test.ts`: the seeds of
+a label; the spawn table of all eleven labels, from terrain alone; the beings a label draws, on
+distinct dry cells, by rejection, pinned for `calibration/1` after an independent reading of the
+rule agreed; the variants of the laws, rounded half up; f = 84; and the targets that depend on f.
+With the provisional laws, three of these tests fail: the units of a full meal, the regrowth to
+f, and a regrowth numerator that ±10% cannot move. Each of 5 deliberate defects of the calibrated
+laws and 8 of 9 of the scenario builder makes them fail; the ninth, a cell dry only above the
+liquid level rather than at it, is equivalent on the eleven labels, where no area cell lies
+exactly at the level. The metrics are bench tooling here, and have no tests of their own.
+
+The metrics (`packages/agents/test/support/metrics.ts`) read events and the state at their
+ticks: a meal is one `eat` activity, and its rise is the nutrition at its end less the nutrition
+at its start; a rested wake is a sleep that ends with rest at least 900,000; walked cells are the
+steps that arrived; a cell is emptied when a bite leaves it 0, and eaten again when a later bite
+finds at least half of its deposit there.

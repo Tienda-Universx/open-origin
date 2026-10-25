@@ -56,7 +56,7 @@ const COVERAGE_TILE = 256;
  * The genesis' food coverage: how many of the 1024 × 1024 cells from (−512, −512) to (511, 511)
  * have deposit 0 above 0.
  */
-export function foodCoverage(prepared: worldgen.PreparedGenesis): number {
+function foodCoverage(prepared: worldgen.PreparedGenesis): number {
   let count = 0;
   const first = -COVERAGE_SIDE / 2;
   for (let y = first; y < first + COVERAGE_SIDE; y += COVERAGE_TILE) {
@@ -165,10 +165,7 @@ export function areaNeeds(coverage: number): { readonly land: number; readonly f
  * have at least 4,608 dry cells and at least ⌈coverage·9,216 / 2^20⌉ cells with food, on a ring of
  * at most 64; undefined when none qualifies, which makes the label uninhabitable.
  */
-export function spawnArea(
-  prepared: worldgen.PreparedGenesis,
-  coverage: number,
-): SpawnArea | undefined {
+function spawnArea(prepared: worldgen.PreparedGenesis, coverage: number): SpawnArea | undefined {
   const needs = areaNeeds(coverage);
   const level = worldgen.liquidLevel(worldgen.genesisOf(prepared));
   const count = chunkCounter(prepared, level);
@@ -251,7 +248,7 @@ function scaled(ratio: beings.Ratio, factor: number): beings.Ratio {
  * every rate that lowers a need or health is multiplied by 11/10 and every rate that raises a
  * need, health, or food by 9/10; the favorable variant has the opposite factors.
  */
-export function variantSpecies(species: beings.Species, variant: Variant): beings.Species {
+function variantSpecies(species: beings.Species, variant: Variant): beings.Species {
   const [lower, raise] = variant === "adverse" ? [11, 9] : [9, 11];
   const { nutrition, rest } = species.needs;
   return {
@@ -304,6 +301,11 @@ export type ScenarioOptions = {
   readonly controllers: { readonly [species: string]: beings.Controller };
   readonly life?: beings.LifeConfig;
   readonly audit?: boolean;
+  /**
+   * For checks of calibration only, never the registered scenario: another spawn draw, from the
+   * first word of SHA-256 of `<label>/spawn<spawnSuffix>` instead of `<label>/spawn`.
+   */
+  readonly spawnSuffix?: string;
 };
 
 /** A scenario ready to run: its world at tick 0, the spawns of tick 1, and what built them. */
@@ -330,7 +332,11 @@ export function scenarioOf(label: string, options: ScenarioOptions): Scenario {
   const base = options.life ?? beings.defaultLife();
   const life = { ...base, deathEnabled: false };
   const species = life.species[0] as beings.Species;
-  const payloads = drawBeings(area, terrain.seeds.spawn, species);
+  const spawnSeed =
+    options.spawnSuffix === undefined
+      ? terrain.seeds.spawn
+      : (sha256Words(`${label}/spawn${options.spawnSuffix}`)[0] as number);
+  const payloads = drawBeings(area, spawnSeed, species);
   const world = createWorld(
     {
       seed: terrain.seeds.world,

@@ -747,7 +747,12 @@ describe("the edges of the tick", () => {
 
   test("drop a cell's depletion once it fully regrew, when its chunk is written again", () => {
     const cell = findCell([-128, -128], 256, { food: 2 * SPECIES.diet.biteUnits });
-    const quickGrowth = lifeWith((species) => ({ ...species, regrowth: { num: 1, den: 1 } }));
+    // A bite of 25 units feeds 50,000 here, so that two bites sate the being.
+    const quickGrowth = lifeWith((species) => ({
+      ...species,
+      diet: { ...species.diet, nutritionPerUnit: 2000, biteUnits: 25 },
+      regrowth: { num: 1, den: 1 },
+    }));
     const snack = brain((senses) =>
       senses.self.outcome.result === "none"
         ? {

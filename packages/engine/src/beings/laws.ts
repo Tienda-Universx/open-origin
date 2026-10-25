@@ -385,9 +385,11 @@ export function sealedLifeIssues(global: unknown): Issue[] {
 }
 
 /**
- * The default laws of life: one species, `s1`, that eats deposit 0. These values are provisional:
- * they meet the ecological targets registered in docs/architecture/beings.md, and T4-6 calibrates
- * them on the calibration seeds only, then freezes them with the brain.
+ * The default laws of life: one species, `s1`, that eats deposit 0. They meet the ecological
+ * targets registered in docs/architecture/beings.md, and were calibrated in T4-6 on the
+ * calibration seeds only and frozen with the brain `utility@1` ("Calibration" there): the
+ * nutrition of a unit of food, the regrowth, and the cue of plenty changed, from the typical food
+ * cell of the calibration areas.
  */
 export function defaultLife(): LifeConfig {
   return {
@@ -407,10 +409,10 @@ export function defaultLife(): LifeConfig {
         },
         diet: {
           deposit: 0,
-          nutritionPerUnit: 2000,
+          nutritionPerUnit: 8000,
           biteUnits: 25,
           biteMs: 60_000,
-          cue: { some: 25, plenty: 200 },
+          cue: { some: 25, plenty: 40 },
         },
         locomotion: {
           stepMs: 45_000,
@@ -425,7 +427,7 @@ export function defaultLife(): LifeConfig {
           recover: { num: 1250, den: 189 },
           recoverAbove: 300_000,
         },
-        regrowth: { num: 1, den: 504 },
+        regrowth: { num: 100, den: 240_000 },
         senses: { radius: 24 },
         traits: { min: 800, max: 1200 },
       },
