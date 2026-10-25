@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { digest, worldgen } from "../src/index.ts";
-import { sharedGenesis } from "../src/worldgen/genesis.ts";
+import { lightPeriod, sharedGenesis } from "../src/worldgen/genesis.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { revokedProxy } from "./support/revoked.ts";
 
@@ -116,7 +116,7 @@ describe("GENESIS_BOUNDS", () => {
     expect(GENESIS_BOUNDS).toEqual({
       terrainSeedWords: { min: 8, max: 8 },
       laws: {
-        day: { length: { min: 1, max: 2 ** 40 }, daylight: { min: 1, max: 999 } },
+        day: { length: { min: 1, max: 2 ** 36 }, daylight: { min: 1, max: 999 } },
         liquid: { level: { min: 100, max: 900 } },
         thermal: {
           base: { min: -p20, max: p20 },
@@ -172,10 +172,10 @@ describe("GENESIS_BOUNDS", () => {
 describe("genesisIssues: integer bounds", () => {
   /**
    * Each bounded integer, its bounds, and the edits that keep every other check passing at the
-   * bounds: night may not exceed peak, and the wavelength must cover the octaves.
+   * bounds: night may not exceed peak, and the wavelength must cover the octaves. The day's length
+   * has its own tests below, since no day of 1 second has a light period.
    */
   const rows: [string, number, number, Record<string, unknown>][] = [
-    ["/laws/day/length", 1, 2 ** 40, {}],
     ["/laws/day/daylight", 1, 999, {}],
     ["/laws/liquid/level", 100, 900, {}],
     ["/laws/thermal/base", -(2 ** 20), 2 ** 20, {}],
@@ -223,6 +223,78 @@ describe("genesisIssues: integer bounds", () => {
     expect(issuesWith({ "/laws/radiance/peak": 0, "/laws/radiance/night": 999 })).toEqual([
       { path: "/laws/radiance/peak", message: outOfBounds(0, 1, 2 ** 20) },
     ]);
+  });
+});
+
+describe("genesisIssues: the day", () => {
+  const lightless = (length: number, daylight: number) =>
+    `the day has no light period: ${daylight}‰ of a day of ${length} seconds is less than one second, and the light period and the night must each last at least one second`;
+  const day = (length: number, daylight: number) => ({
+    "/laws/day/length": length,
+    "/laws/day/daylight": daylight,
+  });
+
+  test("a day lasts at most 2^36 seconds, so that the calendar's values stay below 2^53", () => {
+    expect(issuesWith({ "/laws/day/length": 2 ** 36 })).toEqual([]);
+    for (const value of [0, 2 ** 36 + 1, 2 ** 40]) {
+      expect(issuesWith({ "/laws/day/length": value })).toEqual([
+        { path: "/laws/day/length", message: outOfBounds(value, 1, 2 ** 36) },
+      ]);
+    }
+  });
+
+  test.each([
+    [1000, 1],
+    [2, 500],
+    [8, 125],
+    [2, 999],
+    [1000, 999],
+    [2 ** 36, 1],
+  ])(
+    "accepts a day of %d seconds with %d‰ of daylight: at least one second of light",
+    (length, daylight) => {
+      expect(issuesWith(day(length, daylight))).toEqual([]);
+    },
+  );
+
+  test.each([
+    [999, 1],
+    [1, 999],
+    [1, 1],
+    [37, 27],
+    [3, 333],
+  ])(
+    "rejects a day of %d seconds with %d‰ of daylight: less than a second of light",
+    (length, daylight) => {
+      expect(issuesWith(day(length, daylight))).toEqual([
+        { path: "/laws/day", message: lightless(length, daylight) },
+      ]);
+    },
+  );
+
+  test("its night always lasts at least one second, as daylight is at most 999‰", () => {
+    for (let length = 2; length <= 3000; length += 1) {
+      expect(length - lightPeriod({ length, daylight: 999 })).toBeGreaterThanOrEqual(1);
+    }
+    expect(2 ** 36 - lightPeriod({ length: 2 ** 36, daylight: 999 })).toBe(68_719_477);
+    expect(issuesWith(day(2, 999))).toEqual([]);
+  });
+
+  test("checks the light period only when the length and the daylight are both in bounds", () => {
+    expect(issuesWith(day(0, 0))).toEqual([
+      { path: "/laws/day/length", message: outOfBounds(0, 1, 2 ** 36) },
+      { path: "/laws/day/daylight", message: outOfBounds(0, 1, 999) },
+    ]);
+    expect(issuesWith(day(1, 1000))).toEqual([
+      { path: "/laws/day/daylight", message: outOfBounds(1000, 1, 999) },
+    ]);
+  });
+
+  test("lightPeriod is the floor of length × daylight / 1000, from dawn", () => {
+    expect(lightPeriod({ length: 75_600, daylight: 550 })).toBe(41_580);
+    expect(lightPeriod({ length: 999, daylight: 1 })).toBe(0);
+    expect(lightPeriod({ length: 1000, daylight: 1 })).toBe(1);
+    expect(lightPeriod({ length: 2 ** 36, daylight: 999 })).toBe(68_650_757_259);
   });
 });
 
@@ -450,7 +522,7 @@ describe("genesisIssues: schema", () => {
       { path: "/terrain/extra", message: "null is not a canonical value" },
       { path: "/terrainSeed/0", message: SEED_WORD },
       { path: "/laws/liquid", message: MISSING },
-      { path: "/laws/day/length", message: outOfBounds(0, 1, 2 ** 40) },
+      { path: "/laws/day/length", message: outOfBounds(0, 1, 2 ** 36) },
       { path: "/laws/radiance/night", message: outOfBounds(2000, 0, 1000) },
       { path: "/terrain/extra", message: unknown("relief, substrate, deposits") },
       { path: "/terrain/relief/wavelength", message: notPowerOfTwo(1000, 512, 65536) },
@@ -745,7 +817,7 @@ describe("sealedGenesisIssues", () => {
     });
     expect(sealedGenesisIssues(broken)).toEqual([
       { path: "/genesis/terrainSeed/1", message: SEED_WORD },
-      { path: "/genesis/laws/day/length", message: outOfBounds(0, 1, 2 ** 40) },
+      { path: "/genesis/laws/day/length", message: outOfBounds(0, 1, 2 ** 36) },
     ]);
   });
 

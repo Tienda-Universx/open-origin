@@ -3,9 +3,9 @@
 Worldgen is the procedural world generator: the world is a latent field that the engine evaluates
 and never stores, a pure function of the generator version, the genesis, and the cell.
 [ADR 0021](../decisions/0021-procedural-world.md) records that design and why. This document
-specifies what the code implements: space and the sealed genesis. Code: `packages/engine/src/worldgen/`, exported by
-`packages/engine` as the `worldgen` namespace. Tests: `packages/engine/test/` (`worldgen-space` and
-`worldgen-genesis`).
+specifies what the code implements: space, the sealed genesis, and time. Code:
+`packages/engine/src/worldgen/`, exported by `packages/engine` as the `worldgen` namespace. Tests:
+`packages/engine/test/` (`worldgen-space`, `worldgen-genesis`, and `worldgen-calendar`).
 
 `WORLDGEN_VERSION` is `"worldgen@1"`. The seal of a genesis contains it, so a seal made under any
 other version does not match; [ADR 0021](../decisions/0021-procedural-world.md#decision)
@@ -88,7 +88,7 @@ frozen at every level; they may still change until `worldgen@1` is frozen.
 | Field | Bounds |
 |---|---|
 | `terrainSeed` | Exactly 8 u32 words |
-| `day.length` | [1, 2^40] simulated seconds |
+| `day.length` | [1, 2^36] simulated seconds, with a light period of at least one second |
 | `day.daylight` | [1, 999] ‰ |
 | `liquid.level` | [100, 900] ‰ of the range [−amplitude, +amplitude] |
 | `thermal.base` | [−2^20, 2^20] |
@@ -135,6 +135,7 @@ and the bounds are then checked on the copy, which the engine owns.
 | A value of the wrong type | `the value must be an integer, not a string`, `the value must be a record { length, daylight }, not an array` |
 | An unknown member | `unknown member: the members here are day, liquid, thermal, radiance` |
 | A missing member | `the member is missing` |
+| A day without light | `the day has no light period: 999‰ of a day of 1 seconds is less than one second, and the light period and the night must each last at least one second` |
 
 ### Defaults
 
@@ -182,6 +183,74 @@ creation, at decoding, and at every commit that wrote the global value.
 The genesis, the terrain seed, and the seal are C3, never projected to a client nor passed to a
 prompt ([data classification](data-classification.md), ADR 0021).
 
+## Time
+
+Code: `worldgen/calendar.ts`. The temporal layer depends on the generator version, the laws, and an
+instant, never on a cell or the terrain seed ([ADR 0021](../decisions/0021-procedural-world.md)).
+Every function is pure, O(1), and exact in safe integers, with no implicit clock and no default
+instant.
+
+### Instants
+
+An `Instant` is `{ tick, simSecondsPerTick }`; its simulated second is their product, the kernel's
+`simSeconds`. Inside the `step` that computes tick T, `instantOf(ctx)` is the instant that
+`instantOf(readView(world))` gives outside on the world at tick T, so a measurement taken inside
+tick T equals one taken outside at tick T. The measurements reject an invalid instant as
+`simSeconds` does: `invalid_value` with every problem, and `tick_overflow` for the product.
+
+| Problem | Path | Message |
+|---|---|---|
+| A tick that is not a tick | `/tick` | `-1 is not a tick: ticks are safe integers from 0` |
+| Seconds per tick that are not a positive safe integer | `/simSecondsPerTick` | `0 seconds per tick is not a positive safe integer` |
+| A value that is not a record | `""` | `the instant must be a record { tick, simSecondsPerTick }` |
+| A product beyond the safe integers | `""` | `tick 750599937895083 at 12 seconds per tick is beyond the largest safe integer` |
+
+`readInstant(value, path, sink)` reads an instant from a host value for worldgen's own modules, as
+`readCell` reads a cell; the `worldgen` namespace does not export it.
+
+### The day
+
+| Quantity | Rule |
+|---|---|
+| Day | `dayIndex = ⌊second / length⌋`, from 0 |
+| Phase | `secondOfDay = second mod length`, from 0 at dawn |
+| Light period | `lightPeriod(day) = ⌊length × daylight / 1000⌋` seconds from dawn; the night is the rest, and lasts at least one second, as daylight is at most 999‰ |
+| Day curve, in Q16 (`CURVE_SCALE`, 2^16, is 1) | 0 at night; in the light period, with `s = ⌊secondOfDay × 2^16 / lightPeriod⌋`: `v = ⌊4s(2^16 − s) / 2^16⌋` and `curve = ⌊v² / 2^16⌋`, which is 16s²(1 − s)²: C1 at dawn and dusk, exactly 2^16 at mid-light |
+| `radiance` | `night + ⌊(peak − night) × curve / 2^16⌋`, in [night, peak] |
+| `diurnal` | `⌊thermal.diurnal × curve / 2^16⌋`, in [0, diurnal], 0 at night; `thermal = thermalBase + diurnal` |
+
+`dayPosition`, `dayCurve`, `radiance`, and `diurnal` take a prepared genesis and an instant, and a
+forged prepared genesis is `invalid_value`. Within `GENESIS_BOUNDS` no intermediate reaches 2^53:
+`secondOfDay × 2^16` stays below 2^52 because a day lasts at most 2^36 seconds, `4s(2^16 − s)` and
+`v²` are at most 2^32, and a span times the curve is at most 2^36.
+
+### Time laws
+
+`timeLawIssues(laws, simSecondsPerTick)` returns the problems of the pair, as JSON Pointers into
+`{ laws, simSecondsPerTick }`. `validateGlobal` cannot see the seconds per tick, so the host calls it
+before `createWorld` (ADR 0021); decoding does not repeat it. The genesis itself requires a light
+period of at least one second, so the curve never divides by zero even when the host skips it.
+
+| Rule | Path | Message |
+|---|---|---|
+| Positive safe seconds per tick; otherwise nothing else is checked | `/simSecondsPerTick` | `0 seconds per tick is not a positive safe integer` |
+| A day of at least 16 ticks | `/laws/day/length` | `a day of 191 seconds is shorter than 16 ticks of 12 seconds: it must last at least 16 ticks, so that every day has at least 16 distinct phases` |
+| A light period and a night of at least one tick each | `/laws/day` | `the night lasts 11 seconds, shorter than one tick of 12 seconds: a day of 1200 seconds with 991‰ of daylight must have a light period and a night of at least one tick each` |
+
+### Golden time values
+
+`test/fixtures/golden-time.ts` pins the day position, the curve, radiance, and the diurnal term of the
+default laws at a set of instants:
+
+- dawn, a quarter and half of the light period;
+- the last tick before dusk and the first at or past it;
+- the last tick of day 0 and the first of day 1;
+- the last safe tick.
+
+It does so at 12, 7, and 13 seconds per tick, and 13 divides neither the day nor its light period,
+so its phase drifts. The values are equal under any terrain seed. Near dusk the curve is flat (C1),
+so the last tick of light already reads the night floor.
+
 ## What the tests check
 
 - the space constants, and the chunk and offset of the cells 0, 31, 32, −1, −32, −33, −2^31, and
@@ -210,3 +279,14 @@ prompt ([data classification](data-classification.md), ADR 0021).
 - `sealedGenesisIssues` accepts a sealed global value with ruleset data, and rejects a tampered
   genesis with its stale seal, a seal made for another version, missing members, a seal that is not
   a string, genesis problems under `/genesis`, accessors, and a value that is not a record.
+- dawn, dusk, and the day rollover fall on exact seconds, and the night floor holds;
+- the day curve, swept over every s, rises on one half and falls on the other, is symmetric, 0 at
+  both ends and 2^16 at mid-light, and steps by at most 1 within 1/64 of dawn or dusk and at most 6
+  anywhere;
+- radiance and the diurnal term stay in range over seeded random laws, and agree with a BigInt
+  reference, including at the largest genesis, whose intermediates stay below 2^53;
+- an invalid instant is rejected with its paths, and an overflowing product as `simSeconds` reports
+  it; the instant taken inside a tick equals the one taken outside at the same tick;
+- `timeLawIssues` accepts each edge and rejects one past it, and the genesis rejects a day without a
+  light period;
+- the golden time values hold under two terrain seeds.

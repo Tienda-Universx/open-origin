@@ -14,7 +14,7 @@ import { sortedOwnKeys } from "../canonical/order.ts";
 import { type IssueSink, pointer } from "../canonical/value.ts";
 import { type Digest, digest } from "../digest/digest.ts";
 import { EngineError, type Issue, IssueList } from "../errors.ts";
-import { isU32, MAX_U32 } from "../int.ts";
+import { floorDiv, isU32, MAX_U32 } from "../int.ts";
 import { expectRecord, readMember, UNREAD, under } from "../world/members.ts";
 import { WORLDGEN_VERSION } from "./version.ts";
 
@@ -91,15 +91,23 @@ const TWO_POW_20 = 0x10_0000;
 const MAX_WAVELENGTH = 0x1_0000;
 
 /**
+ * 2^36, the longest day in simulated seconds, so that the calendar's second of the day times 2^16
+ * stays below 2^53 (calendar.ts).
+ */
+const MAX_DAY_LENGTH = 0x10_0000_0000;
+
+/**
  * The bounds of every genesis parameter, which keep every intermediate value of worldgen a safe
  * integer. Two bounds depend on another parameter: a wavelength is at least 8·2^(octaves − 1), so
  * the finest octave spans 8 cells or more (its `min` here is for one octave), and radiance's night
- * is at most its peak. Counts bound the lengths of the lists. Frozen at every level.
+ * is at most its peak. One rule joins the day's two parameters: its light period, lightPeriod(day),
+ * lasts at least one second, so no day of 1 second is valid. Counts bound the lengths of the lists.
+ * Frozen at every level.
  */
 export const GENESIS_BOUNDS = Object.freeze({
   terrainSeedWords: range(8, 8),
   laws: Object.freeze({
-    day: Object.freeze({ length: range(1, 0x100_0000_0000), daylight: range(1, 999) }),
+    day: Object.freeze({ length: range(1, MAX_DAY_LENGTH), daylight: range(1, 999) }),
     liquid: Object.freeze({ level: range(100, 900) }),
     thermal: Object.freeze({
       base: range(-TWO_POW_20, TWO_POW_20),
@@ -322,6 +330,20 @@ function readSeedWord(value: unknown, path: string, sink: IssueSink): number | u
   return undefined;
 }
 
+/**
+ * How many seconds of a day under `day` have light: ⌊length·daylight / 1000⌋, from dawn, the day's
+ * second 0. The night is the rest of the day, and always lasts at least one second: daylight is at
+ * most 999‰, so the light period is shorter than the day. Exact: length·daylight is below 2^46.
+ */
+export function lightPeriod(day: DayLaw): number {
+  return floorDiv(day.length * day.daylight, 1000);
+}
+
+/**
+ * The day; its light period must last at least one second, so that the calendar never divides by
+ * zero, even in a world whose host never called timeLawIssues (calendar.ts). The rule is checked
+ * only when both members are in bounds, and reported at the day itself, as both decide it.
+ */
 function readDay(value: unknown, path: string, sink: IssueSink): DayLaw | undefined {
   const day = readRecord(value, path, ["length", "daylight"], sink);
   if (day === undefined) return undefined;
@@ -329,7 +351,13 @@ function readDay(value: unknown, path: string, sink: IssueSink): DayLaw | undefi
   const length = day.int("length", bounds.length);
   const daylight = day.int("daylight", bounds.daylight);
   if (length === undefined || daylight === undefined) return undefined;
-  return Object.freeze({ length, daylight });
+  const law = Object.freeze({ length, daylight });
+  if (lightPeriod(law) >= 1) return law;
+  sink.report(
+    path,
+    `the day has no light period: ${daylight}‰ of a day of ${length} seconds is less than one second, and the light period and the night must each last at least one second`,
+  );
+  return undefined;
 }
 
 function readLiquid(value: unknown, path: string, sink: IssueSink): LiquidLaw | undefined {
