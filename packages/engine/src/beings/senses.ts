@@ -24,6 +24,7 @@ import { DIRECTIONS, type SensedWindow } from "./contracts.ts";
 import { takenAt } from "./food.ts";
 import type { Species } from "./laws.ts";
 import { stepDuration } from "./locomotion.ts";
+import { greatest, least } from "./rates.ts";
 
 /** What sensing needs: the tick's terrain, the species, where the being is, and the world's chunks. */
 export type SenseInput = {
@@ -43,18 +44,6 @@ type Clip = {
   readonly width: number;
   readonly height: number;
 };
-
-/** The smaller of `a` and `b`. Math is denied in the engine (ADR 0003). */
-function least(a: number, b: number): number {
-  if (a < b) return a;
-  return b;
-}
-
-/** The larger of `a` and `b`. */
-function greatest(a: number, b: number): number {
-  if (a > b) return a;
-  return b;
-}
 
 /** The part of the square `side` from `origin` inside the world; undefined when none is. */
 function clip(origin: Cell, side: number): Clip | undefined {

@@ -144,6 +144,29 @@ describe("checkLife", () => {
       { path: "/species", message: "the array has 0 entries: it must have from 1 to 16" },
     ]);
   });
+
+  test("has one food: every species eats the first one's deposit, with its regrowth", () => {
+    const [first] = defaultLife().species;
+    if (first === undefined) throw new Error("the default laws have a species");
+    const same = { ...first, id: "s2" };
+    expect(lifeIssues(withMember("/species", [first, same]))).toEqual([]);
+    const message = `${LIFE_VERSION} has one food deposit: every species eats deposit 0 with the regrowth of the first`;
+    const otherDeposit = { ...first, id: "s2", diet: { ...first.diet, deposit: 1 } };
+    const otherRegrowth = { ...first, id: "s3", regrowth: { num: 1, den: 505 } };
+    const otherRate = { ...first, id: "s4", regrowth: { num: 2, den: 504 } };
+    expect(
+      lifeIssues(withMember("/species", [first, otherDeposit, otherRegrowth, otherRate])),
+    ).toEqual([
+      { path: "/species/1", message },
+      { path: "/species/2", message },
+      { path: "/species/3", message },
+    ]);
+    // Another problem of the list is reported alone: the food is compared on valid species only.
+    const unordered = { ...otherDeposit, id: "s0" };
+    expect(lifeIssues(withMember("/species", [first, unordered])).map(({ path }) => path)).toEqual([
+      "/species/1/id",
+    ]);
+  });
 });
 
 describe("sealedLifeIssues", () => {

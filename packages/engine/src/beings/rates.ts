@@ -23,6 +23,18 @@ export const RATIO_BOUNDS = Object.freeze({
 /** The largest value of a need or of health: the fixed-point 0 to 1,000,000 of plan §I.1.4. */
 export const NEED_MAX = 1_000_000;
 
+/** The smaller of `a` and `b`. Math is denied in the engine (ADR 0003). */
+export function least(a: number, b: number): number {
+  if (a < b) return a;
+  return b;
+}
+
+/** The larger of `a` and `b`. */
+export function greatest(a: number, b: number): number {
+  if (a > b) return a;
+  return b;
+}
+
 /** ⌈a / b⌉ for a safe integer a ≥ 0 and a positive safe integer b, without computing a + b − 1. */
 export function ceilDiv(a: number, b: number): number {
   const quotient = floorDiv(a, b);

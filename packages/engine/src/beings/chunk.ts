@@ -11,11 +11,11 @@ import { type Being, checkBeing, MAX_TICK } from "./being.ts";
 import type { Depletion } from "./food.ts";
 import { range, readFields, readInt, readList, TICKS } from "./schema.ts";
 
-export type BeingsChunk = {
-  readonly beings: readonly Being[];
-  readonly depletion: readonly Depletion[];
-  readonly due: number;
-};
+/**
+ * A chunk's value. Its own members are writable, because writeChunk hands the system the live value
+ * to change; every read goes through the kernel's DeepReadonly view.
+ */
+export type BeingsChunk = { beings: Being[]; depletion: Depletion[]; due: number };
 
 /** The bounds of a chunk: up to 2^16 beings, one depletion entry per cell, takes up to 2^20. */
 export const CHUNK_BOUNDS = Object.freeze({
