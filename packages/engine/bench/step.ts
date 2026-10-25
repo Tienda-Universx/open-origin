@@ -1,4 +1,3 @@
-import { heapStats } from "bun:jsc";
 import { murmur3x86_128 } from "../src/digest/murmur3.ts";
 import {
   type CanonicalValue,
@@ -12,6 +11,7 @@ import {
 import { DrawSequence } from "../src/rng/random.ts";
 import { DIRTY_KEYS, dirtying, median, sizedWorld } from "../test/support/cost-worlds.ts";
 import { stepRuleset } from "../test/support/step-rulesets.ts";
+import { liveHeap } from "./measure.ts";
 
 /**
  * The engine's benchmark (plan §2.4, §8 "Benchmark"; risk R10): manual, never run by `bun test`,
@@ -114,13 +114,6 @@ function snapshotRows(): Row[] {
       [`decodeSnapshot, ${size}`, `${milli(decode)}, ${megabytesPerSecond(text.length, decode)}`],
     ];
   });
-}
-
-/** The live heap after a full collection: JSC cells and the memory it tracks beside them. */
-function liveHeap(): number {
-  Bun.gc(true);
-  const { heapSize, extraMemorySize } = heapStats();
-  return heapSize + extraMemorySize;
 }
 
 /** What the kernel keeps per chunk (key, entry, term, and index), with chunks of the value 0. */

@@ -599,29 +599,32 @@ one machine, before and after a change to a hot path; never compare across machi
 
 | Measurement | Result |
 |---|---|
-| A tick with D = 10 small changed chunks, N = 1,000 / 10,000 / 100,000 / 1,000,000 | 72.1 / 73.3 / 73.5 / 71.9 µs |
-| A changed chunk of 1.0 KB of canonical text | 43 µs (25 MB/s) |
-| A changed chunk of 7.0 KB | 253 µs (28 MB/s) |
-| A changed chunk of 49.3 KB | 1,885 µs (27 MB/s) |
-| `encodeSnapshot` / `decodeSnapshot`, 0.2 MB | 9.1 ms (23 MB/s) / 14.4 ms (14 MB/s) |
-| `encodeSnapshot` / `decodeSnapshot`, 10.2 MB | 468 ms (22 MB/s) / 891 ms (11 MB/s) |
-| Kernel memory per chunk (key, entry, term, index), N = 100,000 | 274 B |
-| MurmurHash3 x86_128 over 1 MiB | 2,481 MB/s |
-| Draws of one `DrawSequence` (`u32`) | 35.0 million per second |
+| A tick with D = 10 small changed chunks, N = 1,000 / 10,000 / 100,000 / 1,000,000 | 67.7 / 66.1 / 66.5 / 67.5 µs |
+| A changed chunk of 1.0 KB of canonical text | 42 µs (25 MB/s) |
+| A changed chunk of 7.0 KB | 261 µs (27 MB/s) |
+| A changed chunk of 49.3 KB | 1,723 µs (29 MB/s) |
+| `encodeSnapshot` / `decodeSnapshot`, 0.2 MB | 7.9 ms (26 MB/s) / 13.9 ms (15 MB/s) |
+| `encodeSnapshot` / `decodeSnapshot`, 10.2 MB | 454 ms (23 MB/s) / 877 ms (12 MB/s) |
+| Kernel memory per chunk (key, entry, term, index), N = 100,000 | 208 B |
+| MurmurHash3 x86_128 over 1 MiB | 1,948 MB/s |
+| Draws of one `DrawSequence` (`u32`) | 33.5 million per second |
 
 What they show:
 
 - A tick costs the same at every N, as the cost model says.
-- The pipeline of a changed chunk (canonical text, validation, term) runs at about 25 to 28 MB/s
+- The pipeline of a changed chunk (canonical text, validation, term) runs at about 25 to 29 MB/s
   per core. ADR 0020's prototype estimate was 55 to 80 MB/s, so it is about half as fast. One
   core at 5 Hz then handles about 5 to 6 MB of changed state per tick, not 11 to 16 MB; v0.1
-  needs a few KB. Hashing is not what limits it: it runs at about 2.5 GB/s.
+  needs a few KB. Hashing is not what limits it: it runs at about 2 to 2.5 GB/s.
 - The throughput is about the same from 1 KB to 50 KB, so above about 1 KB a changed chunk costs
   in proportion to its bytes. Below that, the fixed cost of each walk dominates, as the CPU
   profiles of [tally runs](#golden-fuzz-and-isolation) found.
-- The kernel keeps about 270 bytes per chunk. The 16 bytes of a 128-bit term are a small part of
-  that; the rest is JavaScript's objects, arrays, and strings for the key, the entry, and the index.
-  A million chunks would take about 270 MB before any chunk value.
+- The kernel keeps about 170 to 210 bytes per chunk: three separate builds of 100,000 chunks
+  measured 167 to 198 B. The 16 bytes of a 128-bit term are a small part of that; the rest is
+  JavaScript's objects, arrays, and strings for the key, the entry, and the index. A million chunks
+  would take about 200 MB before any chunk value. The memory rows read JSC's `heapSize` alone after
+  a full collection (`bench/measure.ts`), since it already holds the extra memory JSC tracks; the
+  figure of 274 B recorded before added `extraMemorySize` and counted that memory twice.
 
 ### What the tests check
 
