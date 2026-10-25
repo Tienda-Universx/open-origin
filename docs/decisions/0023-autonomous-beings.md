@@ -141,6 +141,14 @@ fault; a brain that throws is a code error and poisons the world (ADR 0020). A f
 `llm-assisted` controller cannot be a pure function: its proposals enter as commands recorded in the
 log ([0004](0004-ai-proposes-engine-decides.md)) and go through the same validation (plan §K.1).
 
+**A search keeps one anchor, not a memory of places.** This refines plan §5.3, where a being with
+no food in sight explores along a persistent heading and has no memory of places. A heading alone
+left beings spawned out of sight of food to starve on a calibration seed, and a search bounced
+inside a square fell into short loops. `utility@1` therefore spirals around one anchor: its oldest
+cooldown nearby, a place where it found nothing, or else a new cooldown of two days where it
+stands. The anchor is search state that expires, like the heading: it says where the being found
+nothing, never where food is. Knowing places is T5's.
+
 **Routes are validated once.** A walk has at most 64 steps. When the engine accepts it, it checks
 every step against the window of the same tick and computes its duration. Terrain is permanent and
 nothing blocks a step in T4, so executing a step reads no terrain.
