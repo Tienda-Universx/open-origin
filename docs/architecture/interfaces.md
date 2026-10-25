@@ -60,7 +60,7 @@ From plan §N (first prototype).
 | Batch | Delivers (plan §M, §L) |
 |---|---|
 | T1 | This architecture, for both interfaces |
-| T8 | Three chained PRs: `packages/ui` (tokens and components with CSS Modules) → public `apps/web` (React + PixiJS only for the universe) → local `apps/admin` (world state, simulation controls, which for the public universe are an audited pause and resume ([0022](../decisions/0022-single-shared-public-universe.md)), inhabitants (C1), metrics, logs) with its admin plane in the server (`127.0.0.1` + token, audit). Key tests: public bundle without admin code or secrets; admin rejects without token; full keyboard navigation |
+| T8 | Three chained PRs: `packages/ui` (tokens and components with CSS Modules) → public `apps/web` (React + PixiJS only for the universe) → local `apps/admin` (world state, simulation controls, which for the public universe are an audited pause and resume and configuration changes that open an epoch ([0022](../decisions/0022-single-shared-public-universe.md)), inhabitants (C1), metrics, logs) with its admin plane in the server (`127.0.0.1` + token, audit). Key tests: public bundle without admin code or secrets; admin rejects without token; full keyboard navigation |
 | T9 | AI controls in the panel: providers, models, endpoints, encrypted write-only API keys, modes with double key, budgets, and usage. Key test: the admin API never returns a key |
 
 New T8 dependencies: `react`, `react-dom`, `pixi.js`, `pixi-viewport`, `vite`, and the Vite React
