@@ -44,7 +44,7 @@ import { describeValue, IssueList } from "../errors.ts";
 import { floorDiv, floorMod } from "../int.ts";
 import { CHACHA20_BLOCK_WORDS, CHACHA20_INPUT_WORDS, ChaCha20Key } from "../rng/chacha.ts";
 import { expectRecord, readMember, UNREAD } from "../world/members.ts";
-import { type IntRange, PreparedGenesis, sharedGenesis } from "./genesis.ts";
+import { type IntRange, type PreparedGenesis, readPreparedGenesis } from "./genesis.ts";
 import { NOISE_PURPOSES, setLatticeField, setLatticePoint, setOffsetInput } from "./lattice.ts";
 import { MAX_CELL, MIN_CELL, readCell } from "./space.ts";
 
@@ -449,14 +449,11 @@ export function sampleNoiseRegion(
   rect: CellRect,
 ): Int32Array {
   const issues = new IssueList();
-  const isPrepared = PreparedGenesis.isPreparedGenesis(prepared);
-  if (!isPrepared) {
-    issues.report("/prepared", "the value is not a prepared genesis: prepareGenesis makes them");
-  }
+  const genesis = readPreparedGenesis(prepared, issues);
   const noise = readNoiseSpec(spec, issues);
   const region = readRegion(rect, issues);
-  if (!isPrepared || noise === undefined || region === undefined || issues.count > 0) {
+  if (genesis === undefined || noise === undefined || region === undefined || issues.count > 0) {
     throw issues.toError("invalid_value");
   }
-  return noiseRegion(new ChaCha20Key(sharedGenesis(prepared).terrainSeed), noise, region);
+  return noiseRegion(new ChaCha20Key(genesis.terrainSeed), noise, region);
 }

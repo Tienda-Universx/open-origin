@@ -18,6 +18,9 @@ import { floorDiv, isU32, MAX_U32 } from "../int.ts";
 import { expectRecord, readMember, UNREAD, under } from "../world/members.ts";
 import { WORLDGEN_VERSION } from "./version.ts";
 
+/** The problem of a value that prepareGenesis did not make. */
+const NOT_PREPARED = "the value is not a prepared genesis: prepareGenesis makes them";
+
 /** The length of a day in simulated seconds, and the share of it with daylight, in ‰. */
 export type DayLaw = { readonly length: number; readonly daylight: number };
 
@@ -671,7 +674,7 @@ export class PreparedGenesis {
       throw invalidValue("only the worldgen module reads the internals of a prepared genesis");
     }
     if (!PreparedGenesis.isPreparedGenesis(value)) {
-      throw invalidValue("the value is not a prepared genesis: prepareGenesis makes them");
+      throw invalidValue(NOT_PREPARED);
     }
     return value.#internals;
   }
@@ -706,6 +709,16 @@ export function sealOf(prepared: PreparedGenesis): Digest {
  */
 export function sharedGenesis(prepared: PreparedGenesis): Genesis {
   return PreparedGenesis.internals(MADE_HERE, prepared).genesis;
+}
+
+/**
+ * The shared genesis of `prepared`, for worldgen's own modules that report problems to a sink;
+ * otherwise an issue at /prepared, and undefined. Never throws.
+ */
+export function readPreparedGenesis(prepared: unknown, sink: IssueSink): Genesis | undefined {
+  if (PreparedGenesis.isPreparedGenesis(prepared)) return sharedGenesis(prepared);
+  sink.report("/prepared", NOT_PREPARED);
+  return undefined;
 }
 
 /** The genesis that the global value `global` holds; undefined after an issue at /genesis. */

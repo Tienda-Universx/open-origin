@@ -72,7 +72,12 @@ import { floorDiv, floorMod, U32_COUNT } from "../int.ts";
 import { CHACHA20_BLOCK_WORDS, CHACHA20_INPUT_WORDS, ChaCha20Key } from "../rng/chacha.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import { expectRecord, readElements, readMember, UNREAD } from "../world/members.ts";
-import { type Deposit, type Genesis, PreparedGenesis, sharedGenesis } from "./genesis.ts";
+import {
+  type Deposit,
+  type Genesis,
+  type PreparedGenesis,
+  readPreparedGenesis,
+} from "./genesis.ts";
 import { LATTICE_PURPOSES, setLatticeField, setLatticePoint } from "./lattice.ts";
 import { type CellRect, type NoiseSpec, noiseBound, noiseRegion, readRegion } from "./noise.ts";
 import { CHUNK_CELLS, chunkFirstCell, readWorldChunkKey } from "./space.ts";
@@ -271,15 +276,6 @@ export function terrainRegion(key: ChaCha20Key, genesis: Genesis, rect: CellRect
   return { elevation, substrate, thermalBase, deposits };
 }
 
-const NOT_PREPARED = "the value is not a prepared genesis: prepareGenesis makes them";
-
-/** The genesis of `prepared`; undefined after an issue at /prepared. */
-function readPrepared(prepared: unknown, sink: IssueSink): Genesis | undefined {
-  if (PreparedGenesis.isPreparedGenesis(prepared)) return sharedGenesis(prepared);
-  sink.report("/prepared", NOT_PREPARED);
-  return undefined;
-}
-
 /**
  * The permanent primary fields of `prepared`'s terrain over the cells of `rect`, each in a fresh
  * typed array of `rect.width × rect.height` cells, row by row. It never takes an instant: these
@@ -291,7 +287,7 @@ function readPrepared(prepared: unknown, sink: IssueSink): Genesis | undefined {
  */
 export function sampleRegion(prepared: PreparedGenesis, rect: CellRect): TerrainRegion {
   const issues = new IssueList();
-  const genesis = readPrepared(prepared, issues);
+  const genesis = readPreparedGenesis(prepared, issues);
   const region = readRegion(rect, issues);
   if (genesis === undefined || region === undefined || issues.count > 0) {
     throw issues.toError("invalid_value");
@@ -306,7 +302,7 @@ export function sampleRegion(prepared: PreparedGenesis, rect: CellRect): Terrain
  */
 export function generateChunk(prepared: PreparedGenesis, key: ChunkKey): TerrainChunk {
   const issues = new IssueList();
-  const genesis = readPrepared(prepared, issues);
+  const genesis = readPreparedGenesis(prepared, issues);
   const coord = readWorldChunkKey(key, "/key", issues);
   if (genesis === undefined || coord === undefined || issues.count > 0) {
     throw issues.toError("invalid_value");
