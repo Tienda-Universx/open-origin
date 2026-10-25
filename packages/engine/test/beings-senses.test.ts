@@ -484,13 +484,16 @@ describe("acceptIntention", () => {
     expect(accept(throwing)).toEqual({ kind: "rejected", reason: "malformed" });
   });
 
-  test("refuses a revoked Proxy as the list of steps", () => {
-    const { proxy, revoke } = Proxy.revocable([{ kind: "idle", ms: 1 }], {});
-    revoke();
-    expect(accept({ steps: proxy, wakeWhen: {}, behavior })).toEqual({
+  test("refuses a revoked Proxy as the intention or as its list of steps", () => {
+    const steps = Proxy.revocable([{ kind: "idle", ms: 1 }], {});
+    steps.revoke();
+    expect(accept({ steps: steps.proxy, wakeWhen: {}, behavior })).toEqual({
       kind: "rejected",
       reason: "malformed",
     });
+    const whole = Proxy.revocable({ steps: [{ kind: "idle", ms: 1 }], wakeWhen: {}, behavior }, {});
+    whole.revoke();
+    expect(accept(whole.proxy)).toEqual({ kind: "rejected", reason: "malformed" });
   });
 
   test("refuses a huge list of steps from its length, without reading its entries", () => {
@@ -528,12 +531,11 @@ describe("acceptIntention", () => {
     const flatless = sense([200, 200], blockedSpecies);
     const center = 2 * flatless.side + 2;
     const closed = [0, 1, 2, 3, 4, 5, 6, 7].find((d) => (flatless.edgeMs[center * 8 + d] ?? 0) < 0);
-    if (closed !== undefined) {
-      const result = acceptIntention(
-        { steps: [{ kind: "walk", dirs: `${closed}` }], wakeWhen: {}, behavior },
-        { tick: 5, window: flatless },
-      );
-      expect(result).toEqual({ kind: "rejected", reason: "walk_blocked" });
-    }
+    if (closed === undefined) throw new Error("a species that cannot climb has a closed step here");
+    const result = acceptIntention(
+      { steps: [{ kind: "walk", dirs: `${closed}` }], wakeWhen: {}, behavior },
+      { tick: 5, window: flatless },
+    );
+    expect(result).toEqual({ kind: "rejected", reason: "walk_blocked" });
   });
 });
