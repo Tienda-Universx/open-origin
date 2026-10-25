@@ -4,7 +4,7 @@ Every piece of information in Open Origin belongs to one of five classes, C0 to 
 receives only explicit, allowlisted DTOs projected for its audience (P10). The classes are decided
 in [0008](../decisions/0008-data-classification-and-audience-projections.md); this page adds which
 interface sees which class, what each mechanism guards, which tests will check it, and why the
-world seed is C3. Source: plan §E.4, §E.6, §I.1.2, §K.6, §K.8, §N, O-25.
+seeds are C3. Source: plan §E.4, §E.6, §I.1.2, §K.6, §K.8, §N, O-25.
 
 ## Classes
 
@@ -60,13 +60,16 @@ Each mechanism and the leak it guards against. The mechanisms are decided in
   ([0020](../decisions/0020-deterministic-core-design.md)). Whoever knows the world seed predicts
   **all** of the kernel's randomness (plan §E.4, §I.1.2).
 - `mix32` also gives its seed away: one draw whose inputs are known reveals the 32-bit state that
-  predicts every other draw ([determinism](determinism.md#randomness)). So no outcome of a draw
-  may become public either.
+  predicts every other draw ([determinism](determinism.md#randomness)). One public outcome
+  therefore makes every draw predictable: acceptable only while nobody can act on a prediction,
+  and the generator is replaced before any public world with players
+  ([0021](../decisions/0021-procedural-world.md)).
 - Terrain and resources come from a separate terrain seed, through ChaCha20, never from the world
   seed. Whoever knows the terrain seed predicts all terrain, so it is C3 as well
   ([0021](../decisions/0021-procedural-world.md)).
-- Every digest that contains C3 material is C3 too: the genesis seal, and the state root, which
-  contains the world seed. Neither seed must ever reach a public client.
+- Every digest that contains C3 material is C3 too: the genesis seal, the state root, which
+  contains the world seed, and every tick checksum, which contains the state root. Neither seed
+  must ever reach a public client.
 - The seed is stored in the engine snapshot (`seed: [u32, u32]`), so the engine snapshot as a
   whole is C3: its text, its bytes, and every copy of them stay on the operations and research
   plane ([0020](../decisions/0020-deterministic-core-design.md)). The `snapshot` message that
