@@ -24,6 +24,26 @@ describe("the arguments of the soak", () => {
     expect(parseArguments(["barren"])).toMatchObject({ runs: [], barren: true });
     expect(parseArguments(["laws", "barren"])).toMatchObject({ runs: ["laws"], barren: true });
     expect(parseArguments(["laws"])).toMatchObject({ runs: ["laws"], barren: false });
+    expect(parseArguments(["3", "stationary", "barren", "--jobs", "1"])).toMatchObject({
+      runs: ["stationary"],
+      barren: true,
+      jobs: 1,
+    });
+    expect(parseArguments(["adverse", "--ticks", "300"])).toMatchObject({ ticks: 300 });
+  });
+
+  test.each([
+    { argv: ["3", "barren"], message: "label 3 given, but no run of a label is named" },
+    { argv: ["barren", "--jobs", "2"], message: "--jobs given, but no run of a label is named" },
+    { argv: ["barren", "--ticks", "300"], message: "--ticks given, but no run that takes it" },
+    { argv: ["3", "barren", "--ticks", "300"], message: "label 3 given" },
+    { argv: ["stationary", "--ticks", "300"], message: "--ticks given, but no run that takes it" },
+    {
+      argv: ["stationary", "barren", "--ticks", "9"],
+      message: "--ticks given, but no run that takes it",
+    },
+  ])("refuse $argv, which no named run would use: $message", ({ argv, message }) => {
+    expect(() => parseArguments(argv)).toThrow(message);
   });
 
   test("name labels by number, the runs by word, the ticks, and the parallel runs", () => {

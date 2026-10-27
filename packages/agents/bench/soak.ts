@@ -20,7 +20,8 @@
  * still run, and the soak exits with code 1 after its tables, as it does when the barren control
  * fails. It runs only the held-out labels: the reserve, heldout/7 to /12, replaces burned labels
  * only, and the default and calibration labels have their own runs. Any other argument is an
- * error, and exits with code 2.
+ * error, and exits with code 2, as do label numbers or `--jobs` without a run of a label, and
+ * `--ticks` without a run that takes it.
  */
 import { beings } from "@open-origin/engine";
 import { type BarrenRun, barrenControl, barrenIssues } from "../test/support/controls.ts";
@@ -112,8 +113,27 @@ function readWord(reading: Reading, arg: string): void {
 }
 
 /**
+ * Refuses what no named run would use, instead of ignoring it: label numbers and `--jobs`, which
+ * only the runs of a label use, when only the barren control is named; and `--ticks`, which the
+ * stationary control and the barren control set themselves, when no other run is named.
+ */
+function checkUsed(reading: Reading, runs: readonly Run[]): void {
+  if (runs.length === 0 && reading.numbers.length > 0)
+    throw new Error(
+      `label ${reading.numbers.join(", ")} given, but no run of a label is named: the barren control runs on calibration/1 alone`,
+    );
+  if (runs.length === 0 && reading.jobs !== undefined)
+    throw new Error("--jobs given, but no run of a label is named: the barren control runs alone");
+  if (reading.ticks !== undefined && runs.every((run) => run === "stationary"))
+    throw new Error(
+      "--ticks given, but no run that takes it is named: the stationary and barren controls run to their own bounds",
+    );
+}
+
+/**
  * The arguments of the soak. Throws an Error that says what is wrong: a reserve label, any other
- * label or word, an option without a valid value, or an option, a run, or a label given twice.
+ * label or word, an option without a valid value, an option, a run, or a label given twice, or a
+ * label or option that no named run would use.
  */
 export function parseArguments(argv: readonly string[]): Arguments {
   const reading: Reading = { numbers: [], runs: [], barren: false };
@@ -127,9 +147,11 @@ export function parseArguments(argv: readonly string[]): Arguments {
   const numbers = reading.numbers.length === 0 ? ["1", "2", "3", "4", "5", "6"] : reading.numbers;
   // Naming no run at all asks for every run and the barren control.
   const named = reading.runs.length > 0 || reading.barren;
+  const runs = named ? reading.runs : [...RUNS];
+  checkUsed(reading, runs);
   return {
     labels: numbers.map((n) => LABELS.heldout[Number(n) - 1] as string),
-    runs: named ? reading.runs : [...RUNS],
+    runs,
     barren: named ? reading.barren : true,
     ticks: reading.ticks ?? TEN_DAYS,
     jobs: reading.jobs ?? 2,
