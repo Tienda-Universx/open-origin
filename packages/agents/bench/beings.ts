@@ -19,12 +19,13 @@
  *
  * `--large` adds the large scenarios: 10,000 dispersed beings, 10,000 and 100,000 sleeping ones,
  * ticks that process 8,000 and 16,000 beings at once, and 200,000 empty chunks. Each one starts
- * only while the system has at least 1.5 GB of memory available (read from /proc/meminfo, where
- * there is one), and is skipped with a message otherwise. `--ticks N` times N ticks of every
- * scenario instead of its own number; the sleeping beings sleep until tick 1,325 at the latest, so
- * `sleeping` with more than 1,100 ticks may time them awake. Every scenario first runs the spawn at
- * tick 1, the first decisions at tick 2, and 100 more ticks before any is timed. Any other
- * argument, or one given twice, is an error, and exits with code 2.
+ * only while /proc/meminfo reports at least 1.5 GB of memory available, and is skipped with a
+ * message otherwise, also where there is no /proc/meminfo to read. `--ticks N` times N ticks of
+ * every scenario instead of its own number; the sleeping beings sleep until tick 1,325 at the
+ * latest, so `sleeping` with more than 1,100 ticks may time them awake. Every scenario first runs
+ * the spawn at tick 1, the first decisions at tick 2, and 100 more ticks before any is timed. Any
+ * other argument, or one given twice, is an error, and exits with code 2, as are `--large` without
+ * dispersed, sleeping, or explored, and `--ticks` with micro alone, which would ignore them.
  *
  * It runs one scenario at a time, in this process, and prints its peak resident memory at the end.
  * On a shared machine, run it at low priority: `nice -n 19 bun packages/agents/bench/beings.ts`.
@@ -63,7 +64,8 @@ export type Arguments = {
 
 /**
  * The arguments of the benchmark. Throws an Error that says what is wrong: an unknown word or
- * option, an option without a valid value, or a word or option given twice.
+ * option, an option without a valid value, a word or option given twice, or an option that no
+ * named group would use.
  */
 export function parseArguments(argv: readonly string[]): Arguments {
   const reading: { groups: Group[]; large: boolean; ticks?: number } = { groups: [], large: false };
@@ -78,9 +80,25 @@ export function parseArguments(argv: readonly string[]): Arguments {
       reading.large = true;
     } else readGroup(reading.groups, arg);
   }
-  const { groups, large, ticks } = reading;
-  return { groups: groups.length === 0 ? [...GROUPS] : groups, large, ticks };
+  const { large, ticks } = reading;
+  const groups = reading.groups.length === 0 ? [...GROUPS] : reading.groups;
+  checkUsed({ groups, large, ticks });
+  return { groups, large, ticks };
 }
+
+/**
+ * Refuses an option that none of the groups would use, instead of ignoring it: `--large` without a
+ * group it makes larger, and `--ticks` with micro alone, which times no ticks.
+ */
+function checkUsed({ groups, large, ticks }: Arguments): void {
+  if (large && !groups.some((group) => LARGE_GROUPS.includes(group)))
+    throw new Error(`--large given, but none of ${LARGE_GROUPS.join(", ")} is named`);
+  if (ticks !== undefined && groups.every((group) => group === "micro"))
+    throw new Error("--ticks given, but micro alone times no ticks");
+}
+
+/** The groups that `--large` makes larger. */
+const LARGE_GROUPS: readonly Group[] = ["dispersed", "sleeping", "explored"];
 
 /** Adds the group `arg` names to `groups`; throws when it names none, or one already there. */
 function readGroup(groups: Group[], arg: string): void {
@@ -116,11 +134,11 @@ function procKb(file: string, field: string): number | undefined {
 }
 
 /**
- * Whether a large scenario may start with `availableMb` of memory available: at least ROOM_MB, or
- * an amount unknown, so that the benchmark still runs where /proc/meminfo does not exist.
+ * Whether a large scenario may start with `availableMb` of memory available: at least ROOM_MB. An
+ * amount unknown, where /proc/meminfo does not exist, refuses it, since nothing says it would fit.
  */
 export function hasRoom(availableMb: number | undefined): boolean {
-  return availableMb === undefined || availableMb >= ROOM_MB;
+  return availableMb !== undefined && availableMb >= ROOM_MB;
 }
 
 /** Whether the large scenario `name` may start; prints why when it may not. */
@@ -128,7 +146,9 @@ function roomFor(name: string): boolean {
   const kb = procKb("/proc/meminfo", "MemAvailable");
   const availableMb = kb === undefined ? undefined : kb / 1024;
   if (hasRoom(availableMb)) return true;
-  console.log(`\nSkipped ${name}: ${availableMb?.toFixed(0)} MB available, under ${ROOM_MB} MB.`);
+  const known =
+    availableMb === undefined ? "no /proc/meminfo says" : `${availableMb.toFixed(0)} MB`;
+  console.log(`\nSkipped ${name}: ${known} available, under ${ROOM_MB} MB or unknown.`);
   return false;
 }
 

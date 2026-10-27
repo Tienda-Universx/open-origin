@@ -42,6 +42,12 @@ describe("the arguments of the scale benchmark", () => {
     });
   });
 
+  test("accept --large with a group it makes larger, and --ticks with one that times ticks", () => {
+    expect(parseArguments(["micro", "explored", "--large"])).toMatchObject({ large: true });
+    expect(parseArguments(["concentrated", "--ticks", "9"])).toMatchObject({ ticks: 9 });
+    expect(parseArguments(["--large", "--ticks", "9"])).toMatchObject({ large: true, ticks: 9 });
+  });
+
   test("name groups by word, the large sizes, and the ticks to time", () => {
     expect(parseArguments(["sleeping", "micro", "--large", "--ticks", "300"])).toEqual({
       groups: ["sleeping", "micro"],
@@ -60,18 +66,21 @@ describe("the arguments of the scale benchmark", () => {
     { argv: ["--ticks", "-3"], message: '--ticks must be a positive integer, not "-3"' },
     { argv: ["--ticks", "2", "--ticks", "2"], message: "--ticks is given twice" },
     { argv: ["--large", "--large"], message: "--large is given twice" },
+    { argv: ["micro", "--large"], message: "--large given, but none of dispersed" },
+    { argv: ["concentrated", "micro", "--large"], message: "--large given, but none of" },
+    { argv: ["micro", "--ticks", "5"], message: "--ticks given, but micro alone times no ticks" },
   ])("refuse $argv: $message", ({ argv, message }) => {
     expect(() => parseArguments(argv)).toThrow(message);
   });
 });
 
 describe("the memory a large scenario needs", () => {
-  test("is 1.5 GB available, or an amount unknown where /proc/meminfo does not exist", () => {
+  test("is 1.5 GB available; an amount unknown, where /proc/meminfo does not exist, refuses", () => {
     expect([hasRoom(1_536), hasRoom(1_535.9), hasRoom(0), hasRoom(undefined)]).toEqual([
       true,
       false,
       false,
-      true,
+      false,
     ]);
   });
 });
