@@ -10,6 +10,7 @@ import type {
   Behavior,
   Cell,
   Cooldown,
+  CooldownRequest,
   Outcome,
   PlanStep,
   WakeConditions,
@@ -68,11 +69,15 @@ export type Senses = {
   readonly draws: readonly number[];
 };
 
-/** What a brain proposes: one to three steps, when to be woken, and what to remember. */
+/**
+ * What a brain proposes: one to three steps, when to be woken, what to remember, and optionally up
+ * to four targets to avoid for a while, which the engine adds to the being's cooldowns.
+ */
 export type Intention = {
   readonly steps: readonly PlanStep[];
   readonly wakeWhen: WakeConditions;
   readonly behavior: Behavior;
+  readonly cooldowns?: readonly CooldownRequest[];
 };
 
 /** A brain: its version, which the ruleset's brain version composes, and its decision. */

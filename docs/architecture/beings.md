@@ -14,7 +14,9 @@ requests implement, and the preregistration of its scenarios.
 | Navigation | `packages/agents/src/navigation` | T4-4 |
 | The tick, actions, spawn, and occupancy | `packages/engine/src/beings`: `body.ts`, `light.ts`, `activity.ts`, `env.ts`, `advance.ts`, `resolve.ts`, `system.ts`, `ruleset.ts` | T4-5a |
 | Contests, incapacity, fuzz, and call counts | `packages/engine/test`: `beings-contest.test.ts`, `beings-fuzz.test.ts` | T4-5b |
-| The brain `utility@1` | `packages/agents` | T4-6 (*planned*) |
+| Cooldowns that an intention adds | `packages/engine/src/beings`: `intention.ts`, `advance.ts` | T4-6 |
+| The brain `utility@1` | `packages/agents/src/brain`: `curves.ts`, `parameters.ts`, `recipes.ts`, `utility.ts` | T4-6 |
+| The preregistered scenario and the calibration | `packages/agents/test/support`: `scenario.ts`, `metrics.ts`; `packages/agents/bench/calibration.ts`; `defaultLife` in `laws.ts` | T4-6 |
 | Scenarios, survival, and controls | `packages/agents/test`, `bench` | T4-7 (*planned*) |
 
 ## Layers
@@ -158,7 +160,9 @@ are integer simulated milliseconds.
   passes them; a host copies an arbitrary value first with `copyCanonical`;
 - the seal, and a diet that names a deposit the genesis does not have;
 - the default laws against the registered targets that depend on the laws alone, including one
-  cell's regrowth against the cheapest day and the stationary horizon H;
+  cell's regrowth against the cheapest day and the stationary horizon H, and numerators of at most
+  953,250 that a variant of ±10% moves; the targets that depend on the typical food cell f are
+  checked in `packages/agents/test/scenario.test.ts`, which measures f on the calibration areas;
 - each being in the chunk of its cell, on both sides of the origin, ids rising strictly, and `due`
   equal to the earliest wake.
 
@@ -238,7 +242,13 @@ array ignores a write there.
   milliseconds);
 - `wakeWhen`: optional thresholds `nutritionBelow`, `restBelow`, `lightBelow`, and `lightAbove`;
   each wakes the being when the quantity reaches the threshold (at or below, or at or above);
-- `behavior`: what the brain wants to find again in its next senses.
+- `behavior`: what the brain wants to find again in its next senses;
+- `cooldowns`: optional, up to four targets to avoid for a while, each `{ cell, ms }` with a cell
+  inside the world and `ms` from 1 to 2^32. The brain does not sense the tick, so the engine stamps
+  each with `until = tick + ⌈ms / (simSecondsPerTick·1000)⌉`; one added for a cell replaces the
+  being's earlier one there, and the being keeps the newest four. Before each decision the engine
+  drops those with `until ≤ tick`, so the brain senses only cooldowns that still hold. A refused
+  intention adds none, and an intention without the member leaves them as they were.
 
 The brain receives copies of everything it senses, the window's arrays included, and the engine
 keeps its own window: a brain that writes to its senses changes nothing the engine judges by. The
@@ -253,10 +263,148 @@ records the reason, and the engine emits `being.intention_rejected`. A brain tha
 poisons the world. The ruleset captures its brains as it captures its lists, and its
 brain version composes each species with its brain, in species order.
 
-`utility@1` (T4-6) scores five behaviors with integer response curves: forage, eat here, sleep,
-explore, and rest. It keeps hysteresis, a commitment bonus with a minimum margin to switch, and
-cooldowns on failed targets. It plans with one Dijkstra over the window for food and A* with an
-octile heuristic for a single target; ties break by (f, h, cell index).
+### `utility@1`
+
+`utilityController()` of `@open-origin/agents` is a Utility AI (plan §5.3, L1) with the recipes
+of L2 (plan §5.4). It is a pure function of its senses: it keeps no state, what it must remember
+travels in `behavior` and `cooldowns`, and its only randomness is `draws[0] mod 8`, its heading at
+its first decision. Its parameters are in `packages/agents/src/brain/parameters.ts`, calibrated
+and frozen with the laws (see [Calibration](#calibration)).
+
+**Considerations**, integers in permille, each from a piecewise-linear response curve whose
+values between points are rounded down:
+
+- hunger and tiredness, the loss of nutrition and rest from full, `⌊(10^6 − level)/1000⌋`, each
+  felt through a trait: `min(1000, ⌊loss·trait/1000⌋)`, appetite for hunger and sleepiness for
+  tiredness;
+- darkness, 1000 at a light of 100 or less and 0 from 200;
+- the worth of a food cell, the worth of its cue (some 600, plenty 1000) times that of its route
+  time (1000 for none, 700 for an hour, 300 for four hours), from one Dijkstra over the window;
+- alertness, 1000 until half of rest is lost and 0 from 65%;
+- the drive to wander, 500 felt through curiosity, times the daylight `1000 − darkness`.
+
+**Scores** are the product of the considerations, each lifted by `(1 − c)·(1 − 1/n)·c` (the
+compensation of Mark and Dill's Infinite Axis Utility System), so that a consideration of 0 vetoes
+a behavior and more considerations do not lower a score by themselves:
+
+| Behavior | Considerations | Plan | Woken by |
+|---|---|---|---|
+| forage | the drive to eat; the best cell's worth | walk the route, then eat to full when one walk reaches it | rest at 150,000 |
+| eat here | the drive to eat; the cue of its own cell | eat to full | rest at 150,000 |
+| sleep | the need to sleep; darkness, or the urgency of tiredness | sleep to full rest | nutrition at 250,000 |
+| explore | the drive to search or to wander; alertness | a leg, then a pause of 3 hours when wandering | hunger, tiredness, dusk when wandering; tiredness when searching |
+| rest | a constant 250 | idle 2 hours by day, 12 in the dark | hunger, tiredness, dusk and dawn |
+
+- **The drive to eat** starts once 40% of nutrition is lost (700, rising to 1000 at 70%) and,
+  once foraging or eating, keeps going until at most 10% is lost: the hysteresis that carries a
+  meal from cell to cell. Without a reachable food cell or food here, the drive to eat becomes the
+  drive to search; with one, the being does not wander.
+- **The need to sleep** in the dark starts once 10% of rest is lost, by day once 65% is; once
+  asleep, it holds until at most 2% is lost, and a sleep ends at full rest. So beings sleep once or
+  twice each night and wake rested.
+- **Choice.** The best score wins, ties going to the order forage, eat, sleep, explore, rest. The
+  behavior the being is doing gets a bonus of 100, and another must also beat it by 50; a
+  behavior it can no longer do, scored 0, holds nothing. A wake condition the brain asked for
+  releases the commitment, since it is the brain's own request to weigh everything again: a
+  sleep woken by starvation does not outweigh the meal.
+
+**Decision points.** Every plan asks to be woken at the levels that would change the choice: the
+nutrition at which the drive to eat starts and the rest at which sleep starts, felt through the
+being's traits, and the light at dusk (100) and dawn (200), with both in the twilight. Rest idles
+long, and a being decides again only when an activity ends or a condition holds, about 11 to 12
+times a simulated day. By day, every plan either has the dusk condition or ends by itself, a walk
+and a meal, so the reaction to darkness is bounded by the longest such plan: 64 of the slowest
+steps the law allows and a meal to full.
+
+**Recipes.**
+
+- **Forage** searches the window once with Dijkstra and walks to the cell of highest worth, other
+  than its own and those it cools; ties go to the shorter route, then to the lower cell index. A
+  route of more than 64 steps is walked in parts, without the meal, and the being decides again at
+  the end of each. Unreachable cells are never chosen, so no forage fails for want of a route.
+- **Wander**, by a sated being by day: a leg toward the cell 16 cells away along its heading,
+  planned with A* under the octile bounds of the window's own cheapest steps. The heading is kept
+  from leg to leg and from one exploration to the next; the being turns, by 45° then wider to
+  either side, when the target has a cooldown, has no food cue within 12 cells, or has no route,
+  so it never wanders out of sight of food. A target without a route gets a cooldown of 6 hours.
+- **Search**, by a hungry being with nothing to eat in sight: a spiral around its anchor, the
+  oldest cooldown within 200 cells, or a new one of two days where it stands, a place where it
+  found nothing. Each leg steps 12 cells around the anchor, counterclockwise, or around and out
+  when that is blocked, and every leg ends farther from the anchor than it began, so the path is a
+  spiral whose turns lie about π·12 ≈ 38 cells apart, inside the window's side of 49: it sweeps
+  the land nearest the anchor first and never comes back to a place it passed. At the anchor itself
+  the first leg follows the heading, turning when blocked. A straight search, and a search bounced
+  inside a square, were tried during calibration and left beings that spawned out of sight of food
+  to starve: the first walked away from food, the second fell into short periodic loops.
+- **Cooldowns.** A meal that failed where the being stands (`failed` or `lost`, with `no_food` or
+  `food_gone`) cools that cell for 6 hours, a wander target without a route for 6 hours, and the
+  anchor of a search for two days. A cooled cell is neither foraged, eaten, nor aimed at.
+- **The edges of the world.** The window covers cells outside the world, impassable and without
+  food. The brain never aims a leg at one, nor gives one a cooldown, which the engine would refuse
+  with the whole intention.
+- When the being is incapacitated it never walks; when no leg has a route it rests.
+
+### What the tests check (brain)
+
+`packages/agents/test`: `curves.test.ts`, `utility.test.ts`, `utility-edges.test.ts`,
+`utility-fuzz.test.ts`, `utility-world.test.ts`, on senses built by hand (`support/senses.ts`) and
+in worlds:
+
+- the curves, the compensated product, and traits, against values computed by hand;
+- each behavior and its exact intention: eating here, foraging the cell of highest worth (cue
+  against route time, both ways), ties by route time and by cell index, cooled cells, a route of
+  92 steps walked in parts, no walk while incapacitated, failed meals remembered, sleep by night
+  and only when exhausted by day, rest with its wake levels, felt through traits, wandering toward
+  food in sight and resting when none is, the first heading from the draws, the heading kept, the
+  search's anchor, its steps around and out, a spiral of 120 legs whose distance from the anchor
+  always grows and whose turns lie 30 to 47 cells apart, and blocked targets cooled;
+- hysteresis and commitment: the two levels of eating, needs that waver around a level, rest that
+  wavers around the level of sleep at night, the margin to switch, and a wake condition that
+  releases the commitment;
+- the orders it keeps: the oldest cooldown near it as the anchor, the first four of the cooldowns
+  it would add, the targets without a route cooled when wandering falls back to rest, cooled cells
+  never aimed at by a wander or a search, some food where it stands eaten rather than searched
+  for, and alertness, which keeps a tired being from wandering by day;
+- the boundaries of its rules: a cooldown exactly SEARCH_RANGE away and one farther, food exactly
+  WANDER_SIGHT cells from a target on each side and one farther, a route of exactly 64 steps
+  against one of 65, cooled cells in the window's last column and last row, a cooldown one cell
+  past the window's east or north side, which maps to no cell of it, and a target exactly on the
+  world's last column;
+- by each of the four edges of the world, a wandering being and a searching one that propose
+  nothing outside it, and a world of eight beings by the east edge, some of them heading toward
+  it, with no intention refused;
+- that a decision is the same from the same senses and writes nothing to them;
+- on 300 random senses over real terrain, that the engine accepts every intention, walks have at
+  most 64 steps, an incapacitated being never walks, every behavior occurs, and by day every plan
+  has the dusk condition or ends by itself;
+- in the calibration scenario `calibration/1`, that resting and wandering beings decide at the
+  exact tick of dusk, and a being spawned to forage across dusk within the bound above; and the
+  ruleset's brain version `s1:utility@1`.
+
+When these tests were written, each of 34 deliberate defects in the brain made them fail: the
+start level of eating, no hysteresis of eating or of sleep, no commitment, no margin, ties to the
+later behavior, a commitment kept through a wake condition, the heading drawn at every decision,
+no anchor and no reuse of one, failed meals and blocked targets not cooled, cooled cells foraged
+or eaten, ties to the longer route, route time ignored, a meal planned past one walk, no dusk
+condition, wake levels one short, walking while incapacitated, traits ignored, no compensation,
+curves rounded to the nearest, wandering while hungry, a short rest at night, wandering out of
+sight of food or as far as the window, a clockwise spiral, an integer square root one too large,
+out before around, a first leg that ignores the heading, a search step twice as long, bounds too
+high for A*, and no exhaustion guard on foraging. Four of them first survived, and the tests were
+strengthened: a slow route to plenty against some food near, a little food against wandering, a
+tie in worth broken by route time, and a heading kept whatever the draws.
+
+An independent verifier then found that the brain cooled targets outside the world by its edges,
+which the engine refused, and named 11 more defects these tests let pass: the anchor on the newest
+cooldown, a search over some food where the being stands, the last four cooldowns kept instead of
+the first, blocked targets dropped when wandering falls back to rest, cooled cells aimed at by a
+wander or a search, no alertness, and off-by-one boundaries of the search's range, of the sight of
+food, of a walk of 64 steps, and of the window's last column. The tests above now make each fail,
+with 4 more off-by-one boundaries of the sight and the window and a wander that aims outside the
+world, and so do the 34 defects before. One defect is equivalent: a search that aims outside the
+world finds no route there, so the check only spares an A*. The verifier's recheck found one of
+the 11 still passing, a cooldown just past the window's east side mapped onto the next row, and a
+target on the world's last column skipped; the last two tests above make both fail.
 
 ## Navigation
 
@@ -492,7 +640,8 @@ The spawn areas, computed with this rule on `worldgen@1` before any law of life 
 | `heldout/5` | 89,380 (8.52%) | 786 | (10, −10) | 9,216 | 901 |
 | `heldout/6` | 83,655 (7.98%) | 736 | (−5, −5) | 9,216 | 1,766 |
 
-The scenario fixture of T4-7 recomputes this table, and a test pins it.
+`packages/agents/test/support/scenario.ts` builds the scenario of a label by this rule, and
+`packages/agents/test/scenario.test.ts` recomputes this table from the terrain alone and pins it.
 
 ### Ecological targets
 
@@ -548,3 +697,112 @@ nutrition is 0, a fraction `(c − g) / c` of the time.
   Some cell was emptied, regrew to at least half its deposit, and was eaten again.
 - Negative controls: a brain that never eats is incapacitated at the tick the laws give; a
   stationary brain, which only eats in its own cell and sleeps, is incapacitated by H on every seed.
+
+## Calibration
+
+Laws and brain were calibrated together on the four calibration labels only, as the
+preregistration requires, and frozen together; no simulation ran on the default label or any
+held-out label. `bun packages/agents/bench/calibration.ts [1 2 3 4] [adverse | favorable]
+[--ticks N] [--spawn K]` reruns it; it refuses the default label and the held-out ones, and every
+argument it does not know, with exit code 2. `packages/agents/test/freeze.test.ts` pins the
+freeze. The correction that keeps the brain inside the world's edges froze them again; it
+changed no result below, which the bench reproduced being by being on the four labels, under the
+default laws and both variants.
+
+### The laws
+
+The typical food cell of the calibration areas is f = 84 units (the lower median of 11,921 positive
+values), far below the deposit's peak of 1000. Three provisional laws missed the targets that
+depend on f, and changed:
+
+| Law | Provisional | Calibrated | Why |
+|---|---|---|---|
+| `diet.nutritionPerUnit` | 2000 | 8000 | a full meal needed 300 units, 3.6 f; it needs 75, 0.89 f |
+| `regrowth` | 1/504 per s | 100/240,000 per s (1/2400) | f regrew in 0.56 L; it regrows in 2.67 L. The numerator 100 lets the ±10% variants move it, which 1 cannot |
+| `diet.cue.plenty` | 200 | 40 | no cell of the calibration areas cued plenty at 200 in two of them; 40 units feed 320,000, a meal of the acceptance list |
+
+Every other law kept its provisional value. With them, the default laws give: nutrition from full
+to 0 awake in 2 L, walking 1.5 and asleep 0.5 times as fast; health from full to 0 in 1.5 L;
+rest from full to 0 in 1.6 L, walking 1.25 times as fast; rest restored in 0.35 L; 32 flat steps
+in 0.019 L; one cell's day of regrowth g = 252,000, 0.55 of the cheapest day c = 455,128; and a
+stationary horizon H = 47.7 days. Every numerator is at most 953,250.
+
+### The brain
+
+The parameters of `utility@1` in `packages/agents/src/brain/parameters.ts` are frozen with these
+laws. Calibration changed the brain itself three times:
+
+- on `calibration/3`, sated beings wandered out of sight of food and starved, so wandering keeps
+  food in sight;
+- on `calibration/3`, beings spawned out of sight of food searched in a straight line into a
+  barren region. A search bounced inside a square around where it began passed the four labels,
+  but on `calibration/3` with another spawn draw (below) it fell into a loop of five legs; a
+  square spiral on a lattice then looped where its points were blocked, so the search became the
+  spiral whose every step leads farther out;
+- while its tests were written, a sleep woken by starvation turned out to outweigh the meal, so a
+  wake condition releases the commitment.
+
+### Results
+
+Each calibration label, 63,000 ticks (10 days), audit off, with the brain `utility@1` and the
+default laws; the minimum over the eight beings of each acceptance item:
+
+| Label | Incapacitated, rest 0, rejected | Meal cells | Ate outside birth window | Meals ≥ 300,000 | Sleeps; rested wakes | Walked | Lowest nutrition |
+|---|---|---|---|---|---|---|---|
+| `calibration/1` | 0, 0, 0 | 13 | all | 10 | 30; 30 | 535 | 523,974 |
+| `calibration/2` | 0, 0, 0 | 13 | all | 9 | 30; 30 | 544 | 463,941 |
+| `calibration/3` | 0, 0, 0 | 13 | all | 9 | 30; 30 | 589 | 452,077 |
+| `calibration/4` | 0, 0, 0 | 12 | all | 11 | 21; 21 | 622 | 309,208 |
+
+On every label some cell was emptied, regrew to half its deposit, and was eaten again; health
+never fell, because nutrition never reached 0. The same holds, with the frozen laws and brain:
+
+- under the adverse and the favorable variants of the laws, on all four labels (lowest nutrition
+  278,726 and 339,101);
+- over 20 days (126,000 ticks) on all four (lowest nutrition 309,208);
+- on each calibration terrain with three other spawn draws, `--spawn 1` to `3`, the spawn
+  generator seeded from `<label>/spawn/1` to `/3` instead of `<label>/spawn` (lowest nutrition
+  299,847). These are
+  calibration terrains, not registered scenarios; the first of them led to the spiral search, and
+  none changed a parameter after it.
+
+Measured on the two-core Codespace with Bun 1.4.4 (indicative): a 10-day run of eight beings,
+audit off, takes 5.3 to 6.1 s, of which the brain takes 0.15 to 0.2 s, and 5.9 to 6.5 s with the
+metrics. A being decides 11.2 to 12.3 times a simulated day.
+
+### What the tests check (calibration)
+
+`packages/agents/test`: `scenario.test.ts`, `metrics.test.ts`, `freeze.test.ts`, and
+`calibration-bench.test.ts`, with `packages/engine/test/beings-laws.test.ts`:
+
+- the seeds of a label; the spawn table of all eleven labels, from terrain alone; the beings a
+  label draws, on distinct dry cells, by rejection, pinned for `calibration/1` after an independent
+  reading of the rule agreed; another spawn draw from `--spawn K`; the scenario's genesis, its 12
+  seconds per tick, its laws without death, and its spawns at tick 1; the variants of the laws,
+  rounded half up; f = 84; and the targets that depend on f;
+- each metric against a tiny run checked by hand, with scripted brains on the engine's test
+  terrain: rejections, also one alone in its tick after an idle ran out; an exhaustion and its
+  forced sleep; an incapacity, and a death when death is enabled; meals, and a rise of exactly
+  300,000 counted big where one of 299,999 is not; sleeps, and a rested wake within a tick of
+  900,000; three meal cells, the third outside a birth window of radius 4 and inside one of 8;
+  walked cells of whole walks and of one a wake condition interrupts; a cell emptied and eaten
+  again, found regrown to half after an idle of 120 ticks and not after one of a tick; and each
+  acceptance item at its threshold;
+- the freeze: the seal of the default laws and a digest of every parameter of `utility@1`, by
+  name, so that any change to either fails a test that says it burns the evaluated held-out seeds;
+- the bench's arguments: the default and held-out labels refused in any spelling, and every
+  unknown label, option, or value refused instead of ignored.
+
+With the provisional laws, three of these tests fail: the units of a full meal, the regrowth to
+f, and a regrowth numerator that ±10% cannot move. Each of 5 deliberate defects of the calibrated
+laws, 8 of 9 of the scenario builder, 13 of the metrics, and 4 of the scenario and the bench
+makes them fail, and so does each of 10 changes of a law or a parameter that no other test sees.
+The ninth of the scenario builder, a cell dry only above the liquid level rather than at it, is
+equivalent on the eleven labels, where no area cell lies exactly at the level. The four new files
+cost about 0.6 s, 0.2 s, 0.03 s, and 0.02 s of `bun test`.
+
+The metrics (`packages/agents/test/support/metrics.ts`) read events and the state at their
+ticks: a meal is one `eat` activity, and its rise is the nutrition at its end less the nutrition
+at its start; a rested wake is a sleep that ends with rest at least 900,000; walked cells are the
+steps that arrived; a cell is emptied when a bite leaves it 0, and eaten again when a later bite
+finds at least half of its deposit there.
