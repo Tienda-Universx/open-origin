@@ -179,6 +179,16 @@ describe("cooldowns in the tick", () => {
       outcome: { result: "rejected", tick: 4, reason: "malformed" },
       cooldowns: [{ cell: [1, 1], until: 52 }],
     });
+    // An accepted intention that leaves the member out keeps the cooldowns still in force.
+    const keep = (senses: Senses) =>
+      senses.self.cooldowns.length === 0 ? idleWith(24_000, added) : idleWith(24_000);
+    const kept = beingsWorld({ controllers: { [SPECIES.id]: brain(keep) }, life: NEAR });
+    runTo(kept, 4, [spawn(1, { species: SPECIES.id, cell: [5, 5] })]);
+    expect(beingOf(kept, 1)).toMatchObject({
+      outcome: { result: "none" },
+      activity: { kind: "idle", start: 4 },
+      cooldowns: [{ cell: [1, 1], until: 52 }],
+    });
     const plain = cooling(() => undefined, { idleMs: 24_000 });
     runTo(plain.world, 30, plain.born);
     expect(plain.sensed.length).toBe(15);

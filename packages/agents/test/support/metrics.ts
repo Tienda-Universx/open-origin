@@ -201,6 +201,7 @@ function started(
   event: EngineEvent,
 ): void {
   const { activity } = event.payload as { activity: string };
+  // No bite lands at the tick a meal starts: the first falls at least one tick later.
   if (activity === "eat")
     tracker.mealStart.set(record.id, bodyOf(tracker, being, event.tick).nutrition);
   if (activity === "sleep") record.sleeps += 1;
