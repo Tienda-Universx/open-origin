@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { hexOf } from "../src/digest/digest.ts";
 import { type CanonicalValue, canonicalize, digest, step, type World } from "../src/index.ts";
 import { worldState } from "../src/world/world.ts";
-import { DIRTY_KEYS, median, sizedWorld } from "./support/cost-worlds.ts";
+import { alternatingMedians, DIRTY_KEYS, sizedWorld } from "./support/cost-worlds.ts";
 import { type Data, stepRuleset, stepWorld, system, writable } from "./support/step-rulesets.ts";
 
 /**
@@ -153,18 +153,8 @@ const withinBound = (ratio: number) => ratio < MAX_RATIO;
 const sized = (count: number) => sizedWorld(count, () => ({ n: 0 }));
 
 /** The per-tick medians of `small` and `large`, stepped alternately, and their ratio. */
-function measure(small: World, large: World) {
-  const times: [number[], number[]] = [[], []];
-  for (let round = 0; round < WARM_UP + MEASURED; round += 1) {
-    [small, large].forEach((world, index) => {
-      const start = Bun.nanoseconds();
-      step(world, []);
-      if (round >= WARM_UP) times[index]?.push(Bun.nanoseconds() - start);
-    });
-  }
-  const [smallMedian, largeMedian] = times.map(median) as [number, number];
-  return { smallMedian, largeMedian, ratio: largeMedian / smallMedian };
-}
+const measure = (small: World, large: World) =>
+  alternatingMedians(small, large, { warmUp: WARM_UP, measured: MEASURED });
 
 describe("the kernel's work per tick does not depend on the number of chunks", () => {
   test(`the bound: below ${MAX_RATIO} passes; ${MAX_RATIO} and a bare copy's ${BARE_COPY_RATIO} fail`, () => {
