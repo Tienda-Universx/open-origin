@@ -198,16 +198,23 @@ recommended moment is T7, with snapshot version 2, because the seed changes shap
 - Behavior comes from needs, laws, terrain, and food that actually exists: nothing is scripted by
   the hour, and the brain sees only its senses.
 - Events record behaviors, not steps, so a being emits on the order of 50 events per simulated day
-  (plan §I.2.7 estimates 30); the benchmark measures it.
+  (plan §I.2.7 estimates 30). T4-8's benchmark measured 63 to 85 on a being's first day, and 31 on
+  the fourth day of 100 beings ([beings](../architecture/beings.md#measured-cost-indicative)).
 - A sleeping being in its own chunk costs one read per tick; a chunk that holds no being costs
   nothing. Per-tick work grows with occupied chunks, beings due, changed bytes, and decisions.
 - The global value is rewritten when a chunk becomes occupied and once per simulated day, so the
   genesis seal check is paid rarely.
-- Ceilings: a crowded chunk is rehashed whole whenever one of its beings changes (estimated at
-  about 18 ms for 1,000 beings in one chunk from the measured commit cost; T4-8's benchmark measures
-  it), and T5's mind data will be rehashed on every step of its being. Both point to the same exit: an entity section with one hash term per entity in
-  snapshot version 2 (T7). The occupancy list is rewritten whole when it changes; the benchmark
-  measures from how many occupied chunks it dominates.
+- Ceilings, which T4-8's benchmark measured
+  ([beings](../architecture/beings.md#measured-cost-indicative)): a crowded chunk is rehashed whole
+  whenever one of its beings changes (1,000 beings in one chunk wrote 456 KB at the median tick,
+  which took 35 to 45 ms; the estimate here was 18 ms for the commit alone), and T5's mind data
+  will be rehashed on every step of its being. Both point to the same exit: an entity section with
+  one hash term per entity in snapshot version 2 (T7). It becomes necessary once the benchmark's
+  p99 of bytes hashed per tick passes 1 MB, about a fifth of what the commit handles in a tick at
+  5 Hz, in a scenario the universe must support; it was 523 KB at most. The occupancy list is
+  rewritten whole when it changes, about 1 to 3.5 µs per listed chunk: a twentieth of a tick or
+  more from about 10,000 occupied chunks, and more than a tick at 100,000, a ceiling that the
+  entity section does not lift.
 - Interactions are local (a window of at most one chunk of radius, contests per cell), which keeps
   a later partition by regions open without building it.
 - `ctr-mix32@1` stays in v0.1, where nothing is deployed; its gate is stricter than ADR 0021's.
