@@ -28,6 +28,7 @@ Bun are allowed when they add value.
 | Tests | `bun test` |
 | Engine benchmark (manual, not part of `check`) | `bun packages/engine/bench/step.ts` |
 | Worldgen benchmark (manual, not part of `check`) | `bun packages/engine/bench/worldgen.ts` |
+| Beings benchmark (manual, not part of `check`) | `bun packages/agents/bench/beings.ts` |
 
 CLIs whose launcher targets Node (for example `tsc`, `biome`) run with `bunx --no-install --bun`:
 `--bun` keeps them on Bun, and `--no-install` stops bunx from downloading a registry package when
@@ -211,7 +212,7 @@ configuration, which only add friction.
 | Duplicated code, dead exports | None yet | Review checklist |
 | Engine work per tick that grows with the number of chunks | `bun test` (`packages/engine/test/step-cost.test.ts`) | Enforced: the median tick of 200,000 chunks must cost less than 2 times one of 1,000 |
 | Beings work per tick that grows with the number of chunks; chunk reads of the beings system beyond what it lists, senses, or occupies | `bun test` (`packages/engine/test/beings-cost.test.ts`) | Enforced: with ten sleeping beings, the median tick of 200,000 empty chunks must cost less than 2 times one of 1,000; a context that counts the system's calls allows no `chunkKeys`, a write of the global value only when the occupancy index grows or the day turns, and per tick at most each listed chunk, the chunks each decision senses, five reads per wake, and the daily prune's reads |
-| Race conditions, other performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T3, T6, T7, and T10, and the engine and worldgen benchmarks |
+| Race conditions, other performance regressions | None yet | Review checklist, plus the determinism, recovery, and load tests of T2, T3, T6, T7, and T10, and the engine, worldgen, and beings benchmarks |
 
 See [ADR 0015](docs/decisions/0015-automated-quality-gates.md) for the tool choices and thresholds.
 
