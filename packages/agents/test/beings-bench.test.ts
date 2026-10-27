@@ -15,6 +15,7 @@ import {
 import {
   decisionCost,
   type Findings,
+  hasRoom,
   median,
   nsPerWake,
   parseArguments,
@@ -61,6 +62,17 @@ describe("the arguments of the scale benchmark", () => {
     { argv: ["--large", "--large"], message: "--large is given twice" },
   ])("refuse $argv: $message", ({ argv, message }) => {
     expect(() => parseArguments(argv)).toThrow(message);
+  });
+});
+
+describe("the memory a large scenario needs", () => {
+  test("is 1.5 GB available, or an amount unknown where /proc/meminfo does not exist", () => {
+    expect([hasRoom(1_536), hasRoom(1_535.9), hasRoom(0), hasRoom(undefined)]).toEqual([
+      true,
+      false,
+      false,
+      true,
+    ]);
   });
 });
 

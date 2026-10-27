@@ -12,19 +12,24 @@
  * - `micro`: the senses at radius 8, 16, 24, and 32, and Dijkstra and A* over their windows;
  * - `dispersed`: 10, 100, and 1,000 beings, one to a chunk, timed over one simulated day;
  * - `concentrated`: 10, 100, and 1,000 beings in one chunk and in 3 × 3 chunks, for 500 ticks;
- * - `sleeping`: 10 active beings beside 10,000 sleeping ones, and alone, for 1,000 ticks, then a
+ * - `sleeping`: 10 active beings beside 1,000 sleeping ones, and alone, for 1,000 ticks, then a
  *   tick that adds a chunk to the occupancy index; and ticks that process 1,000, 2,000, and 4,000
  *   beings at once;
- * - `explored`: 10 active beings in worlds of 0, 1,000, and 200,000 empty chunks, for 1,000 ticks.
+ * - `explored`: 10 active beings in worlds of 0 and 1,000 empty chunks, for 1,000 ticks.
  *
- * `--large` adds the ceilings that take long: 10,000 dispersed beings, 100,000 sleeping ones, and
- * ticks that process 8,000 and 16,000 beings at once.
- * `--ticks N` times N ticks of every scenario instead of its own number; the sleeping beings sleep
- * until tick 1,325, so `sleeping` with more than 1,222 ticks also times them awake. Every scenario
- * first runs the spawn at tick 1, the first decisions at tick 2, and 100 more ticks before any is
- * timed. Any other argument, or one given twice, is an error, and exits with code 2. The default
- * run took about 7 minutes on the Codespace, whose two CPUs are two threads of one core.
+ * `--large` adds the large scenarios: 10,000 dispersed beings, 10,000 and 100,000 sleeping ones,
+ * ticks that process 8,000 and 16,000 beings at once, and 200,000 empty chunks. Each one starts
+ * only while the system has at least 1.5 GB of memory available (read from /proc/meminfo, where
+ * there is one), and is skipped with a message otherwise. `--ticks N` times N ticks of every
+ * scenario instead of its own number; the sleeping beings sleep until tick 1,325 at the latest, so
+ * `sleeping` with more than 1,100 ticks may time them awake. Every scenario first runs the spawn at
+ * tick 1, the first decisions at tick 2, and 100 more ticks before any is timed. Any other
+ * argument, or one given twice, is an error, and exits with code 2.
+ *
+ * It runs one scenario at a time, in this process, and prints its peak resident memory at the end.
+ * On a shared machine, run it at low priority: `nice -n 19 bun packages/agents/bench/beings.ts`.
  */
+import { readFileSync } from "node:fs";
 import { beings, readView } from "@open-origin/engine";
 import { exploredChunks } from "../../engine/test/support/beings-cost.ts";
 import { aStar, dijkstra } from "../src/index.ts";
@@ -92,6 +97,39 @@ function positive(text: string | undefined): number {
   if (!/^[0-9]+$/.test(text) || !Number.isSafeInteger(value) || value < 1)
     throw new Error(`--ticks must be a positive integer, not "${text}"`);
   return value;
+}
+
+/** The memory, in MB, that the system must have available before a large scenario starts. */
+const ROOM_MB = 1_536;
+
+/** A number of kB that /proc reports for `field` in `file`; undefined where there is none. */
+function procKb(file: string, field: string): number | undefined {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    // Not Linux, or no /proc: the figure is unknown, which the callers say.
+    return undefined;
+  }
+  const kb = new RegExp(`^${field}:\\s+(\\d+) kB$`, "m").exec(text)?.[1];
+  return kb === undefined ? undefined : Number(kb);
+}
+
+/**
+ * Whether a large scenario may start with `availableMb` of memory available: at least ROOM_MB, or
+ * an amount unknown, so that the benchmark still runs where /proc/meminfo does not exist.
+ */
+export function hasRoom(availableMb: number | undefined): boolean {
+  return availableMb === undefined || availableMb >= ROOM_MB;
+}
+
+/** Whether the large scenario `name` may start; prints why when it may not. */
+function roomFor(name: string): boolean {
+  const kb = procKb("/proc/meminfo", "MemAvailable");
+  const availableMb = kb === undefined ? undefined : kb / 1024;
+  if (hasRoom(availableMb)) return true;
+  console.log(`\nSkipped ${name}: ${availableMb?.toFixed(0)} MB available, under ${ROOM_MB} MB.`);
+  return false;
 }
 
 /** The ticks every scenario runs after its first decisions and before any is timed. */
@@ -172,6 +210,8 @@ export type Findings = {
   thousandMs?: { median: number; p99: number };
   decisionMs?: { senses: number; brain: number; endToEnd: number };
   sleepingMarginalNs?: number;
+  /** How many sleeping beings the marginal cost was measured beside. */
+  sleepingBeside?: number;
   snapshotPerBeing?: number;
 };
 
@@ -187,7 +227,8 @@ function runScenario(name: string, cells: readonly Cell[], measured: number): Ru
 
 /** The dispersed runs, over one simulated day unless `--ticks` says otherwise. */
 function dispersed(options: Arguments, findings: Findings): Run[] {
-  const sizes = options.large ? [10, 100, 1_000, 10_000] : [10, 100, 1_000];
+  const large = options.large && roomFor("10,000 dispersed beings");
+  const sizes = large ? [10, 100, 1_000, 10_000] : [10, 100, 1_000];
   const runs = sizes.map((size) =>
     runScenario(
       `dispersed ${size}`,
@@ -373,7 +414,8 @@ function sleepingWorlds(
 }
 
 /**
- * Ten active beings alone and beside K sleeping ones, in their own chunks, stepped alternately:
+ * Ten active beings alone and beside K sleeping ones, 1,000, or 10,000 and 100,000 with `--large`,
+ * in their own chunks, stepped alternately:
  * the marginal cost of a sleeping being is the median, over the timed ticks, of the difference
  * between the two worlds' ticks, divided by K. The sleeping beings are spawned BATCH a tick. Then
  * each world spawns one being in a chunk that no being occupied, a tick that rewrites the
@@ -381,7 +423,8 @@ function sleepingWorlds(
  */
 function sleeping(options: Arguments, findings: Findings): void {
   const active = dispersedCells(10, benchCenter());
-  const sizes = options.large ? [0, 10_000, 100_000] : [0, 10_000];
+  const large = options.large && roomFor("10,000 and 100,000 sleeping beings");
+  const sizes = large ? [0, 10_000, 100_000] : [0, 1_000];
   const all = sleepingCells(Math.max(...sizes) + 1, active, benchCenter());
   const benches = sleepingWorlds(sizes, active, all);
   const times = alternate(benches, options.ticks ?? 1_000);
@@ -394,7 +437,10 @@ function sleeping(options: Arguments, findings: Findings): void {
   for (const [index, size] of sizes.entries()) {
     const own = times[index] ?? [];
     const marginal = size === 0 ? 0 : median(own.map((ns, tick) => ns - (base[tick] ?? 0))) / size;
-    if (size === 10_000) findings.sleepingMarginalNs = marginal;
+    if (size === Math.max(...sizes)) {
+      findings.sleepingMarginalNs = marginal;
+      findings.sleepingBeside = size;
+    }
     const { world } = benches[index] as BenchWorld;
     const applyTick = readView(world).tick + 1;
     const spawns = spawnsOf("s2", [extra]).map((command) => ({ ...command, applyTick }));
@@ -412,7 +458,8 @@ function sleeping(options: Arguments, findings: Findings): void {
  * radius 1. Prints the spawn tick and that tick, and each one's time per being.
  */
 function massWake(options: Arguments): void {
-  const sizes = options.large ? [1_000, 2_000, 4_000, 8_000, 16_000] : [1_000, 2_000, 4_000];
+  const large = options.large && roomFor("8,000 and 16,000 beings processed in one tick");
+  const sizes = large ? [1_000, 2_000, 4_000, 8_000, 16_000] : [1_000, 2_000, 4_000];
   const all = sleepingCells(Math.max(...sizes), [], benchCenter());
   console.log(
     "\n| Beings processed in one tick | Spawn tick: ms, µs per being | Their first processing: ms, µs per being |",
@@ -430,12 +477,12 @@ function massWake(options: Arguments): void {
 }
 
 /**
- * Ten active beings, the cells of `dispersed 10`, in worlds of 0, 1,000, and 200,000 empty chunks
- * around them, stepped alternately: the ratio of each median to the first.
+ * Ten active beings, the cells of `dispersed 10`, in worlds of 0 and 1,000 empty chunks around
+ * them, and of 200,000 with `--large`, stepped alternately: the ratio of each median to the first.
  */
 function explored(options: Arguments): void {
   const cells = dispersedCells(10, benchCenter());
-  const sizes = [0, 1_000, 200_000];
+  const sizes = options.large && roomFor("200,000 empty chunks") ? [0, 1_000, 200_000] : [0, 1_000];
   const benches = sizes.map((size) => {
     const bench = benchWorld({ chunks: exploredChunks(size, benchCenter()) });
     timedStep(bench.world, spawnsOf("s1", cells));
@@ -494,7 +541,7 @@ export function targets(findings: Findings): Target[] {
     list.push({
       name: "A sleeping dispersed being, marginal",
       bound: "≤ 1 µs per tick",
-      measured: `${(sleepingMarginalNs / 1e3).toFixed(3)} µs per tick`,
+      measured: `${(sleepingMarginalNs / 1e3).toFixed(3)} µs per tick beside ${(findings.sleepingBeside ?? 0).toLocaleString("en-US")}`,
       met: sleepingMarginalNs <= 1_000,
     });
   if (snapshotPerBeing !== undefined)
@@ -535,6 +582,10 @@ function main(options: Arguments): void {
     console.log(
       `| ${target.name} | ${target.bound} | ${target.measured} | ${target.met ? "met" : "missed"} |`,
     );
+  const peak = procKb("/proc/self/status", "VmHWM");
+  console.log(
+    `\nPeak resident memory: ${peak === undefined ? "unknown" : `${(peak / 1024).toFixed(0)} MB`}`,
+  );
 }
 
 if (import.meta.main) {
