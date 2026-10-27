@@ -5,6 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { beings, copyCanonical, digest, type Issue, worldgen } from "../src/index.ts";
+import { stationaryHorizon } from "./support/beings-world.ts";
 
 const { LIFE_VERSION, checkLife, defaultLife, sealedLifeIssues, sealLife } = beings;
 type LifeConfig = beings.LifeConfig;
@@ -271,17 +272,13 @@ describe("the default laws against the registered targets", () => {
   });
 
   test("one cell alone cannot sustain a being, and the stationary horizon stays within 60 days", () => {
-    // The shortest sleep that restores what a day awake costs: s/span(sleep) = (1 − s)/span(rest).
-    const s = span(species.sleep.recover) / (span(species.sleep.recover) + span(rest.awake));
-    const c = L * ((1 - s) * perSecond(nutrition.awake) + s * perSecond(nutrition.asleep));
-    const g = L * perSecond(species.regrowth) * species.diet.nutritionPerUnit;
+    const { c, g, days } = stationaryHorizon(species, worldgen.defaultGenesis(SEED));
     expect(g).toBeLessThanOrEqual(0.75 * c);
-    const peak = worldgen.defaultGenesis(SEED).terrain.deposits[0]?.peak ?? 0;
-    // Health falls only while nutrition is 0, a fraction (c − g)/c of the time once it first is.
-    const health = span(species.health.starve) / L;
-    const horizon =
-      (1_000_000 + peak * species.diet.nutritionPerUnit) / (c - g) + (health * c) / (c - g);
-    expect(horizon).toBeLessThanOrEqual(60);
+    expect(days).toBeLessThanOrEqual(60);
+    // The values beings.md records: g = 252,000, c = 455,128, H = 47.7 days.
+    expect([Math.round(g), Math.round(c), Math.round(days * 10) / 10]).toEqual([
+      252_000, 455_128, 47.7,
+    ]);
   });
 });
 

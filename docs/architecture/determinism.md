@@ -905,9 +905,14 @@ expect(report.failures).toEqual([]);
 
 - `ruleset` names a module and the function it exports, which returns a fresh ruleset on every
   call; the child process imports it by that path, so the module must load on its own.
-- `world(seed, ruleset, audit)` must build its world with the ruleset and the audit flag it is
-  given. A factory that ignores them makes checks vacuous: the audit run then audits nothing, and
-  the repeat and the interleaving do not run the fresh or the shared ruleset object they test.
+- `world(seed, ruleset, audit, role)` must build its world with the ruleset and the audit flag it
+  is given. A factory that ignores them makes checks vacuous: the audit run then audits nothing,
+  and the repeat and the interleaving do not run the fresh or the shared ruleset object they test.
+  `role` names the world the suite builds, in this order: `reference`, `repeat`, `audit`, and
+  `snapshots` with the first seed; `second`, the second seed's world, whose snapshot at tick 0 its
+  run alone continues; and `interleaved`, each of the interleaving's three worlds, which are built
+  anew. A test that singles out one world reads its role instead of counting calls, and a test
+  pins the order.
 - `commands(tick)` is called once per tick, in order from 1, before any run, so a generator such
   as `sfc32` may keep state: every run, the child processes included, gets the same script.
 - Cuts are ticks in [0, ticks), and a subject needs at least one, in `cuts` or `childCuts`, since
@@ -916,6 +921,10 @@ expect(report.failures).toEqual([]);
 - The resumes compare only the ticks after their cuts, so a subject cuts where its rules change
   state, at t − 1 and at t: the probe cuts around calendar boundaries and ticks that create
   chunks, and at seeded random ticks (tracker L33). It computes its cut lists and pins them.
+- T4's subject, in `packages/agents/test/beings-determinism.test.ts`, runs five beings under
+  `utility@1` around a small patch of food for 120 ticks, and cuts at its first contest, its first
+  chunk crossing, and its first sleep that ends, which a run before the suite finds
+  ([beings](beings.md#what-the-tests-check-evaluation)).
 - The optional second argument, `{ childTimeoutMs }`, sets the
   [child processes'](#the-child-process) time limit; it must be a positive integer.
 

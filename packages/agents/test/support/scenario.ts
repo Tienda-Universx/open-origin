@@ -288,10 +288,23 @@ export type Terrain = {
 
 /** The terrain of `label`, measured without running any simulation. */
 export function terrainOf(label: string): Terrain {
-  const seeds = labelSeeds(label);
-  const prepared = worldgen.prepareGenesis(worldgen.defaultGenesis(seeds.terrain));
+  return terrainWith(label, worldgen.defaultGenesis(labelSeeds(label).terrain));
+}
+
+/**
+ * The terrain of `label` under `genesis` instead of the default genesis of its terrain seed, with
+ * its spawn area found by the same rule: for the negative controls only, such as a barren world.
+ */
+export function terrainWith(label: string, genesis: worldgen.Genesis): Terrain {
+  const prepared = worldgen.prepareGenesis(genesis);
   const coverage = foodCoverage(prepared);
-  return { label, seeds, prepared, coverage, area: spawnArea(prepared, coverage) };
+  return {
+    label,
+    seeds: labelSeeds(label),
+    prepared,
+    coverage,
+    area: spawnArea(prepared, coverage),
+  };
 }
 
 export type ScenarioWorld = World<beings.BeingsGlobal, beings.BeingsChunk>;
@@ -306,6 +319,11 @@ export type ScenarioOptions = {
    * first word of SHA-256 of `<label>/spawn<spawnSuffix>` instead of `<label>/spawn`.
    */
   readonly spawnSuffix?: string;
+  /**
+   * For the negative controls only, never the registered scenario, which runs at SCENARIO_SPS:
+   * another length of a tick. The laws and the arrival instants do not depend on it (ADR 0023).
+   */
+  readonly simSecondsPerTick?: number;
 };
 
 /** A scenario ready to run: its world at tick 0, the spawns of tick 1, and what built them. */
@@ -323,9 +341,10 @@ export type Scenario = {
 export const SCENARIO_SPS = 12;
 
 /**
- * The scenario of `label`: the default genesis of its terrain seed, 12 seconds per tick, the laws
- * (the default ones unless `options.life` is given, always with death disabled), and its 8 beings,
- * spawned by the admin at tick 1. Throws for an uninhabitable label.
+ * The scenario of `label`: the default genesis of its terrain seed, 12 seconds per tick unless a
+ * negative control asks for another, the laws (the default ones unless `options.life` is given,
+ * always with death disabled), and its 8 beings, spawned by the admin at tick 1. Throws for an
+ * uninhabitable label.
  */
 export function scenarioOf(label: string, options: ScenarioOptions): Scenario {
   return scenarioFrom(terrainOf(label), options);
@@ -346,7 +365,7 @@ export function scenarioFrom(terrain: Terrain, options: ScenarioOptions): Scenar
   const world = createWorld(
     {
       seed: terrain.seeds.world,
-      simSecondsPerTick: SCENARIO_SPS,
+      simSecondsPerTick: options.simSecondsPerTick ?? SCENARIO_SPS,
       global: beings.beingsGlobal(worldgen.genesisOf(terrain.prepared), life),
       chunks: {},
       ruleset: beings.createBeingsRuleset({ controllers: options.controllers }),

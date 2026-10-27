@@ -108,7 +108,46 @@ describe("the count of events", () => {
     expect(kept).toMatchObject({ incapacitated: 1, died: 0, lowestHealth: 0, lowestNutrition: 0 });
     const deadly = { ...starving, deathEnabled: true };
     const [dead] = recordsOf(tinyRun(idler(6_000_000), born, deadly), 10);
-    expect(dead).toMatchObject({ incapacitated: 0, died: 1 });
+    expect(dead).toMatchObject({ incapacitated: 0, died: 1, final: undefined });
+  });
+});
+
+describe("the end of a run", () => {
+  test("records each being's body at the last tick, in closed form from its anchor", () => {
+    // Spawned at tick 1 and idle until tick 100: 99 ticks, 1,188 s awake. Nutrition loses
+    // ⌊1,250·1,188/189⌋ = 7,857 and rest ⌊3,125·1,188/378⌋ = 9,821; health stays full, fed and
+    // rested above recoverAbove.
+    const [record] = recordsOf(
+      tinyRun(idler(6_000_000), [{ cell: [5, 5], nutrition: 500_000, rest: 950_000 }]),
+      100,
+    );
+    expect(record?.final).toEqual({ nutrition: 492_143, rest: 940_179, health: 1_000_000 });
+  });
+
+  test("shows health that fell after the being's last event, which no event saw", () => {
+    // Nutrition 1,000 reaches 0 after ⌈1,000·189/1,250⌉ = 152 s, at tick 1 + ⌈152/12⌉ = 14, after
+    // the being's only events: its spawn, and the start of its idle at tick 2. From there health
+    // falls ⌊5,000·(100 − 14)·12/567⌋ = 9,100 by tick 100.
+    const [record] = recordsOf(
+      tinyRun(idler(6_000_000), [{ cell: [5, 5], nutrition: 1_000 }]),
+      100,
+    );
+    expect(record?.lowestHealth).toBe(1_000_000);
+    expect(record?.final).toMatchObject({ nutrition: 0, health: 990_900 });
+  });
+
+  test("hands each step's result to the caller, in order, after the runner read it", () => {
+    const run = tinyRun(idler(6_000_000), [{ cell: [5, 5], nutrition: 900_000 }]);
+    const seen: { tick: number; events: string[] }[] = [];
+    runScenario(run, 3, { decisions: () => 0 }, (result) =>
+      seen.push({ tick: result.tick, events: result.events.map(({ type }) => type) }),
+    );
+    expect(seen).toEqual([
+      { tick: 1, events: ["being.spawned"] },
+      // The spawn's first idle runs out without an event; the brain's idle starts.
+      { tick: 2, events: ["being.started"] },
+      { tick: 3, events: [] },
+    ]);
   });
 });
 
@@ -272,6 +311,7 @@ describe("the acceptance of a record", () => {
     walked: ACCEPTANCE.walked,
     lowestNutrition: 1,
     lowestHealth: 1_000_000,
+    final: undefined,
   };
 
   test("is met at every threshold, and each item is missed one short of it", () => {

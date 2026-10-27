@@ -72,6 +72,35 @@ describe("positive control: tally passes every check", () => {
   }, 60_000);
 });
 
+describe("the worlds the suite builds", () => {
+  test("each is named by its role and its seed, not by the order of the calls", async () => {
+    const built: string[] = [];
+    const report = await runDeterminismSuite({
+      ...GOLDEN_SUBJECT,
+      ticks: 3,
+      cuts: [1],
+      childCuts: [],
+      world: (seed, ruleset, audit, role) => {
+        const which = seed === GOLDEN_SUBJECT.seeds[0] ? "first" : "second";
+        built.push(`${role} ${which}${audit ? " audited" : ""}`);
+        return GOLDEN_SUBJECT.world(seed, ruleset, audit, role);
+      },
+    });
+    expect(report.failures).toEqual([]);
+    expect(report.resumed).toEqual([1]);
+    expect(built).toEqual([
+      "reference first",
+      "repeat first",
+      "audit first audited",
+      "snapshots first",
+      "second second",
+      "interleaved first",
+      "interleaved second",
+      "interleaved first",
+    ]);
+  });
+});
+
 /** The integrity_violation of a write through readChunk into chunk 1,0. */
 const STALE = `integrity_violation ${JSON.stringify([{ path: "/chunks/1,0", message: STALE_CHUNK }])}`;
 /** How a run under audit differs from the reference at the tick of that write. */
@@ -225,14 +254,13 @@ describe("a child process that does not resume", () => {
         });
     const subject = controlSubject("hangsInChild", [], [4]);
     let running: string[] = [];
-    let secondWorlds = 0;
     const failing: DeterminismSubject = {
       ...subject,
-      // The first world with the second seed is built before any child starts, for the run of
-      // that seed alone; the next one, the interleaving's, while both children run.
-      world: (seed, ruleset, audit) => {
-        if (seed !== subject.seeds[1] || secondWorlds++ === 0) {
-          return subject.world(seed, ruleset, audit);
+      // The interleaving's world with the second seed is built while both children run: the
+      // resume from 4, and the second seed's run alone.
+      world: (seed, ruleset, audit, role) => {
+        if (role !== "interleaved" || seed !== subject.seeds[1]) {
+          return subject.world(seed, ruleset, audit, role);
         }
         running = resumeChildren();
         throw new Error("no world for the second seed");
@@ -245,17 +273,14 @@ describe("a child process that does not resume", () => {
 
   test("whose world cannot be encoded is an interleave failure, and the first seed's worlds are still compared", async () => {
     const subject = controlSubject("keepsLastTick", [0]);
-    let secondWorlds = 0;
     const report = await runDeterminismSuite({
       ...subject,
-      // The first world with the second seed, built for its run alone, runs a ruleset that writes
-      // behind the barrier, stepped past that write, so its snapshot cannot be encoded. The
-      // interleaving's worlds run keepsLastTick, which only the interleaving catches.
-      world: (seed, ruleset, audit) => {
-        if (seed !== subject.seeds[1] || secondWorlds++ > 0) {
-          return subject.world(seed, ruleset, audit);
-        }
-        const world = subject.world(seed, writesThroughReadChunk(), false);
+      // The second seed's world, built for its run alone, runs a ruleset that writes behind the
+      // barrier, stepped past that write, so its snapshot cannot be encoded. The interleaving's
+      // worlds run keepsLastTick, which only the interleaving catches.
+      world: (seed, ruleset, audit, role) => {
+        if (role !== "second") return subject.world(seed, ruleset, audit, role);
+        const world = subject.world(seed, writesThroughReadChunk(), false, role);
         for (let tick = 1; tick <= BYPASS_TICK; tick += 1) step(world, []);
         return world;
       },

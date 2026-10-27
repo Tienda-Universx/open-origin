@@ -53,9 +53,10 @@ export type DeterminismSubject = {
   /**
    * A world at tick 0 with `seed`, running `ruleset`, under audit when `audit` is true. It must use
    * the ruleset and the audit flag it is given: a world that ignores them makes the audit run, the
-   * repeat with a fresh ruleset, and the interleaving's shared ruleset check nothing.
+   * repeat with a fresh ruleset, and the interleaving's shared ruleset check nothing. `role` says
+   * which world the suite builds, so that a test can single one out without counting calls.
    */
-  readonly world: (seed: Seed, ruleset: SuiteRuleset, audit: boolean) => World;
+  readonly world: (seed: Seed, ruleset: SuiteRuleset, audit: boolean, role: WorldRole) => World;
   /** The seed of the subject's world, and that of a second world for the interleaving. */
   readonly seeds: readonly [Seed, Seed];
   readonly ticks: number;
@@ -66,6 +67,14 @@ export type DeterminismSubject = {
   /** Ticks in [0, ticks) whose snapshot a child process continues from. */
   readonly childCuts: readonly number[];
 };
+
+/**
+ * Which world the suite builds, in the order it builds them: the first seed's reference run, its
+ * repeat, its run under audit, and the run that takes the snapshots; the second seed's world, whose
+ * snapshot at tick 0 its run alone in a child process continues; and each of the interleaving's
+ * three worlds.
+ */
+export type WorldRole = "reference" | "repeat" | "audit" | "snapshots" | "second" | "interleaved";
 
 export type DeterminismOptions = {
   /**
@@ -150,7 +159,7 @@ type Run = {
  * encoding that throws is a resume failure at its tick, and ends the run.
  */
 function takeSnapshots(subject: DeterminismSubject, fresh: () => SuiteRuleset, script: Script) {
-  const world = subject.world(subject.seeds[0], fresh(), false);
+  const world = subject.world(subject.seeds[0], fresh(), false, "snapshots");
   const cuts = new Set([...subject.cuts, ...subject.childCuts, script.length]);
   const texts = new Map<number, string>();
   for (let tick = 0; tick <= script.length; tick += 1) {
@@ -339,8 +348,9 @@ export function interleave(
 const INTERLEAVING_SEED = 2020;
 
 /**
- * The interleaving's worlds, as indices into the subject's seeds: the subject's world, a world with
- * the second seed, and a replica of the first.
+ * The interleaving's worlds, as indices into the subject's seeds: a world with the first seed, a
+ * world with the second seed, and a replica of the first. Each is built anew, with the role
+ * "interleaved": none of them is the world of the reference run, which ran before them.
  */
 const INTERLEAVED_SEEDS = [0, 1, 0] as const;
 
@@ -359,7 +369,7 @@ const SECOND_WORLD = INTERLEAVED_SEEDS.indexOf(1);
  * threw is returned instead.
  */
 function startSecondSeed(run: Run): Child | string {
-  const world = run.subject.world(run.subject.seeds[1], run.fresh(), false);
+  const world = run.subject.world(run.subject.seeds[1], run.fresh(), false, "second");
   let snapshot: string;
   try {
     snapshot = encodeSnapshot(world);
@@ -375,7 +385,9 @@ function startSecondSeed(run: Run): Child | string {
  */
 function interleaving({ subject, fresh, script }: Run): TickRecord[][] {
   const shared = fresh();
-  const worlds = INTERLEAVED_SEEDS.map((seed) => subject.world(subject.seeds[seed], shared, false));
+  const worlds = INTERLEAVED_SEEDS.map((seed) =>
+    subject.world(subject.seeds[seed], shared, false, "interleaved"),
+  );
   const random = new Sfc32(INTERLEAVING_SEED);
   return interleave(worlds, script, (ready) => random.pick(ready));
 }
@@ -415,16 +427,16 @@ export async function runDeterminismSuite(
   const timeoutMs = childTimeout(options);
   const fresh = await rulesetFactory(subject.ruleset);
   const script = Array.from({ length: subject.ticks }, (_, index) => subject.commands(index + 1));
-  const runOf = (audit: boolean) =>
-    recordRun(subject.world(subject.seeds[0], fresh(), audit), script);
-  const reference = runOf(false);
+  const runOf = (role: "reference" | "repeat" | "audit") =>
+    recordRun(subject.world(subject.seeds[0], fresh(), role === "audit", role), script);
+  const reference = runOf("reference");
   const last = reference.at(-1);
   const failures: Failure[] =
     last !== undefined && "fault" in last
       ? [{ property: "fault", tick: last.tick, detail: last.fault }]
       : [];
-  failures.push(...compared("repeat", reference, runOf(false)));
-  failures.push(...compared("audit", reference, runOf(true)));
+  failures.push(...compared("repeat", reference, runOf("repeat")));
+  failures.push(...compared("audit", reference, runOf("audit")));
   const snapshots = takeSnapshots(subject, fresh, script);
   failures.push(...snapshots.failures);
   const run: Run = { subject, fresh, script, reference, texts: snapshots.texts };
