@@ -977,8 +977,9 @@ the tests of their support, `metrics.test.ts`, `child.test.ts`, `survival-child.
   the tick of each incapacity; a child that returns JSON of another shape, reported with what it
   wrote, and every child error named by its script and its label; the control brains, by their
   rules and against the engine's judge; and the soak's arguments, which refuse the reserve in any
-  spelling, its summaries, which pass a run only when some cell also regrew and was eaten again,
-  its runs, which report a child that fails and still run and report its siblings, and the verdict
+  spelling and any label number or option that no named run would use, its summaries, which pass
+  a run only when some cell also regrew and was eaten again, its runs, which report a child that
+  fails and still run and report its siblings, and the verdict
   of the barren control, which fails a being not incapacitated or incapacitated after its bound, a
   bite, and any set of sensed cues but exactly {0}, an empty one included.
 
@@ -1056,7 +1057,13 @@ before and after a change; never compare across machines.
   timed in the same way. With the fix of `applyWorks` ([Ceilings](#ceilings)) the ratio was 0.99
   and 1.12; before it, 2.26 and 2.41. The work it did per pair of wakes, about 0.1 µs, is small
   beside the 85 µs or so a wake costs here, so it shows only beside a world 24 times larger. The
-  test costs about 1.5 s.
+  test costs about 1.5 s, and its reach is that of its bound: it catches extra work of about 60 ns
+  or more per pair of wakes, such as a placement computed per pair, and lets cheaper work pass.
+  Planted in a copy, a linear search of the occupancy index or of the leaving ids, about 1 ns a
+  pair, gave ratios of 0.89 to 0.93, and a scan of every placed being for each touched chunk,
+  which made the tick of 1,200 beings 20 to 40% slower, gave 0.99 and 1.13. Such scans are left to
+  review and to the benchmark's rows of many wakes; a test that caught them would cost several
+  times more.
 - The fuzz's count of a quiet tick (`beings-fuzz.test.ts`) uses the same counting context.
 
 When these tests were written, each of 7 deliberate defects, planted one at a time in a copy of
@@ -1088,8 +1095,9 @@ the first decisions at tick 2, and 100 more ticks before it times any, and the s
 at a time in one process. The default run stays small: at `nice -n 19` it took 5.9 minutes, with a
 peak resident memory of 139 MB, which the benchmark prints. `--large` adds 10,000 dispersed
 beings, 10,000 and 100,000 sleeping ones, ticks of 8,000 and 16,000 wakes, and 200,000 empty
-chunks; each starts only while 1.5 GB of memory is available. Its dispersed group took about 10
-minutes with `--ticks 1000`, and its sleeping group 4.5 minutes.
+chunks; each starts only while /proc/meminfo reports 1.5 GB of memory available, and not where it
+cannot be read. The benchmark refuses `--large` and `--ticks` when no named group would use them.
+Its dispersed group took about 10 minutes with `--ticks 1000`, and its sleeping group 4.5 minutes.
 
 Except where they say otherwise, the tables come from one run at normal priority, before the fix
 of `applyWorks` ([Ceilings](#ceilings)), which leaves every result the same and changes only the
@@ -1177,15 +1185,16 @@ at `nice -n 19` on a loaded machine:
 |---|---|---|---|
 | 10 beings, median | ≤ 1 ms | 0.042 to 0.047 ms | met in all four |
 | 1,000 dispersed | median ≤ 50 ms, p99 ≤ 100 ms | median 32.5 to 36.6 ms; p99 80.8, 82.6, and 85.6 ms, and 100.3 ms at `nice -n 19` | met in three; missed by 0.3 ms in the fourth |
-| One decision, R = 24, default genesis | ≤ 3 ms | 2.96, 2.99, 3.01, and 3.27 ms end to end | met in two, at the bound |
+| One decision, R = 24, default genesis | ≤ 3 ms | 2.96, 2.99, 3.01, and 3.27 ms end to end | met in two; missed in two, by 0.01 and 0.27 ms |
 | A sleeping dispersed being, marginal | ≤ 1 µs per tick | 0.075 µs beside 1,000; 0.12 to 0.13 µs beside 10,000 in the three others; 0.39 µs beside 10,000 and 0.47 µs beside 100,000 with `--large` | met in all |
 | Snapshot per being | ≤ 1 KB | 497 to 916 B | met in all |
 
 What they show:
 
-- **Two targets sit at their bounds.** A decision at R = 24 costs about 3 ms end to end, 2.96 to
-  3.27 ms in four runs, and more when few beings run (3.9 to 4.4 ms with ten); the p99 tick of
-  1,000 dispersed beings was 81 to 100 ms against a bound of 100. The senses take most of a
+- **Two targets sit at their bounds, and were missed in some runs.** A decision at R = 24 costs
+  about 3 ms end to end, 2.96 to 3.27 ms in four runs, missing the bound in two, and more when few
+  beings run (3.9 to 4.4 ms with ten); the p99 tick of 1,000 dispersed beings was 81 to 100.3 ms
+  against a bound of 100, missing it in one. The senses take most of a
   decision: 2.1 to 3.3 ms at R = 24 in seven runs, against about 0.7 ms for `utility@1` (median).
   A CPU profile (`bun --cpu-prof-md`) of 1,500 ticks of 300 dispersed beings put about two fifths
   of its samples in the edges of the windows (`stepDuration` and its callers, over 19,208 entries a
@@ -1240,7 +1249,8 @@ What the benchmark found beyond the targets, from the tables above:
    a twentieth of a tick or more, and from 100,000 more than a whole tick.
 4. **A spawn costs about 0.2 ms**: 1,000 spawns in one tick take 0.17 to 0.33 s, measured before
    `applySpawn` searched the occupancy index with `isOccupied`; it had searched it linearly, a cost
-   over pairs of spawns and listed chunks, and the binary search removed it in T4-8. Each spawn
+   over pairs of spawns and listed chunks, and the binary search removed the search's share of it
+   in T4-8. Inserting the chunk still splices the index, moving every key after it, and each spawn
    still prepares the genesis again to check its cell (`spawnBlocked`).
 
 **When the entity section becomes necessary.** The commit turns changed chunks into canonical
@@ -1266,5 +1276,6 @@ Since CI already came close to the budget, T4-8 moved the barren control, about 
 file's controls beside its two child processes, and the controls, 8 s alone in T4-7's measurement
 against 6.4 s for each child, were the longest of the three. On the Codespace, `bun test` took
 95.4 s for 2,218 tests before T4-8, and 92.7 s for 2,257 with it before the test of many wakes;
-`survival.test.ts` took 21.3 s before and 18.1 s after. CI's time with T4-8 is measured on its pull
-request.
+`survival.test.ts` took 21.3 s before and 18.1 s after. CI's runners split at about 50 s and about
+65 s for the same code; with T4-8, CI ran `bun test` in 67.07 s on the slower kind, 3 s under the
+budget, which leaves no room for more CI time.
