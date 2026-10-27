@@ -21,6 +21,7 @@ import {
   worldgen,
   worldStatus,
 } from "../src/index.ts";
+import { worldState } from "../src/world/world.ts";
 import {
   type Calls,
   counting,
@@ -75,8 +76,10 @@ describe("the beings' work per tick does not depend on the chunks the world has"
     const small = sleepingWorld(SMALL);
     const large = sleepingWorld(LARGE);
     const last = 2 + ROUNDS.warmUp + ROUNDS.measured;
+    // Not vacuous: the worlds hold the chunks they are named for, the beings' among them.
+    expect([worldState(small).chunks.size, worldState(large).chunks.size]).toEqual([SMALL, LARGE]);
     for (const world of [small, large]) {
-      // Not vacuous: ten beings sleep, each in its own chunk, and none is due before the last tick.
+      // Ten beings sleep, each in its own chunk, and none is due before the last tick.
       const view = readView(world);
       const { occupancy } = view.readGlobal();
       expect(occupancy).toHaveLength(DISPERSED_CELLS.length);
@@ -369,6 +372,14 @@ describe("the calls of the beings system, counted (plan §7)", () => {
  * follows step-cost.test.ts: the worlds stepped alternately, warm-up first, the medians, and a
  * failed measurement repeated once. Both worlds cost about 1.5 s on the Codespace to build and
  * time, a third of it their spawns and first decisions.
+ *
+ * Its reach is that of its bound, and no more: it catches extra work of about 60 ns or more per
+ * pair of wakes, such as a placement computed per pair. Cheaper work per pair passes it. Planted
+ * in a copy, a linear search of the occupancy index or of the leaving ids, about 1 ns a pair, gave
+ * 0.89 to 0.93, and a scan of every placed being for each touched chunk, which made the tick of
+ * 1,200 beings 20 to 40% slower, gave 0.99 and 1.13. Such scans are left to review and to the
+ * benchmark's rows of many wakes (packages/agents/bench/beings.ts): a test that caught them would
+ * need several times more beings, and CI has no time to spare.
  */
 const FEW = 50;
 const MANY = 1_200;
