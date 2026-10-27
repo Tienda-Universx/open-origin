@@ -204,6 +204,36 @@ export function cumulative(values: readonly number[]): number[] {
   });
 }
 
+/** The units per second of `ratio`. */
+const perSecond = ({ num, den }: beings.Ratio) => num / den;
+
+/** The seconds `ratio` takes to move a quantity across `amount` units. */
+const span = ({ num, den }: beings.Ratio, amount = beings.NEED_MAX) => (amount * den) / num;
+
+/**
+ * The stationary horizon of `species` under `genesis` (docs/architecture/beings.md, "Ecological
+ * targets"): `c`, the nutrition a day costs at the cheapest mix, asleep for the shortest time that
+ * restores what a day awake costs; `g`, a day of one cell's regrowth as nutrition; and `days`, H,
+ * the days from full nutrition and health, eating only one cell that starts at the deposit's peak,
+ * to health 0. Health falls only while nutrition is 0, a fraction (c − g)/c of the time once it
+ * first is.
+ */
+export function stationaryHorizon(
+  species: beings.Species,
+  genesis: worldgen.Genesis,
+): { readonly c: number; readonly g: number; readonly days: number } {
+  const L = genesis.laws.day.length;
+  const { nutrition, rest } = species.needs;
+  const asleep = span(species.sleep.recover) / (span(species.sleep.recover) + span(rest.awake));
+  const c = L * ((1 - asleep) * perSecond(nutrition.awake) + asleep * perSecond(nutrition.asleep));
+  const g = L * perSecond(species.regrowth) * species.diet.nutritionPerUnit;
+  const peak = genesis.terrain.deposits[species.diet.deposit]?.peak ?? 0;
+  const health = span(species.health.starve) / L;
+  const days =
+    (beings.NEED_MAX + peak * species.diet.nutritionPerUnit) / (c - g) + (health * c) / (c - g);
+  return { c, g, days };
+}
+
 /** The radiance of the test world at `tick`, at `simSecondsPerTick`. */
 export function lightAt(tick: number, simSecondsPerTick = 12): number {
   return worldgen.radiance(PREPARED, { tick, simSecondsPerTick });
