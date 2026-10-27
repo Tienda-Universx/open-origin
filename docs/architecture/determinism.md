@@ -921,6 +921,10 @@ expect(report.failures).toEqual([]);
 - The resumes compare only the ticks after their cuts, so a subject cuts where its rules change
   state, at t − 1 and at t: the probe cuts around calendar boundaries and ticks that create
   chunks, and at seeded random ticks (tracker L33). It computes its cut lists and pins them.
+- T4's subject, in `packages/agents/test/beings-determinism.test.ts`, runs five beings under
+  `utility@1` around a small patch of food for 120 ticks, and cuts at its first contest, its first
+  chunk crossing, and its first sleep that ends, which a run before the suite finds
+  ([beings](beings.md#what-the-tests-check-evaluation)).
 - The optional second argument, `{ childTimeoutMs }`, sets the
   [child processes'](#the-child-process) time limit; it must be a positive integer.
 

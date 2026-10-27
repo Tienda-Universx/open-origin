@@ -17,7 +17,7 @@ requests implement, and the preregistration of its scenarios.
 | Cooldowns that an intention adds | `packages/engine/src/beings`: `intention.ts`, `advance.ts` | T4-6 |
 | The brain `utility@1` | `packages/agents/src/brain`: `curves.ts`, `parameters.ts`, `recipes.ts`, `utility.ts` | T4-6 |
 | The preregistered scenario and the calibration | `packages/agents/test/support`: `scenario.ts`, `metrics.ts`; `packages/agents/bench/calibration.ts`; `defaultLife` in `laws.ts` | T4-6 |
-| Scenarios, survival, and controls | `packages/agents/test`, `bench` | T4-7 (*planned*) |
+| The evaluation: survival, negative controls, scarcity, determinism, observers, and the soak | `packages/agents/test`: `survival.test.ts`, `scarcity.test.ts`, `beings-determinism.test.ts`, and their support; `packages/agents/bench/soak.ts` | T4-7 |
 
 ## Layers
 
@@ -806,3 +806,172 @@ ticks: a meal is one `eat` activity, and its rise is the nutrition at its end le
 at its start; a rested wake is a sleep that ends with rest at least 900,000; walked cells are the
 steps that arrived; a cell is emptied when a bite leaves it 0, and eaten again when a later bite
 finds at least half of its deposit there.
+
+## Evaluation results
+
+The evaluation ran with the laws and the brain frozen in T4-6 (`6bb327f`, tracker L50), which
+`packages/agents/test/freeze.test.ts` pins: the seal of `defaultLife()` and a digest of every
+parameter of `utility@1`. No law and no parameter of the brain changed after any held-out label
+was evaluated. Each run below is the preregistered scenario of its label, 63,000 ticks (10 days),
+audit off.
+
+### Survival
+
+The minimum over the eight beings of each acceptance item, as in [Results](#results):
+
+| Label | Incapacitated, rest 0, rejected | Meal cells | Ate outside birth window | Meals ≥ 300,000 | Sleeps; rested wakes | Walked | Lowest nutrition | Acceptance |
+|---|---|---|---|---|---|---|---|---|
+| `default` | 0, 0, 0 | 13 | 8 of 8 | 10 | 21; 21 | 565 | 339,151 | pass |
+| `heldout/1` | 0, 0, 0 | 11 | 7 of 8 | 9 | 30; 30 | 609 | 352,911 | fail: being 3, outside birth window |
+
+On both labels some cell was emptied, regrew to half its deposit, and was eaten again, and no
+being's health ever fell: it stayed 1,000,000 at every event of every being and at the last tick.
+On the default label every being meets every item, and health never falls, as the margin
+requires. The beings decided 11.8 and 12.3 times a simulated day.
+
+**`heldout/1` fails one item of the preregistered acceptance, for one being.** Being 3 never
+ate outside the window it was born in; every other item holds for every being, and every other
+being meets every item. Being 3 was born at (278, 402), with nutrition 695,645, rest 866,765,
+appetite 919, sleepiness 1045, and curiosity 840, in a window of 1,006 cells with food, 607 of
+them with at least 25 units, 32,134 units in all. It ate its 20 meals in 14 cells, all within 14
+cells of its birth cell; its lowest nutrition at any decision was 540,283. It walked 609 cells and went as far as 29 cells from its birth cell, while sated, wandering by
+day; whenever it was hungry, the cell of highest worth in sight lay near its birth cell, so it
+foraged there. An independent rerun, which read its cell from the state at each of its meals,
+found the same 14 cells.
+
+The failure is recorded as it is, as the preregistration says: a failed held-out label is
+analyzed, and only a change to laws or brain burns the evaluated labels. A change that made being 3
+eat outside its rich birth window would be tuning to the evaluation just after seeing it, and not
+better behavior. The laws and the brain stay frozen, `heldout/1` stays the held-out label of CI,
+and `packages/agents/test/survival.test.ts` pins the failure exactly, as it was evaluated: the
+beings that ate outside their birth window are all but being 3, and every other item holds.
+
+### The soak
+
+The preregistered scenario of each held-out label, under the default laws, under the adverse and
+the favorable variants, and with the random-walk baseline instead of `utility@1`, for comparison
+only: `bun packages/agents/bench/soak.ts`, which ran the 24 runs two at a time in 5.5 minutes on
+the Codespace. The incapacities, rests at 0, and rejections of all eight beings, and the minimum
+over them of every other item:
+
+| Label | Laws or brain | Incapacitated, rest 0, rejected | Meal cells | Ate outside birth window | Meals ≥ 300,000 | Sleeps; rested wakes | Walked | Lowest nutrition | Regrown and eaten | Acceptance |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `heldout/1` | default laws | 0, 0, 0 | 11 | 7 of 8 | 9 | 30; 30 | 609 | 352,911 | yes | fail: being 3, outside birth window |
+| `heldout/1` | adverse | 0, 0, 0 | 12 | 7 of 8 | 10 | 30; 30 | 715 | 328,542 | yes | fail: being 3, outside birth window |
+| `heldout/1` | favorable | 0, 0, 0 | 11 | 7 of 8 | 8 | 21; 21 | 604 | 376,947 | yes | fail: being 3, outside birth window |
+| `heldout/1` | random walk | 8, 0, 0 | 0 | 0 of 8 | 0 | 8; 7 | 2,308 | 0 | no | fail: 8 of 8 beings |
+| `heldout/2` | default laws | 0, 0, 0 | 11 | 8 of 8 | 10 | 21; 21 | 619 | 488,364 | yes | pass |
+| `heldout/2` | adverse | 0, 0, 0 | 8 | 8 of 8 | 11 | 30; 30 | 688 | 474,405 | yes | pass |
+| `heldout/2` | favorable | 0, 0, 0 | 11 | 8 of 8 | 9 | 21; 21 | 631 | 501,555 | yes | pass |
+| `heldout/2` | random walk | 7, 0, 0 | 0 | 2 of 8 | 0 | 8; 7 | 2,409 | 0 | yes | fail: 7 of 8 beings |
+| `heldout/3` | default laws | 0, 0, 0 | 13 | 8 of 8 | 10 | 30; 29 | 596 | 320,628 | yes | pass |
+| `heldout/3` | adverse | 0, 0, 0 | 14 | 8 of 8 | 11 | 29; 28 | 587 | 256,764 | yes | pass |
+| `heldout/3` | favorable | 0, 0, 0 | 12 | 8 of 8 | 9 | 30; 29 | 565 | 338,361 | yes | pass |
+| `heldout/3` | random walk | 4, 0, 0 | 0 | 6 of 8 | 0 | 8; 7 | 2,732 | 0 | no | fail: 6 of 8 beings |
+| `heldout/4` | default laws | 0, 0, 0 | 13 | 8 of 8 | 10 | 30; 30 | 608 | 361,074 | yes | pass |
+| `heldout/4` | adverse | 0, 0, 0 | 15 | 8 of 8 | 11 | 30; 29 | 610 | 329,917 | yes | pass |
+| `heldout/4` | favorable | 0, 0, 0 | 13 | 8 of 8 | 9 | 21; 21 | 561 | 393,023 | yes | pass |
+| `heldout/4` | random walk | 7, 0, 0 | 0 | 2 of 8 | 0 | 8; 7 | 2,435 | 0 | no | fail: 7 of 8 beings |
+| `heldout/5` | default laws | 0, 0, 0 | 13 | 8 of 8 | 9 | 30; 29 | 614 | 352,685 | yes | pass |
+| `heldout/5` | adverse | 0, 0, 0 | 13 | 8 of 8 | 10 | 30; 29 | 590 | 304,063 | yes | pass |
+| `heldout/5` | favorable | 0, 0, 0 | 12 | 8 of 8 | 8 | 21; 21 | 630 | 365,892 | yes | pass |
+| `heldout/5` | random walk | 6, 0, 0 | 0 | 4 of 8 | 0 | 8; 8 | 2,481 | 0 | no | fail: 7 of 8 beings |
+| `heldout/6` | default laws | 0, 0, 0 | 12 | 8 of 8 | 10 | 30; 30 | 563 | 365,407 | yes | pass |
+| `heldout/6` | adverse | 0, 0, 0 | 13 | 8 of 8 | 10 | 30; 30 | 615 | 335,492 | yes | pass |
+| `heldout/6` | favorable | 0, 0, 0 | 10 | 8 of 8 | 9 | 30; 30 | 574 | 399,842 | yes | pass |
+| `heldout/6` | random walk | 7, 0, 0 | 0 | 3 of 8 | 0 | 8; 7 | 2,479 | 0 | no | fail: 8 of 8 beings |
+
+Under the default laws and both variants, every item holds for every being of `heldout/2` to
+`/6`, and on `heldout/1` for every being but one: being 3 misses the same item under all three
+laws, the preregistered failure above, and nothing else. Its run under the default laws is the run
+of CI, item by item. No being was incapacitated or reached rest 0, and no intention was rejected,
+in any of these 18 runs, so the margin the preregistration asks of the variants holds wherever the
+default laws hold. The random walk, which eats only when hungry on a cell that cues food and sleeps
+only once rest falls to 300,000, starves on every label: 4 to 8 of its 8 beings are incapacitated,
+and 6 to 8 miss some item.
+
+### Negative controls
+
+Each control is a test of `packages/agents/test/survival.test.ts` that shows the survival test
+failing when it should (plan §9.4), with the default laws:
+
+| Control | Where | Result |
+|---|---|---|
+| A brain that never eats | Two beings on the engine's test terrain, idle, rested, with nutrition 0 and 40,000 | Incapacitated at ticks 9,451 and 9,955, exactly the ticks the laws give: nutrition reaches 0 after ⌈40,000·189/1,250⌉ s, and health falls from full to 0 in ⌈10^6·567/5,000⌉ = 113,400 s |
+| A stationary brain, which sleeps once tired and eats only what its own cell cues | The scenario of each calibration label, at 600 s per tick, so that H takes 6,007 ticks and ten days 1,260 | Every being incapacitated within ten days, so by H, on all four labels: the last at 7.5 days |
+| A brain that never sleeps: `utility@1` with every sleep turned into an hour idle | The scenario of `calibration/1` | Every being reaches rest 0, by tick 9,073, the bound from the slowest fall of rest awake |
+| A nearly barren world: deposit 0 at peak 1 and threshold 999 | The terrain of `calibration/1`, its spawn area chosen by the same rule, two of its beings under `utility@1` | Incapacitated at ticks 19,208 and 18,936, before the bounds the laws give them, 31,599 and 32,552, from at least 39 units of nutrition and 105 of health lost per tick; no bite taken; every food cue 0 |
+
+The stationary control runs at 600 s per tick because the laws do not depend on the tick
+(ADR 0023), and with a senses radius of 1, because a brain that looks only at its own cell needs
+no wider window and the radius changes no law of the body or of food. The barren control keeps
+two of the eight beings because, with nothing in sight, every decision searches, and eight would
+cost about 10 s.
+
+### What the tests check (evaluation)
+
+`packages/agents/test`: `survival.test.ts`, `beings-determinism.test.ts`, `scarcity.test.ts`, and
+the tests of their support, `metrics.test.ts`, `child.test.ts`, `survival-child.test.ts`,
+`brains.test.ts`, and `soak-bench.test.ts`:
+
+- **survival** (plan §9.2, test 1): the default label and `heldout/1`, each in a child process
+  (`support/survival-child.ts`) started before the file's first test, so that both run beside the
+  negative controls; every acceptance item for every being on the default label, and health that
+  never falls, read at every event and at the last tick: health falls only while nutrition is 0,
+  and a being that starved keeps its loss until it eats again, so a fall shows at an event or at
+  the end. On `heldout/1`, the preregistered failure, pinned as evaluated;
+- **the mid-run resume** (test 8): the default run keeps its snapshot after tick 31,500 and the
+  records of the next 1,500 ticks; the determinism suite's resume child decodes it in a fresh
+  process, under audit, and gives the same 1,500 records and the same final snapshot;
+- **the determinism suite** (tests 7 and 9) on five beings around a small patch of food, in the
+  patch world (`support/patch-world.ts`): the engine's test genesis, whose day lasts 100 ticks, with
+  deposit 0 reshaped into one patch of 17 cells and 353 units. They are spawned at tick 1, in the
+  dark, with needs near the levels where the brain changes its mind: two hungry beings on one cell
+  with food for one bite, one hungry being north of a chunk edge, one starving and tired, and one
+  sated. Over 120 ticks every check passes, with cuts at 0, 1, the first contest (tick 7), the
+  first chunk crossing (33), the first sleep that ends (51), and 119, child processes at 0, 60,
+  and 119, and an interleaving whose three worlds share one ruleset object, and so one brain;
+- **observer independence** (test 10): two observers that, before every tick, read every being,
+  its needs and health in closed form (`bodyAt`), the senses of one being (`senseWindow`), the
+  terrain of its chunk, and the light leave every record and the final snapshot equal to the
+  suite's reference run, which had none. Two coupled hosts, which turn the chunks their observers'
+  windows covered into a command that materializes them, or that also lists them in the occupancy
+  index, change the records at tick 2, the first tick after the observers see beings;
+- **scarcity** (test 2): six beings in the dark around the patch. The four hungry and rested ones
+  forage it, the hungry and tired one sleeps, since sleep in the dark outweighs food that only cues
+  some, and the sated one rests; the patch runs out, and a being still hungry explores. At every
+  tick each cell of the patch loses exactly what the beings on it ate, read from the state, with
+  regrowth counted at the same tick;
+- **the support**: each being's body at the last tick, in closed form, which shows health that
+  fell after the being's last event; the step hook of the runner; child processes that exit with
+  an error, write something that is not JSON, or hang, each reported, the last killed and reaped;
+  the survival child, which refuses the reserve and every label outside the preregistration and
+  runs, with the adverse variant and the random-walk baseline, exactly as the same scenario in the
+  test process; the control brains, by their rules and against the engine's judge; and the soak's
+  arguments, which refuse the reserve in any spelling, and its summary.
+
+When these tests were written, each of 28 deliberate defects, planted one at a time in a copy of
+the repository, made them fail: in the determinism suite, the second seed's world named as the
+interleaving's and the repeat named as the reference; in the runner, no body at the last tick, the
+stored body instead of the one in closed form, and no step hook; in the child processes, no kill at
+the time limit and an exit code ignored; in the survival child, no check of the label, the variant
+ignored, and the records kept from the snapshot's own tick; in the brains, a stationary brain that
+eats without a cue or sleeps only below 300,000, a sleepless brain that sleeps, and a random walk
+through walls; each control's brain or world made sound again (the never-eating, stationary, and
+sleepless brains replaced by `utility@1`, the barren world given back its food, and the tick
+length of a control ignored); the item of the birth window dropped from the acceptance; a brain
+that keeps state in its module and changes its idles after 400 decisions in a process, which only
+the mid-run resume finds in the survival file, and after 20, which the determinism suite finds;
+a coupled host that sends nothing; no chunk crossing found for the cuts; depletion that records
+one unit less of each take; a night sleep that needs 70% of rest lost; and, in the soak, the
+reserve accepted when spelled out and the largest count of meal cells taken for the smallest. The
+last one first passed, because every being of the summary's test had the same counts; the test now
+gives them different ones.
+
+Measured on the Codespace, whose two CPUs are two threads of one core (Bun 1.4.4, 2026-10-27;
+indicative): `bun test` went from 61.3 s for 2,149 tests to 104 s for 2,206. `survival.test.ts`
+takes about 21 s alone and 27 s in the whole run: its two ten-day runs take 6.4 s each alone, and
+there they share the one core with the controls (6.8 s) and the resume (1.4 s).
+`beings-determinism.test.ts` takes 4.7 s, and the other new files 3 s together. CI ran `bun test`
+in 51.9 s on `main` before T4-7; its runner has four CPUs, so the two ten-day runs and the controls
+run there side by side.
