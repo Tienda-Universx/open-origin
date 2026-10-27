@@ -26,7 +26,7 @@ import { type BeingsEnv, CONTEST_STREAM, integrity } from "./env.ts";
 import type { Depletion } from "./food.ts";
 import { takenAt } from "./food.ts";
 import { nextLightTick } from "./light.ts";
-import { insertOccupied, pruneOccupancy } from "./occupancy.ts";
+import { isOccupied, mergeOccupied, pruneOccupancy } from "./occupancy.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
 
 /** Food taken from one cell at this tick. */
@@ -100,7 +100,10 @@ function contest(env: BeingsEnv, claimants: Work[]): Take | undefined {
   return { chunk: first.claim.chunk, cell: first.claim.cell, units: available - left };
 }
 
-/** Resolves every claim of the tick in canonical order; returns the food taken, cell by cell. */
+/**
+ * Resolves every claim of the tick in canonical order; returns the food taken, cell by cell, in that
+ * order: by chunk key, then cell index, which applyWorks relies on.
+ */
 export function resolveClaims(env: BeingsEnv, works: readonly Work[]): Take[] {
   const claims = works.filter((work) => work.claim !== undefined).sort(byPlace);
   const takes: Take[] = [];
@@ -247,52 +250,103 @@ function deplete(
   return result;
 }
 
+/** A processed being's record after this tick, with the key of the chunk it ends the tick in. */
+type Placed = { readonly being: Being; readonly chunk: ChunkKey };
+
 /** The keys of every chunk this tick writes: where beings were, where they are, and where food went. */
 function touched(
   works: readonly Work[],
-  finals: readonly (Being | undefined)[],
-  env: BeingsEnv,
+  placed: readonly Placed[],
   takes: readonly Take[],
 ): ChunkKey[] {
   const keys = [
     ...works.map((work) => work.from),
-    ...finals.flatMap((being) => (being === undefined ? [] : [env.place(being.cell).chunk])),
+    ...placed.map(({ chunk }) => chunk),
     ...takes.map((take) => take.chunk),
   ].sort(compareCodeUnits);
   return keys.filter((key, index) => index === 0 || key !== keys[index - 1]);
 }
 
-/** Writes every processed being and every take, then the occupancy index. */
+/**
+ * The record of every processed being that did not die, each with its chunk computed once, in the
+ * order touched() walks the chunks: by chunk key (UTF-16 code units), then by id.
+ */
+function placedBeings(env: BeingsEnv, works: readonly Work[]): Placed[] {
+  const placed: Placed[] = [];
+  for (const work of works) {
+    if (work.died) continue;
+    const being = finalBeing(env, work);
+    placed.push({ being, chunk: env.place(being.cell).chunk });
+  }
+  return placed.sort((a, b) => compareCodeUnits(a.chunk, b.chunk) || a.being.id - b.being.id);
+}
+
+/** Whether the ascending `ids` hold `id`, by binary search. */
+function hasId(ids: readonly number[], id: number): boolean {
+  let low = 0;
+  let high = ids.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const found = ids[middle] as number;
+    if (found === id) return true;
+    if (found < id) low = middle + 1;
+    else high = middle;
+  }
+  return false;
+}
+
+/** A position in a list sorted by chunk key, which the walk over the touched chunks advances. */
+type Cursor = { at: number };
+
+/** The items of `sorted` from `cursor` on whose chunk is `key`, with the cursor moved past them. */
+function runAt<T extends { readonly chunk: ChunkKey }>(
+  sorted: readonly T[],
+  cursor: Cursor,
+  key: ChunkKey,
+): T[] {
+  const start = cursor.at;
+  while (cursor.at < sorted.length && (sorted[cursor.at] as T).chunk === key) cursor.at += 1;
+  return sorted.slice(start, cursor.at);
+}
+
+/**
+ * Writes every processed being and every take, then the occupancy index. Its work grows with the
+ * beings processed, the takes, and the chunks touched, never with their products: the beings,
+ * sorted by chunk once, and the takes, which resolveClaims returns in that order, are read in step
+ * with the touched chunks, and the beings that leave their chunks are found by binary search.
+ */
 export function applyWorks(env: BeingsEnv, works: readonly Work[], takes: readonly Take[]): void {
-  const finals = works.map((work) => (work.died ? undefined : finalBeing(env, work)));
-  const leaving = works.map((work) => work.old.id);
+  const placed = placedBeings(env, works);
+  const leaving = works.map((work) => work.old.id).sort((a, b) => a - b);
+  const [beingAt, takeAt]: [Cursor, Cursor] = [{ at: 0 }, { at: 0 }];
   const arrived: ChunkKey[] = [];
-  for (const key of touched(works, finals, env, takes)) {
+  for (const key of touched(works, placed, takes)) {
     const chunk = liveChunk(env, key);
-    const staying = chunk.beings.filter((being) => !leaving.includes(being.id));
-    const coming = finals.filter(
-      (being): being is Being => being !== undefined && env.place(being.cell).chunk === key,
-    );
+    const staying = chunk.beings.filter((being) => !hasId(leaving, being.id));
+    const coming = runAt(placed, beingAt, key).map(({ being }) => being);
     chunk.beings = [...staying, ...coming].sort((a, b) => a.id - b.id);
-    chunk.depletion = deplete(
-      env,
-      chunk.depletion,
-      takes.filter((take) => take.chunk === key),
-    );
+    chunk.depletion = deplete(env, chunk.depletion, runAt(takes, takeAt, key));
     chunk.due = dueOf(chunk.beings);
     if (coming.length > 0) arrived.push(key);
   }
+  // touched() holds the chunk of every placed being and every take, so both walks reach their ends
+  // unless one of the lists left the order of chunk keys.
+  if (beingAt.at !== placed.length || takeAt.at !== takes.length)
+    throw integrity("the beings or the takes of the tick are not in the order of their chunks");
   updateOccupancy(env, arrived);
 }
 
-/** Adds the chunks that received a being to the occupancy index, and prunes it once a day. */
+/**
+ * Adds the chunks that received a being to the occupancy index, and prunes it once a day. `arrived`
+ * is in the index's order, so the chunks it lacks are found by binary search and merged in one pass.
+ */
 function updateOccupancy(env: BeingsEnv, arrived: readonly ChunkKey[]): void {
   const global = env.ctx.readGlobal();
-  const missing = arrived.filter((key) => !global.occupancy.includes(key));
+  const missing = arrived.filter((key) => !isOccupied(global.occupancy, key));
   const day = (env.now - (env.now % env.dayLength)) / env.dayLength;
   if (missing.length === 0 && day <= global.prunedDay) return;
   const writable = env.ctx.writeGlobal();
-  for (const key of missing) insertOccupied(writable.occupancy, key);
+  if (missing.length > 0) writable.occupancy = mergeOccupied(writable.occupancy, missing);
   if (day > writable.prunedDay) {
     writable.occupancy = pruneOccupancy(
       writable.occupancy,

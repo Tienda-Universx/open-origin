@@ -4,7 +4,9 @@
  * Validators report every problem at once, at its path, and never throw.
  */
 import { describe, expect, test } from "bun:test";
+import { isOccupied, mergeOccupied } from "../src/beings/occupancy.ts";
 import { beings, copyCanonical, type Issue } from "../src/index.ts";
+import { Sfc32 } from "./support/sfc32.ts";
 
 const {
   MAX_TICK,
@@ -262,6 +264,42 @@ describe("occupancy", () => {
     expect(insertOccupied(keys, "-2,5")).toBe(true);
     expect(keys).toEqual(["-1,0", "-2,5", "0,0", "10,2", "9,9"]);
     expect(occupancyIssues(keys, "")).toEqual([]);
+  });
+
+  test("isOccupied finds every key of the index by binary search, and no other", () => {
+    const keys = ["-1,0", "-2,5", "0,0", "10,2", "9,9"];
+    expect(keys.map((key) => isOccupied(keys, key))).toEqual([true, true, true, true, true]);
+    // Before the first key, between two, and after the last, in UTF-16 order; and an empty index.
+    expect(["-1,-1", "1,0", "99,9"].map((key) => isOccupied(keys, key))).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(isOccupied([], "0,0")).toBe(false);
+  });
+
+  test("mergeOccupied adds ordered keys in one pass, once each, and changes neither list", () => {
+    const keys = ["-1,0", "10,2"];
+    const added = ["-2,5", "0,0", "10,2", "9,9"];
+    expect(mergeOccupied(keys, added)).toEqual(["-1,0", "-2,5", "0,0", "10,2", "9,9"]);
+    expect([keys, added]).toEqual([
+      ["-1,0", "10,2"],
+      ["-2,5", "0,0", "10,2", "9,9"],
+    ]);
+    expect(mergeOccupied([], ["0,0"])).toEqual(["0,0"]);
+    expect(mergeOccupied(["0,0"], [])).toEqual(["0,0"]);
+    // On random indexes, the same list as adding each key with insertOccupied.
+    const random = new Sfc32(23);
+    const key = () => `${random.between(-20, 20)},${random.between(-20, 20)}`;
+    for (let round = 0; round < 200; round += 1) {
+      const index: string[] = [];
+      for (let n = random.below(30); n > 0; n -= 1) insertOccupied(index, key());
+      const extra: string[] = [];
+      for (let n = random.below(30); n > 0; n -= 1) insertOccupied(extra, key());
+      const expected = [...index];
+      for (const each of extra) insertOccupied(expected, each);
+      expect(mergeOccupied(index, extra)).toEqual(expected);
+    }
   });
 
   test("pruneOccupancy drops exactly the keys whose chunk holds no being, keeping the order", () => {
