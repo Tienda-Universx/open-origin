@@ -11,17 +11,17 @@
  * The negative controls show that the test fails when it should: a brain that never eats is
  * incapacitated at the tick the laws give; a stationary brain is incapacitated within ten days,
  * so by the stationary horizon H, on the calibration labels, the default label, and heldout/1 (the
- * soak runs it on the other held-out labels); a brain that never sleeps reaches
- * rest 0; and a nearly barren world, its spawn area chosen by the same rule, collapses within the
- * bound its laws give, every food cue its beings sensed 0 or 1.
+ * soak runs it on the other held-out labels); and a brain that never sleeps reaches rest 0. The
+ * fourth, a nearly barren world, runs in the soak (bench/soak.ts, support/controls.ts), where T4-8
+ * moved it to keep `bun test` in CI within its budget; soak-bench.test.ts checks its verdict.
  *
  * Time (Bun 1.4.4, 2026-10-27; indicative): each ten-day run takes about 6.4 s alone on the
- * Codespace, whose two CPUs are two threads of one core. The controls take about 8 s alone (0.7,
- * 2.5, 1.3, and 3.9 s) and the resume 1.4 s, and the whole file about 21 to 23 s there, where the
- * three processes share the core; a CI runner with more cores runs them side by side.
+ * Codespace, whose two CPUs are two threads of one core. The three controls take about 4.5 s alone
+ * (0.7, 2.5, and 1.3 s) and the resume 1.4 s, and the whole file about 18 s there, where the three
+ * processes share the core; a CI runner with more cores runs them side by side.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { beings, type Command, type StepResult, step, worldgen } from "@open-origin/engine";
+import { beings, type StepResult } from "@open-origin/engine";
 import { beingsWorld, PREPARED, SPECIES } from "../../engine/test/support/beings-world.ts";
 import {
   type ChildInput,
@@ -31,17 +31,15 @@ import {
 import { utilityController } from "../src/index.ts";
 import { neverEats, neverSleeps, stationary } from "./support/brains.ts";
 import { type JsonChild, jsonResult, startJsonChild, stopChild } from "./support/child.ts";
+import { untilIncapacitated } from "./support/controls.ts";
 import { misses, type RunInput, runScenario } from "./support/metrics.ts";
 import {
   LABELS,
-  labelSeeds,
   SCENARIO_SPS,
-  type ScenarioWorld,
   scenarioFrom,
   spawnCommand,
   type Terrain,
   terrainOf,
-  terrainWith,
 } from "./support/scenario.ts";
 import { STATIONARY_SPS, stationaryLife, stationaryTicks } from "./support/stationary.ts";
 import { type SurvivalOutput, startSurvival, survivalResult } from "./support/survival.ts";
@@ -118,25 +116,6 @@ function terrainOfLabel(label: string): Terrain {
 
 /** How long a negative control may take. */
 const CONTROL_MS = 60_000;
-
-/**
- * Steps `world` from tick 1, with `spawns` at tick 1, until every being spawned is incapacitated
- * or the tick `limit` has run: the tick at which each was first incapacitated, by id, and the
- * bites they took.
- */
-function untilIncapacitated(world: ScenarioWorld, spawns: readonly Command[], limit: number) {
-  const incapacitated = new Map<number, number>();
-  let bites = 0;
-  for (let tick = 1; tick <= limit && incapacitated.size < spawns.length; tick += 1) {
-    for (const event of step(world, tick === 1 ? spawns : []).events) {
-      const { id } = event.payload as { id: number };
-      if (event.type === "being.incapacitated" && !incapacitated.has(id))
-        incapacitated.set(id, tick);
-      if (event.type === "being.ate") bites += 1;
-    }
-  }
-  return { incapacitated, bites };
-}
 
 describe("negative controls: the survival test fails each broken brain and world (plan §9.4)", () => {
   test(
@@ -218,54 +197,6 @@ describe("negative controls: the survival test fails each broken brain and world
       const records = runScenario(scenario, ticks, { decisions: () => 0 }).beings;
       expect(records.map((record) => record.exhausted > 0)).toEqual(Array(8).fill(true));
       for (const record of records) expect(misses(record)).toContain("rest 0");
-    },
-    CONTROL_MS,
-  );
-
-  test(
-    "a nearly barren world collapses within the bound its laws give, every food cue 0 or 1",
-    () => {
-      // calibration/1's terrain with deposit 0 at peak 1 and threshold 999: the spawn rule still
-      // finds an area, by the genesis' own average, which adds no food. Two of its eight beings
-      // keep the control cheap: every decision searches.
-      const label = LABELS.calibration[0] as string;
-      const base = worldgen.defaultGenesis(labelSeeds(label).terrain);
-      const deposits = base.terrain.deposits.map((deposit, index) =>
-        index === 0 ? { ...deposit, peak: 1, threshold: 999 } : deposit,
-      );
-      const barren = terrainWith(label, { ...base, terrain: { ...base.terrain, deposits } });
-      const inner = utilityController();
-      const cues = new Set<number>();
-      const brain: beings.Controller = {
-        brain: inner.brain,
-        decide: (senses) => {
-          for (const cue of senses.window.foodCue) cues.add(cue);
-          return inner.decide(senses);
-        },
-      };
-      const scenario = scenarioFrom(barren, { controllers: { s1: brain } });
-      // A tick lowers nutrition by at least ⌊12·625/189⌋ = 39, asleep, and health at nutrition 0
-      // by ⌊12·5,000/567⌋ = 105, whichever activities split it: a bound for each being.
-      const perTick = (ratio: beings.Ratio) => Math.floor((SCENARIO_SPS * ratio.num) / ratio.den);
-      const bounds = scenario.payloads
-        .slice(0, 2)
-        .map(
-          ({ needs }) =>
-            1 +
-            Math.ceil(needs.nutrition / perTick(SPECIES.needs.nutrition.asleep)) +
-            Math.ceil(beings.NEED_MAX / perTick(SPECIES.health.starve)),
-        );
-      const run = untilIncapacitated(
-        scenario.world,
-        scenario.spawns.slice(0, 2),
-        Math.max(...bounds),
-      );
-      expect([...run.incapacitated.keys()].sort()).toEqual([1, 2]);
-      for (const [id, tick] of run.incapacitated)
-        expect(tick).toBeLessThanOrEqual(bounds[id - 1] ?? 0);
-      expect(run.bites).toBe(0);
-      // Every cue the brain sensed was 0: the set holds what it recorded, so it is not empty.
-      expect([...cues]).toEqual([0]);
     },
     CONTROL_MS,
   );

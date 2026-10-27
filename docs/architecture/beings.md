@@ -908,16 +908,19 @@ days, so by H, on every label:
 
 ### Negative controls
 
-Each control is a test of `packages/agents/test/survival.test.ts` that shows the survival test
-failing when it should (plan §9.4), with the default laws; the soak also runs the stationary one
-on every held-out label ([The soak](#the-soak)):
+Each control shows the survival test failing when it should (plan §9.4), with the default laws.
+The first three are tests of `packages/agents/test/survival.test.ts`, and the soak also runs the
+stationary one on every held-out label ([The soak](#the-soak)). The barren control was a test there
+too until T4-8 moved it to the soak, `bun packages/agents/bench/soak.ts barren`, to keep `bun test`
+in CI within its budget; the soak runs it by default, reports its verdict, and fails when it does,
+and `soak-bench.test.ts` checks that verdict on every way the control can fail:
 
 | Control | Where | Result |
 |---|---|---|
 | A brain that never eats | Two beings on the engine's test terrain, idle, rested, with nutrition 0 and 40,000 | Incapacitated at ticks 9,451 and 9,955, exactly the ticks the laws give: nutrition reaches 0 after ⌈40,000·189/1,250⌉ s, and health falls from full to 0 in ⌈10^6·567/5,000⌉ = 113,400 s |
 | A stationary brain, which sleeps once tired and eats only what its own cell cues | The scenario of each calibration label, of the default label, and of `heldout/1`, at 600 s per tick, so that H takes 6,007 ticks and ten days 1,260 | Every being incapacitated within ten days, so by H, on all six labels: the last at 7.5 days on the calibration labels, at 7.1 days (tick 896) on the default label, and at 7.1 days (tick 898) on `heldout/1` |
 | A brain that never sleeps: `utility@1` with every sleep turned into an hour idle | The scenario of `calibration/1` | Every being reaches rest 0, by tick 9,073, the bound from the slowest fall of rest awake |
-| A nearly barren world: deposit 0 at peak 1 and threshold 999 | The terrain of `calibration/1`, its spawn area chosen by the same rule, two of its beings under `utility@1` | Incapacitated at ticks 19,208 and 18,936, before the bounds the laws give them, 31,599 and 32,552, from at least 39 units of nutrition and 105 of health lost per tick; no bite taken; the set of the food cues their brain sensed is exactly {0}, so it recorded cues and none was 1 or 2 |
+| A nearly barren world: deposit 0 at peak 1 and threshold 999, in the soak since T4-8 | The terrain of `calibration/1`, its spawn area chosen by the same rule, two of its beings under `utility@1` | Incapacitated at ticks 19,208 and 18,936, before the bounds the laws give them, 31,599 and 32,552, from at least 39 units of nutrition and 105 of health lost per tick; no bite taken; the set of the food cues their brain sensed is exactly {0}, so it recorded cues and none was 1 or 2 |
 
 The stationary control runs at 600 s per tick because the laws do not depend on the tick
 (ADR 0023), and with a senses radius of 1, because a brain that looks only at its own cell needs
@@ -972,8 +975,10 @@ the tests of their support, `metrics.test.ts`, `child.test.ts`, `survival-child.
   the tick of each incapacity; a child that returns JSON of another shape, reported with what it
   wrote, and every child error named by its script and its label; the control brains, by their
   rules and against the engine's judge; and the soak's arguments, which refuse the reserve in any
-  spelling, its summaries, which pass a run only when some cell also regrew and was eaten again, and
-  its runs, which report a child that fails and still run and report its siblings.
+  spelling, its summaries, which pass a run only when some cell also regrew and was eaten again,
+  its runs, which report a child that fails and still run and report its siblings, and the verdict
+  of the barren control, which fails a being not incapacitated or incapacitated after its bound, a
+  bite, and any set of sensed cues but exactly {0}, an empty one included.
 
 When these tests were written, each of 28 deliberate defects, planted one at a time in a copy of
 the repository, made them fail: in the determinism suite, the second seed's world named as the
