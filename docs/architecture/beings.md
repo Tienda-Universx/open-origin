@@ -1050,6 +1050,13 @@ before and after a change; never compare across machines.
   is neither listed, sensed, nor holding a being after the tick. A planted `chunkKeys()` per tick
   fails this count (plan §9.4); so do one read past the bound, a needless write of the global
   value, and a read of a chunk that nothing explains.
+- **Many wakes in one tick.** Beings idle, each alone in its chunk, at 1,200 s per tick, the test
+  genesis' whole day, so the daily processing takes every one of them at every tick, without a
+  decision. The median tick of 1,200 such beings must cost less than 1.6 times per being one of 50,
+  timed in the same way. With the fix of `applyWorks` ([Ceilings](#ceilings)) the ratio was 0.99
+  and 1.12; before it, 2.26 and 2.41. The work it did per pair of wakes, about 0.1 µs, is small
+  beside the 85 µs or so a wake costs here, so it shows only beside a world 24 times larger. The
+  test costs about 1.5 s.
 - The fuzz's count of a quiet tick (`beings-fuzz.test.ts`) uses the same counting context.
 
 When these tests were written, each of 7 deliberate defects, planted one at a time in a copy of
@@ -1058,7 +1065,12 @@ per tick, which the timed and the counted test both find; and, which only the co
 of a fixed block of 4,096 chunks per tick without `chunkKeys`, every listed chunk read again for
 each processed being, the prune run on every tick that adds a chunk to the index, the global value
 written on every tick, and senses that read one ring of chunks beyond their window. The quiet tick
-of `beings-fuzz.test.ts` let the last three pass.
+of `beings-fuzz.test.ts` let the last three pass. The system before the fix of `applyWorks`,
+planted in a copy, fails the test of many wakes, at 2.64 and 3.10 in two runs. Of 7 deliberate
+defects in the fix and its helpers, 6 make the tests fail: a binary search that turns the wrong
+way, an index that never holds a key, a merge that drops the keys left to add or repeats one, the
+leaving beings found nowhere, and the beings placed by id but not by chunk. The seventh, dropping
+the check that both walks reached their ends, is equivalent: no tick reaches it.
 
 ### The scale benchmark
 
@@ -1079,7 +1091,9 @@ beings, 10,000 and 100,000 sleeping ones, ticks of 8,000 and 16,000 wakes, and 2
 chunks; each starts only while 1.5 GB of memory is available. Its dispersed group took about 10
 minutes with `--ticks 1000`, and its sleeping group 4.5 minutes.
 
-Except where they say otherwise, the tables come from one run at normal priority. The same
+Except where they say otherwise, the tables come from one run at normal priority, before the fix
+of `applyWorks` ([Ceilings](#ceilings)), which leaves every result the same and changes only the
+time of ticks with many wakes. The same
 scenarios, in the default run of the final benchmark at `nice -n 19` on a machine with a load
 average near 2, were mostly slower, by up to 30%: the median tick of 1,000 dispersed beings took
 36.6 ms, its p99 100.3 ms, and one decision 3.27 ms.
@@ -1136,15 +1150,17 @@ default run (at `nice -n 19`) steps two worlds in turn, and the `--large` run th
 
 Ticks that process many beings at once: N sleeping beings spawned in one tick, each in its own
 chunk, are processed together at the next tick, where each decides to sleep with a window of
-radius 1 (`--large`):
+radius 1. Before the fix of `applyWorks` (`--large`, once, at normal priority) and after it (the
+default run for 1,000 to 4,000, and the same scenario once for 8,000 and 16,000, at `nice -n 19`).
+The fix does not touch the spawn, whose differences are the machine's:
 
-| Beings | Spawn tick | Per spawn | Their first processing | Per being |
+| Beings | Spawn tick, before / after | Per spawn, before / after | Their first processing, before / after | Per being, before / after |
 |---|---|---|---|---|
-| 1,000 | 165 ms | 165 µs | 347 ms | 347 µs |
-| 2,000 | 336 ms | 168 µs | 1.3 s | 627 µs |
-| 4,000 | 825 ms | 206 µs | 3.7 s | 933 µs |
-| 8,000 | 1.7 s | 210 µs | 13.9 s | 1,734 µs |
-| 16,000 | 3.6 s | 222 µs | 52.3 s | 3,269 µs |
+| 1,000 | 165 / 183 ms | 165 / 183 µs | 347 / 146 ms | 347 / 146 µs |
+| 2,000 | 336 / 455 ms | 168 / 227 µs | 1.3 s / 391 ms | 627 / 195 µs |
+| 4,000 | 825 ms / 1.1 s | 206 / 274 µs | 3.7 s / 725 ms | 933 / 181 µs |
+| 8,000 | 1.7 / 2.1 s | 210 / 261 µs | 13.9 / 1.4 s | 1,734 / 176 µs |
+| 16,000 | 3.6 / 4.1 s | 222 / 255 µs | 52.3 / 2.6 s | 3,269 / 163 µs |
 
 Ten active beings, the dispersed ten, in worlds of empty chunks around them, stepped in turn: with
 none, 1,000, and 200,000 chunks, as `--large` steps them, the medians were 0.033 ms in all three
@@ -1174,7 +1190,8 @@ What they show:
   A CPU profile (`bun --cpu-prof-md`) of 1,500 ticks of 300 dispersed beings put about two fifths
   of its samples in the edges of the windows (`stepDuration` and its callers, over 19,208 entries a
   window) and under a tenth in the terrain's noise: terrain reads are not what limits decisions,
-  ADR 0023's condition for a cache of terrain across ticks; the edges are.
+  ADR 0023's condition for a cache of terrain across ticks; the edges are, and they are the lead
+  for any later work on the cost of a decision.
 - **Sleeping beings and explored chunks cost what the model says.** A sleeping being costs 0.08 to
   0.13 µs a tick beside 1,000 or 10,000 others, and 0.39 to 0.47 µs in the `--large` run, which
   holds 100,000 more; 200,000 explored chunks cost nothing.
@@ -1191,20 +1208,28 @@ What they show:
 
 What the benchmark found beyond the targets, from the tables above:
 
-1. **Ticks that process many beings at once cost more per being the more there are.** The tick
-   after a spawn of N beings costs 347 µs per being at 1,000 and 3,269 µs at 16,000, 52 s in all:
-   the time per being grows with N. The cause is in `applyWorks` (`src/beings/resolve.ts`): for
-   each chunk the tick writes, it looks for the beings arriving there among every processed being,
-   computing each one's chunk again (`env.place`), and for each chunk that received a being,
-   `updateOccupancy` searches the whole index. Their work is the product of the beings processed
-   and the chunks written, which breaks the rule that work per tick never grows with pairs of
-   inhabitants (`AGENTS.md`, "Cost per tick"). Ticks with many wakes are common: a spawn's next
-   tick, and dusk and dawn, when the light condition of every plan holds at once. Of 100 dispersed
-   beings, 42 decided at the tick the light fell to 100 (dusk, tick 3,231) and 21 at the one it
-   rose to 200 (dawn, tick 400), and the rests of 2 hours that dawn started kept 7 to 15 of them
-   deciding together every 600 ticks after it. The slowest tick of 1,000 dispersed beings held 481
-   decisions and took 1.5 s, and that of 10,000, 2,492 decisions and 8.2 s: at about 3 ms a
-   decision, such ticks overrun the 200 ms of a tick at 5 Hz even without the defect.
+1. **Ticks that process many beings at once cost more per being the more there are: found and
+   fixed in T4-8.** Before the fix, the tick after a spawn of N beings cost 347 µs per being at
+   1,000 and 3,269 µs at 16,000, 52 s in all: the time per being grew with N. `applyWorks`
+   (`src/beings/resolve.ts`) looked, for each chunk the tick wrote, for the beings arriving there
+   among every processed being, computing each one's chunk again (`env.place`), and searched the
+   processed ids linearly for every being of the chunk; `updateOccupancy` searched the whole index
+   for each chunk that received a being. That work was the product of the beings processed and
+   the chunks written, which broke the rule that work per tick never grows with pairs of
+   inhabitants (`AGENTS.md`, "Cost per tick"). Now the records are placed once, sorted by chunk
+   key and id, and read in step with the chunks, as the takes are; the leaving ids and the index
+   are searched by binary search; and the chunks the index lacks are merged into it in one pass.
+   The same tick costs 146 µs per being at 1,000 and 163 µs at 16,000, 2.6 s in all. A
+   differential gives the same checksum, state root and events, at every tick before and after the
+   fix: on the three seeds of the fuzz, on `calibration/1` for 3,000 ticks, on a mass wake of 2,010
+   beings, and on 100 and 1,000 dispersed beings, whose runs added two or more chunks to the index
+   in one tick 14 and 34 times. Ticks with many wakes are common: a spawn's next tick, and dusk
+   and dawn, when the light condition of every plan holds at once. Of 100 dispersed beings, 42
+   decided at the tick the light fell to 100 (dusk, tick 3,231) and 21 at the one it rose to 200
+   (dawn, tick 400), and the rests of 2 hours that dawn started kept 7 to 15 of them deciding
+   together every 600 ticks after it. The slowest tick of 1,000 dispersed beings held 481
+   decisions and took 1.5 s, and that of 10,000, 2,492 decisions and 8.2 s, both before the fix: at
+   about 3 ms a decision, such ticks overrun the 200 ms of a tick at 5 Hz even without the defect.
 2. **A crowded chunk is rehashed whole** whenever one of its beings changes: 1,000 beings in one
    chunk wrote 456 KB at the median tick and 523 KB at p99, and the median tick took 35 to 45 ms in
    four runs; in 3 × 3 chunks, 308 KB and 24 to 30 ms. ADR 0023 estimated 18 ms for 450 KB from
@@ -1214,7 +1239,9 @@ What the benchmark found beyond the targets, from the tables above:
    about 1 to 3.5 µs per listed chunk. From about 10,000 occupied chunks a tick that adds one costs
    a twentieth of a tick or more, and from 100,000 more than a whole tick.
 4. **A spawn costs about 0.2 ms**: 1,000 spawns in one tick take 0.17 to 0.33 s. Each prepares the
-   genesis again to check its cell (`spawnBlocked`).
+   genesis again to check its cell (`spawnBlocked`), and `applySpawn` searches the occupancy index
+   linearly for its chunk, a cost over pairs of spawns and listed chunks that `isOccupied` would
+   remove.
 
 **When the entity section becomes necessary.** The commit turns changed chunks into canonical
 text, validates, and hashes them at about 25 MB/s per core ([determinism](determinism.md)), about
@@ -1227,16 +1254,17 @@ one chunk; T5's mind data reaches it sooner, once a being's record passes about 
 crowded beings, or about 1.3 KB among 10,000 dispersed ones (388 KB at p99 today). The occupancy
 index is another ceiling, which the entity section does not lift: past about 10,000 occupied
 chunks it needs a structure whose writes do not grow with the chunks it lists. The cost of many
-wakes in one tick is a defect of `applyWorks`, not a ceiling of the snapshot.
+wakes in one tick was a defect of `applyWorks`, fixed in T4-8, not a ceiling of the snapshot.
 
 ### CI time
 
 The plan's budget for `bun test` in CI is 70 s (§9.3); CI took 50.5 to 65.6 s before T4-8. On the
-Codespace the new files take about 4.4 s: `beings-cost.test.ts` 4.1 s, most of it building the
-world of 200,000 chunks, and `beings-bench.test.ts` 0.3 s. Since CI already came close to the
-budget, T4-8 moved the barren control, about 4 s, out of `survival.test.ts` to the soak
-([Negative controls](#negative-controls)). CI's runner runs that file's controls beside its two
-child processes, and the controls, 8 s alone in T4-7's measurement against 6.4 s for each child,
-were the longest of the three. On the Codespace, `bun test` took 95.4 s for 2,218 tests before
-T4-8 and 92.7 s for 2,257 with it, and `survival.test.ts` 21.3 s before and 18.1 s after. CI's
-time with T4-8 is measured on its pull request.
+Codespace the new files take about 6.1 s: `beings-cost.test.ts` 5.8 s, of which about 3.3 s builds
+the world of 200,000 chunks and about 1.5 s times many wakes, and `beings-bench.test.ts` 0.3 s.
+Since CI already came close to the budget, T4-8 moved the barren control, about 4 s, out of
+`survival.test.ts` to the soak ([Negative controls](#negative-controls)). CI's runner runs that
+file's controls beside its two child processes, and the controls, 8 s alone in T4-7's measurement
+against 6.4 s for each child, were the longest of the three. On the Codespace, `bun test` took
+95.4 s for 2,218 tests before T4-8, and 92.7 s for 2,257 with it before the test of many wakes;
+`survival.test.ts` took 21.3 s before and 18.1 s after. CI's time with T4-8 is measured on its pull
+request.

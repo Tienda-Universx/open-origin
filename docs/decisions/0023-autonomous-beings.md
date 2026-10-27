@@ -198,13 +198,14 @@ recommended moment is T7, with snapshot version 2, because the seed changes shap
 - Behavior comes from needs, laws, terrain, and food that actually exists: nothing is scripted by
   the hour, and the brain sees only its senses.
 - Events record behaviors, not steps, so a being emits on the order of 50 events per simulated day
-  (plan §I.2.7 estimates 30). T4-8's benchmark measured 63 to 85 on a being's first day, and 31 on
-  the fourth day of 100 beings ([beings](../architecture/beings.md#measured-cost-indicative)).
+  (plan §I.2.7 estimates 30). Measured results, not a change of this decision: on 2026-10-27,
+  T4-8's benchmark measured 63 to 85 on a being's first day, and 31 on the fourth day of 100 beings
+  ([beings](../architecture/beings.md#measured-cost-indicative)).
 - A sleeping being in its own chunk costs one read per tick; a chunk that holds no being costs
   nothing. Per-tick work grows with occupied chunks, beings due, changed bytes, and decisions.
 - The global value is rewritten when a chunk becomes occupied and once per simulated day, so the
   genesis seal check is paid rarely.
-- Ceilings, which T4-8's benchmark measured
+- Ceilings. Measured results, not a change of this decision, from T4-8's benchmark on 2026-10-27
   ([beings](../architecture/beings.md#measured-cost-indicative)): a crowded chunk is rehashed whole
   whenever one of its beings changes (1,000 beings in one chunk wrote 456 KB at the median tick,
   which took 35 to 45 ms; the estimate here was 18 ms for the commit alone), and T5's mind data
