@@ -10,7 +10,7 @@ import { LABELS, type Variant } from "./scenario.ts";
  */
 
 /** The brains a run may use: `utility@1`, or the soak's random-walk baseline. */
-export type SurvivalBrain = "utility@1" | "random-walk@1";
+type SurvivalBrain = "utility@1" | "random-walk@1";
 
 /** What a child process runs. */
 export type SurvivalInput = {

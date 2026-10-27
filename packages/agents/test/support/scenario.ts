@@ -341,9 +341,10 @@ export type Scenario = {
 export const SCENARIO_SPS = 12;
 
 /**
- * The scenario of `label`: the default genesis of its terrain seed, 12 seconds per tick, the laws
- * (the default ones unless `options.life` is given, always with death disabled), and its 8 beings,
- * spawned by the admin at tick 1. Throws for an uninhabitable label.
+ * The scenario of `label`: the default genesis of its terrain seed, 12 seconds per tick unless a
+ * negative control asks for another, the laws (the default ones unless `options.life` is given,
+ * always with death disabled), and its 8 beings, spawned by the admin at tick 1. Throws for an
+ * uninhabitable label.
  */
 export function scenarioOf(label: string, options: ScenarioOptions): Scenario {
   return scenarioFrom(terrainOf(label), options);

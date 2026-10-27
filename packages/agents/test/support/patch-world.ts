@@ -7,7 +7,7 @@ import {
   type World,
   worldgen,
 } from "@open-origin/engine";
-import { SHORT_DAY, testGenesis } from "../../../engine/test/support/beings-world.ts";
+import { testGenesis } from "../../../engine/test/support/beings-world.ts";
 import type { SuiteRuleset } from "../../../engine/test/support/determinism-records.ts";
 
 /**
@@ -17,11 +17,11 @@ import type { SuiteRuleset } from "../../../engine/test/support/determinism-reco
  * the observer test, and the scarcity test spawn their beings around it.
  */
 
-/** Deposit 0 of the patch world: one patch of 17 cells and 353 units within 128 cells of the origin. */
+/** Deposit 0 of the patch world: one patch of 17 cells and 353 units, the only one within 128 cells of the origin. */
 const PATCH_DEPOSIT = Object.freeze({ wavelength: 32, octaves: 1, threshold: 970, peak: 60 });
 
 /** The genesis of the patch world. */
-export function patchGenesis(): worldgen.Genesis {
+function patchGenesis(): worldgen.Genesis {
   const base = testGenesis();
   const deposits = base.terrain.deposits.map((deposit, index) =>
     index === 0 ? PATCH_DEPOSIT : deposit,
@@ -98,6 +98,3 @@ export function chunkOf(cell: readonly [number, number]): string {
 export function lightAt(tick: number): number {
   return worldgen.radiance(PATCH_PREPARED, { tick, simSecondsPerTick: PATCH_SPS });
 }
-
-/** The day of the patch world, in ticks. */
-export const DAY_TICKS = SHORT_DAY.length / PATCH_SPS;
