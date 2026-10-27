@@ -4,17 +4,19 @@
  * resume child, which continues a snapshot in a fresh process.
  */
 
-/** A child process, and what it writes and how it exits. */
+/** A child process, the name its errors give, and what it writes and how it exits. */
 export type JsonChild = {
+  readonly name: string;
   readonly process: Bun.Subprocess;
   readonly ended: Promise<readonly [stdout: string, stderr: string, code: number]>;
 };
 
 /**
  * Starts `script` in a fresh Bun process with `input` as JSON on its stdin. Its pipes are read
- * from the start, so they drain whenever this process's event loop runs.
+ * from the start, so they drain whenever this process's event loop runs. Its errors name it by
+ * the file name of `script`, followed by `what` when given, such as the label it runs.
  */
-export function startJsonChild(script: string, input: unknown): JsonChild {
+export function startJsonChild(script: string, input: unknown, what?: string): JsonChild {
   const child = Bun.spawn([process.execPath, script], {
     stdin: new Blob([JSON.stringify(input)]),
     stdout: "pipe",
@@ -25,7 +27,8 @@ export function startJsonChild(script: string, input: unknown): JsonChild {
     new Response(child.stderr).text(),
     child.exited,
   ] as const);
-  return { process: child, ended };
+  const file = script.slice(script.lastIndexOf("/") + 1);
+  return { name: what === undefined ? file : `${file} (${what})`, process: child, ended };
 }
 
 /**
@@ -41,13 +44,13 @@ export async function jsonResult(child: JsonChild, timeoutMs: number): Promise<u
   }, timeoutMs);
   const [stdout, stderr, code] = await child.ended.finally(() => clearTimeout(timer));
   const tail = stderr.trim().slice(-2000);
-  if (timedOut)
-    throw new Error(`the child process ran past ${timeoutMs} ms and was killed: ${tail}`);
-  if (code !== 0) throw new Error(`the child process exited with ${code}: ${tail}`);
+  const name = `the child process ${child.name}`;
+  if (timedOut) throw new Error(`${name} ran past ${timeoutMs} ms and was killed: ${tail}`);
+  if (code !== 0) throw new Error(`${name} exited with ${code}: ${tail}`);
   try {
     return JSON.parse(stdout);
   } catch {
-    throw new Error(`the child process wrote output that is not JSON: ${stdout.slice(0, 200)}`);
+    throw new Error(`${name} wrote output that is not JSON: ${stdout.slice(0, 200)}`);
   }
 }
 

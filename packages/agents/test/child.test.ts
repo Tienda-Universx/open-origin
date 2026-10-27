@@ -11,7 +11,7 @@ import type { Ask } from "./support/fake-child.ts";
 const FAKE = Bun.fileURLToPath(new URL("./support/fake-child.ts", import.meta.url));
 
 /** Starts the fake child with `ask`. */
-const start = (ask: Ask) => startJsonChild(FAKE, ask);
+const start = (ask: Ask) => startJsonChild(FAKE, ask, "on purpose");
 
 /** Whether the process `pid` still exists: signal 0 only checks. */
 function exists(pid: number): boolean {
@@ -31,13 +31,19 @@ describe("a JSON child process", () => {
 
   test("that exits with an error is reported with its code and the end of its stderr", async () => {
     await expect(jsonResult(start({ exit: 3 }), 10_000)).rejects.toThrow(
-      "the child process exited with 3: the child failed on purpose",
+      "the child process fake-child.ts (on purpose) exited with 3: the child failed on purpose",
+    );
+  });
+
+  test("is named in its errors by its file name alone when nothing else names it", async () => {
+    await expect(jsonResult(startJsonChild(FAKE, { exit: 2 }), 10_000)).rejects.toThrow(
+      "the child process fake-child.ts exited with 2: the child failed on purpose",
     );
   });
 
   test("that writes something that is not JSON is reported with what it wrote", async () => {
     await expect(jsonResult(start({ text: "not JSON" }), 10_000)).rejects.toThrow(
-      "the child process wrote output that is not JSON: not JSON",
+      "the child process fake-child.ts (on purpose) wrote output that is not JSON: not JSON",
     );
   });
 
@@ -45,7 +51,7 @@ describe("a JSON child process", () => {
     const child = start({ hang: true });
     const { pid } = child.process;
     await expect(jsonResult(child, 500)).rejects.toThrow(
-      `the child process ran past 500 ms and was killed: child ${pid} hangs`,
+      `the child process fake-child.ts (on purpose) ran past 500 ms and was killed: child ${pid} hangs`,
     );
     expect(exists(pid)).toBe(false);
   });

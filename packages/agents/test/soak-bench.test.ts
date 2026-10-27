@@ -4,8 +4,8 @@
  * ignoring it. Its tables (bench/table.ts) summarize a run by its acceptance items.
  */
 import { describe, expect, test } from "bun:test";
-import { parseArguments } from "../bench/soak.ts";
-import { summaryCells } from "../bench/table.ts";
+import { type Job, parseArguments, runAll } from "../bench/soak.ts";
+import { stationaryCells, summaryCells } from "../bench/table.ts";
 import type { BeingRecord } from "./support/metrics.ts";
 import { LABELS } from "./support/scenario.ts";
 
@@ -13,7 +13,7 @@ describe("the arguments of the soak", () => {
   test("run the six held-out labels, each with the laws, both variants, and the random walk", () => {
     expect(parseArguments([])).toEqual({
       labels: [...LABELS.heldout],
-      runs: ["laws", "adverse", "favorable", "random-walk"],
+      runs: ["laws", "adverse", "favorable", "random-walk", "stationary"],
       ticks: 63_000,
       jobs: 2,
     });
@@ -102,5 +102,75 @@ describe("the summary of a run", () => {
       "fail: 2 (outside birth window); 3 (rest 0, rested wakes)",
     ]);
     expect(summaryCells({ ...run, beings: [being(1)] }).at(-1)).toBe("pass");
+    // Some cell must also have regrown and been eaten again.
+    const unregrown = { ...run, beings: [being(1)], regrewAndEaten: false };
+    expect(summaryCells(unregrown).slice(-2)).toEqual([
+      "no",
+      "fail: no cell regrew and was eaten again",
+    ]);
   });
+});
+
+describe("the summary of a run of the stationary control", () => {
+  const ticks = { tenDays: 1_260, horizon: 6_007 };
+  const run = (incapacitatedAt: [number, number][], beings = 3) => ({
+    beings,
+    incapacitatedAt,
+    secondsPerTick: 600,
+    dayLength: 75_600,
+  });
+
+  test("gives the beings incapacitated, the day of the last, and the bounds it is within", () => {
+    expect(
+      stationaryCells(
+        run([
+          [1, 400],
+          [2, 896],
+          [3, 12],
+        ]),
+        ticks,
+      ),
+    ).toEqual(["3 of 3", "7.1 (tick 896)", "yes", "yes"]);
+    expect(
+      stationaryCells(
+        run([
+          [1, 400],
+          [2, 1_261],
+          [3, 6_007],
+        ]),
+        ticks,
+      ),
+    ).toEqual(["3 of 3", "47.7 (tick 6007)", "no", "yes"]);
+  });
+
+  test("is within no bound while a being was never incapacitated", () => {
+    expect(
+      stationaryCells(
+        run([
+          [1, 400],
+          [3, 12],
+        ]),
+        ticks,
+      ),
+    ).toEqual(["2 of 3", "-", "no", "no"]);
+  });
+});
+
+describe("the runs of the soak", () => {
+  test("report a child that fails, and still run and report its siblings", async () => {
+    const work: Job[] = [
+      { name: "refused", run: "laws", input: { label: "open-origin/t4/heldout/7", ticks: 1 } },
+      { name: "short", run: "laws", input: { label: LABELS.calibration[0] as string, ticks: 2 } },
+    ];
+    const shown: string[] = [];
+    const done = await runAll(work, 2, {
+      run: (job) => shown.push(`run ${job.name}`),
+      error: (job) => shown.push(`error ${job.name}`),
+    });
+    expect(shown).toEqual(["error refused", "run short"]);
+    expect(done[0]?.error).toContain(
+      "the child process survival-child.ts (open-origin/t4/heldout/7) exited with 1",
+    );
+    expect(done[1]?.output?.record.beings).toHaveLength(8);
+  }, 60_000);
 });

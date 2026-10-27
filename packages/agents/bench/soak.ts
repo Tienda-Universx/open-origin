@@ -2,34 +2,49 @@
  * The soak of T4 (docs/architecture/beings.md, "Evaluation"; plan §9.3): the preregistered scenario
  * of each held-out label, 63,000 ticks (10 simulated days) of eight beings, audit off, under the
  * frozen default laws and brain `utility@1`, under the adverse and the favorable variants of the
- * laws, and, for comparison only, with the random-walk baseline instead of the brain. It prints
- * every being's acceptance items for every run, then a summary table, whatever the results are.
+ * laws, and, for comparison only, with the random-walk baseline instead of the brain; and the
+ * stationary control, a negative control of the preregistration, at its own settings
+ * (test/support/stationary.ts) for the ticks of the stationary horizon H. It prints every being's
+ * acceptance items for every run, then a summary table of the acceptance and one of the stationary
+ * control, whatever the results are.
  *
- *   bun packages/agents/bench/soak.ts [1 2 3 4 5 6] [laws adverse favorable random-walk]
- *     [--ticks N] [--jobs K]
+ *   bun packages/agents/bench/soak.ts [1 2 3 4 5 6] [laws adverse favorable random-walk
+ *     stationary] [--ticks N] [--jobs K]
  *
  * The numbers name heldout/1 to /6, all six by default; the words name the runs of each label,
- * all four by default. Each run is a child process (test/support/survival-child.ts); `--jobs`
- * runs K of them at once, 2 by default. It runs only the held-out labels: the reserve, heldout/7 to
- * /12, replaces burned labels only, and the default and calibration labels have their own runs.
- * Any other argument is an error, and exits with code 2.
+ * all five by default; `--ticks` sets the ticks of every run but the stationary control's. Each
+ * run is a child process (test/support/survival-child.ts); `--jobs` runs K of them at once, 2 by
+ * default. A child that fails is reported, its siblings still run, and the soak exits with code 1
+ * after its tables. It runs only the held-out labels: the reserve, heldout/7 to /12, replaces
+ * burned labels only, and the default and calibration labels have their own runs. Any other
+ * argument is an error, and exits with code 2.
  */
 import { beings } from "@open-origin/engine";
 import { misses } from "../test/support/metrics.ts";
-import { BEINGS, LABELS, SCENARIO_SPS, type Variant } from "../test/support/scenario.ts";
+import { BEINGS, LABELS, type Variant } from "../test/support/scenario.ts";
+import { stationaryTicks } from "../test/support/stationary.ts";
 import {
   type SurvivalInput,
   type SurvivalOutput,
   startSurvival,
   survivalResult,
 } from "../test/support/survival.ts";
-import { beingRows, SUMMARY_HEADER, summaryCells } from "./table.ts";
+import {
+  beingRows,
+  STATIONARY_HEADER,
+  SUMMARY_HEADER,
+  stationaryCells,
+  summaryCells,
+} from "./table.ts";
 
 const TEN_DAYS = 63_000;
 
-/** The runs of a label: the default laws, each variant, and the random-walk baseline. */
-const RUNS = ["laws", "adverse", "favorable", "random-walk"] as const;
-type Run = (typeof RUNS)[number];
+/**
+ * The runs of a label: the default laws, each variant, the random-walk baseline, and the
+ * stationary control.
+ */
+const RUNS = ["laws", "adverse", "favorable", "random-walk", "stationary"] as const;
+export type Run = (typeof RUNS)[number];
 
 /** What the arguments ask for: the labels, the runs of each, the ticks, and the parallel runs. */
 export type Arguments = {
@@ -108,8 +123,19 @@ export function parseArguments(argv: readonly string[]): Arguments {
   };
 }
 
-/** The input of the child process of `run` on `label`. */
+/** A run of the soak: its name in the tables, which run it is, and its child's input. */
+export type Job = { readonly name: string; readonly run: Run; readonly input: SurvivalInput };
+
+/** What a job gave: the output of its child, or the error that ended it. */
+export type Done = { readonly job: Job; readonly output?: SurvivalOutput; readonly error?: string };
+
+/**
+ * The input of the child process of `run` on `label`: `ticks` ticks of 12 s, but the stationary
+ * control runs the ticks of H at its own settings.
+ */
 function inputOf(label: string, run: Run, ticks: number): SurvivalInput {
+  if (run === "stationary")
+    return { label, ticks: stationaryTicks(label).horizon, brain: "stationary@1" };
   if (run === "random-walk") return { label, ticks, brain: "random-walk@1" };
   if (run === "laws") return { label, ticks };
   const variant: Variant = run;
@@ -120,31 +146,83 @@ function inputOf(label: string, run: Run, ticks: number): SurvivalInput {
 const nameOf = (label: string, run: Run) => `${label.replace("open-origin/t4/", "")} ${run}`;
 
 /** Prints one finished run: a heading, then a row per being. */
-function printRun(name: string, output: SurvivalOutput, ticks: number): void {
-  const { record, dayLength } = output;
-  const perDay = (record.decisions * dayLength) / (ticks * SCENARIO_SPS * BEINGS);
+function printRun({ name, input }: Job, output: SurvivalOutput): void {
+  const { record, dayLength, simSecondsPerTick } = output;
+  const perDay = (record.decisions * dayLength) / (input.ticks * simSecondsPerTick * BEINGS);
   const failed = record.beings.filter((being) => misses(being).length > 0).length;
   console.log(
-    `\n${name}: ${ticks} ticks, ${(record.wallMs / 1000).toFixed(2)} s, ${perDay.toFixed(1)} decisions per being and day, regrown and eaten: ${record.regrewAndEaten}, beings missing an item: ${failed}`,
+    `\n${name}: ${input.ticks} ticks of ${simSecondsPerTick} s, ${(record.wallMs / 1000).toFixed(2)} s, ${perDay.toFixed(1)} decisions per being and day, regrown and eaten: ${record.regrewAndEaten}, beings missing an item: ${failed}`,
   );
   for (const row of beingRows(record)) console.log(row);
+  if (output.incapacitatedAt.length > 0)
+    console.log(
+      `first incapacitated (id: tick): ${output.incapacitatedAt.map(([id, tick]) => `${id}: ${tick}`).join(", ")}`,
+    );
 }
 
-/** Runs every job, `jobs` at a time, and returns their outputs in the order of `work`. */
-async function runAll(
-  work: readonly { readonly name: string; readonly input: SurvivalInput }[],
-  options: Arguments,
-): Promise<SurvivalOutput[]> {
-  const outputs: SurvivalOutput[] = [];
-  for (let first = 0; first < work.length; first += options.jobs) {
-    const batch = work.slice(first, first + options.jobs);
+/** How a finished job is shown: by default, its run printed, or its error on stderr. */
+export type Show = {
+  readonly run: (job: Job, output: SurvivalOutput) => void;
+  readonly error: (job: Job, error: string) => void;
+};
+
+const PRINT: Show = {
+  run: printRun,
+  error: (job, error) => console.error(`\n${job.name}: ${error}`),
+};
+
+/**
+ * Runs every job, `jobs` at a time, and returns what each gave, in the order of `work`, after
+ * `show` showed it. A child that fails is reported, and its siblings still run and are reported.
+ */
+export async function runAll(work: readonly Job[], jobs: number, show = PRINT): Promise<Done[]> {
+  const done: Done[] = [];
+  for (let first = 0; first < work.length; first += jobs) {
+    const batch = work.slice(first, first + jobs);
     const children = batch.map(({ input }) => startSurvival(input));
-    const finished = await Promise.all(children.map((child) => survivalResult(child, 3_600_000)));
-    for (const [index, output] of finished.entries())
-      printRun(batch[index]?.name ?? "", output, options.ticks);
-    outputs.push(...finished);
+    const settled = await Promise.allSettled(
+      children.map((child) => survivalResult(child, 3_600_000)),
+    );
+    for (const [index, result] of settled.entries()) {
+      const job = batch[index] as Job;
+      if (result.status === "fulfilled") {
+        show.run(job, result.value);
+        done.push({ job, output: result.value });
+      } else {
+        const error = (result.reason as Error).message;
+        show.error(job, error);
+        done.push({ job, error });
+      }
+    }
   }
-  return outputs;
+  return done;
+}
+
+/** Prints the summary tables of `done`: the acceptance of each run, and the stationary control. */
+function printSummary(done: readonly Done[]): void {
+  const acceptance = done.filter(({ job }) => job.run !== "stationary");
+  if (acceptance.length > 0) console.log(`\n${SUMMARY_HEADER.join("\n")}`);
+  for (const { job, output, error } of acceptance) {
+    const cells = output === undefined ? [`error: ${error}`] : summaryCells(output.record);
+    console.log(`| ${job.name} | ${cells.join(" | ")} |`);
+  }
+  const controls = done.filter(({ job }) => job.run === "stationary");
+  if (controls.length > 0) console.log(`\n${STATIONARY_HEADER.join("\n")}`);
+  for (const { job, output, error } of controls) {
+    const cells =
+      output === undefined
+        ? [`error: ${error}`]
+        : stationaryCells(
+            {
+              beings: output.record.beings.length,
+              incapacitatedAt: output.incapacitatedAt,
+              secondsPerTick: output.simSecondsPerTick,
+              dayLength: output.dayLength,
+            },
+            stationaryTicks(job.input.label),
+          );
+    console.log(`| ${job.name} | ${cells.join(" | ")} |`);
+  }
 }
 
 if (import.meta.main) {
@@ -156,14 +234,16 @@ if (import.meta.main) {
     process.exit(2);
   }
   console.log(`soak: laws ${beings.LIFE_VERSION}, ${options.ticks} ticks, ${options.jobs} at once`);
+  const { ticks } = options;
   const work = options.labels.flatMap((label) =>
     options.runs.map((run) => ({
       name: nameOf(label, run),
-      input: inputOf(label, run, options.ticks),
+      run,
+      input: inputOf(label, run, ticks),
     })),
   );
-  const outputs = await runAll(work, options);
-  console.log(`\n${SUMMARY_HEADER.join("\n")}`);
-  for (const [index, output] of outputs.entries())
-    console.log(`| ${work[index]?.name} | ${summaryCells(output.record).join(" | ")} |`);
+  const done = await runAll(work, options.jobs);
+  printSummary(done);
+  // A child that failed fails the soak, after every run was reported.
+  if (done.some(({ error }) => error !== undefined)) process.exitCode = 1;
 }
