@@ -3,6 +3,7 @@ import {
   type Command,
   type EngineEvent,
   readView,
+  type StepResult,
   step,
   worldgen,
 } from "@open-origin/engine";
@@ -44,6 +45,8 @@ export type BeingRecord = {
   /** The lowest nutrition and health seen at any of its events. */
   lowestNutrition: number;
   lowestHealth: number;
+  /** Its needs and health at the last tick of the run; undefined when it is no longer in the world. */
+  final: beings.Body | undefined;
 };
 
 /** What a whole run did. */
@@ -252,6 +255,7 @@ function newTracker(run: RunInput): Tracker {
       walked: 0,
       lowestNutrition: payload.needs.nutrition,
       lowestHealth: beings.NEED_MAX,
+      final: undefined,
     });
   });
   const maps = { mealStart: new Map(), walks: new Map(), base: new Map() };
@@ -265,19 +269,30 @@ function newTracker(run: RunInput): Tracker {
  */
 const READ_FOR = new Set(["being.started", "being.finished", "being.ate", "being.incapacitated"]);
 
+/** The body of every being still in the world at `tick`, the run's last, into its record. */
+function recordFinal(tracker: Tracker, tick: number): void {
+  for (const [id, being] of beingsNow(tracker)) {
+    const record = tracker.records.get(id);
+    if (record !== undefined) record.final = bodyOf(tracker, being, tick);
+  }
+}
+
 /**
  * Runs `run` to tick `ticks`, the spawns at tick 1, and records what its beings did. The
- * decisions are counted by `counted`, which the caller wraps around the brain.
+ * decisions are counted by `counted`, which the caller wraps around the brain. `onStep`, when
+ * given, receives what each step returned, after the runner read it; it must not step the world.
  */
 export function runScenario(
   run: RunInput,
   ticks: number,
   counted: { readonly decisions: () => number },
+  onStep?: (result: StepResult) => void,
 ): RunRecord {
   const tracker = newTracker(run);
   const started = performance.now();
   for (let tick = 1; tick <= ticks; tick += 1) {
-    const { events } = step(run.world, tick === 1 ? run.spawns : []);
+    const result = step(run.world, tick === 1 ? run.spawns : []);
+    const { events } = result;
     const now = events.some((event) => READ_FOR.has(event.type)) ? beingsNow(tracker) : undefined;
     for (const event of events) {
       const id = (event.payload as { id?: number }).id ?? 0;
@@ -285,7 +300,9 @@ export function runScenario(
     }
     const ate = events.filter((event) => event.type === "being.ate");
     if (now !== undefined && ate.length > 0) recordMeals(tracker, tick, ate, now);
+    onStep?.(result);
   }
+  recordFinal(tracker, ticks);
   return {
     beings: [...tracker.records.values()],
     regrewAndEaten: tracker.regrewAndEaten,
