@@ -18,24 +18,30 @@
  * run, which had none. Two coupled hosts, which turn what their observer looked at into commands
  * that materialize those chunks or add them to the occupancy index, change the records at once.
  *
- * The cuts fall at ticks 7 (contest), 33 (crossing), and 51 (wake). Time (Bun 1.4.4, 2026-10-27;
+ * The cuts fall at ticks 7 (contest), 33 (crossing), and 51 (wake), which the test pins; and the
+ * patch world, the subject's world factory, honors its seed and its audit flag. Time (Bun 1.4.4, 2026-10-27;
  * indicative): about 3.4 s on the Codespace, with four child processes beside it.
  */
 import { describe, expect, test } from "bun:test";
 import {
   beings,
+  type CanonicalValue,
   type ChunkKey,
   type Command,
   type CommandHandler,
+  EngineError,
   encodeSnapshot,
+  type RulesetSystem,
   type Seed,
   type StepResult,
   step,
   type World,
   worldgen,
 } from "@open-origin/engine";
+import { STALE_GLOBAL } from "../../engine/test/support/barrier-rulesets.ts";
 import {
   firstDivergence,
+  type SuiteRuleset,
   type TickRecord,
   tickRecord,
 } from "../../engine/test/support/determinism-records.ts";
@@ -266,16 +272,65 @@ function suiteReport(): Promise<DeterminismReport> {
   return suiteRun;
 }
 
+/** The tick at which tampering changes the global value behind the barrier. */
+const TAMPER_TICK = 2;
+
+/** The subject's ruleset with a system that changes the global value through a read. */
+function tampering(): SuiteRuleset {
+  const ruleset: SuiteRuleset = utilityRuleset();
+  const sneaky: RulesetSystem<CanonicalValue, CanonicalValue> = {
+    name: "tamper",
+    streams: [],
+    run: (ctx) => {
+      // The defect: a write through the value readGlobal returns, behind the barrier.
+      if (ctx.tick === TAMPER_TICK)
+        (ctx.readGlobal() as unknown as { prunedDay: number }).prunedDay += 1;
+      return undefined;
+    },
+  };
+  return { ...ruleset, systems: [...ruleset.systems, sneaky] };
+}
+
+describe("the patch world, the subject's world factory", () => {
+  test("builds its world with the seed it is given", () => {
+    const snapshot = JSON.parse(encodeSnapshot(patchWorld([5, 6], utilityRuleset(), false))) as {
+      world: { rng: { seed: Seed }; config: { simSecondsPerTick: number } };
+    };
+    expect([snapshot.world.rng.seed, snapshot.world.config]).toEqual([
+      [5, 6],
+      { simSecondsPerTick: 12 },
+    ]);
+  });
+
+  test("runs the ruleset it is given under audit when asked, which finds a write behind the barrier", () => {
+    const audited = patchWorld(SEEDS[0], tampering(), true);
+    step(audited, []);
+    let fault: unknown;
+    try {
+      step(audited, []);
+    } catch (error) {
+      fault = error;
+    }
+    expect(fault).toBeInstanceOf(EngineError);
+    const { code, issues } = fault as EngineError;
+    expect([code, issues]).toEqual([
+      "integrity_violation",
+      [{ path: "/global", message: STALE_GLOBAL }],
+    ]);
+    // Without audit, the same world steps past that write.
+    const unaudited = patchWorld(SEEDS[0], tampering(), false);
+    step(unaudited, []);
+    expect(step(unaudited, []).tick).toBe(TAMPER_TICK);
+  });
+});
+
 describe("the determinism suite on a world of beings (plan §9.2, tests 7 and 9)", () => {
   test(
     "passes every check, with cuts at 0, 1, the first contest, crossing, and wake, and T − 1",
     async () => {
       const { landmarks } = observed();
       // The landmarks the cuts need all happen, in this order, before the last tick.
-      expect(landmarks.contest).toBeGreaterThan(1);
-      expect(landmarks.crossing).toBeGreaterThan(landmarks.contest);
-      expect(landmarks.wake).toBeGreaterThan(landmarks.crossing);
-      expect(landmarks.wake).toBeLessThan(TICKS - 1);
+      expect(landmarks).toEqual({ contest: 7, crossing: 33, wake: 51 });
       const report = await suiteReport();
       expect(report.failures).toEqual([]);
       const { crossing, contest, wake } = landmarks;

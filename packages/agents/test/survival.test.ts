@@ -10,24 +10,19 @@
  *
  * The negative controls show that the test fails when it should: a brain that never eats is
  * incapacitated at the tick the laws give; a stationary brain is incapacitated within ten days,
- * so by the stationary horizon H, on every calibration label; a brain that never sleeps reaches
+ * so by the stationary horizon H, on the calibration labels, the default label, and heldout/1 (the
+ * soak runs it on the other held-out labels); a brain that never sleeps reaches
  * rest 0; and a nearly barren world, its spawn area chosen by the same rule, collapses within the
  * bound its laws give, every food cue its beings sensed 0 or 1.
  *
  * Time (Bun 1.4.4, 2026-10-27; indicative): each ten-day run takes about 6.4 s alone on the
- * Codespace, whose two CPUs are two threads of one core. The controls take about 6.8 s alone (0.6,
- * 1.6, 1.5, and 3.2 s) and the resume 1.4 s, and the whole file about 21 s there, where the three
- * processes share the core; a CI runner with more cores runs them side by side.
+ * Codespace, whose two CPUs are two threads of one core. The controls take about 8 s alone (0.7,
+ * 2.5, 1.3, and 3.9 s) and the resume 1.4 s, and the whole file about 21 to 23 s there, where the
+ * three processes share the core; a CI runner with more cores runs them side by side.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { beings, type Command, type StepResult, step, worldgen } from "@open-origin/engine";
-import {
-  beingsWorld,
-  lifeWith,
-  PREPARED,
-  SPECIES,
-  stationaryHorizon,
-} from "../../engine/test/support/beings-world.ts";
+import { beingsWorld, PREPARED, SPECIES } from "../../engine/test/support/beings-world.ts";
 import {
   type ChildInput,
   type ChildOutput,
@@ -43,10 +38,12 @@ import {
   SCENARIO_SPS,
   type ScenarioWorld,
   scenarioFrom,
-  scenarioOf,
   spawnCommand,
+  type Terrain,
+  terrainOf,
   terrainWith,
 } from "./support/scenario.ts";
+import { STATIONARY_SPS, stationaryLife, stationaryTicks } from "./support/stationary.ts";
 import { type SurvivalOutput, startSurvival, survivalResult } from "./support/survival.ts";
 import { UTILITY_RULESET } from "./support/utility-ruleset.ts";
 
@@ -55,8 +52,12 @@ const TEN_DAYS = 63_000;
 /** The tick whose snapshot the default run keeps, and how many ticks after it a resume compares. */
 const MIDWAY = 31_500;
 const RESUMED = 1_500;
-/** How long a child process may run once a test waits for it. */
-const CHILD_MS = 180_000;
+/**
+ * How long a child process may run once a test waits for it, shorter than the test's own limit, so
+ * that a child that hangs is reported with its own message.
+ */
+const CHILD_MS = 120_000;
+const TEST_MS = 180_000;
 
 const HELDOUT_1 = LABELS.heldout[0] as string;
 
@@ -104,6 +105,16 @@ function ticksOf(type: string) {
 
 /** The seconds `ratio` takes to move a quantity across `amount` units, rounded up. */
 const reach = ({ num, den }: beings.Ratio, amount: number) => Math.ceil((amount * den) / num);
+
+/** The terrain of each label the controls use, measured once: two controls share calibration/1's. */
+const terrains = new Map<string, Terrain>();
+function terrainOfLabel(label: string): Terrain {
+  const known = terrains.get(label);
+  if (known !== undefined) return known;
+  const terrain = terrainOf(label);
+  terrains.set(label, terrain);
+  return terrain;
+}
 
 /** How long a negative control may take. */
 const CONTROL_MS = 60_000;
@@ -168,24 +179,20 @@ describe("negative controls: the survival test fails each broken brain and world
   );
 
   test(
-    "a stationary brain is incapacitated within ten days, so by H, on every calibration label",
+    "a stationary brain is incapacitated within ten days, so by H, on the calibration labels, the default label, and heldout/1",
     () => {
       // At 600 s per tick, so that H, 47.7 days, takes 6,007 ticks and ten days 1,260: the laws
       // do not depend on the tick (ADR 0023). A brain that looks only at its own cell needs no
-      // wider window, and the radius of the senses changes no law of the body or of food.
-      const sps = 600;
-      const life = lifeWith((species) => ({ ...species, senses: { radius: 1 } }));
-      const tenDays = (TEN_DAYS * SCENARIO_SPS) / sps;
+      // wider window, and the radius of the senses changes no law of the body or of food. The
+      // soak runs it on the other held-out labels.
       let bites = 0;
-      for (const label of LABELS.calibration) {
-        const scenario = scenarioOf(label, {
+      for (const label of [...LABELS.calibration, LABELS.default, HELDOUT_1]) {
+        const scenario = scenarioFrom(terrainOfLabel(label), {
           controllers: { s1: stationary() },
-          life,
-          simSecondsPerTick: sps,
+          life: stationaryLife(),
+          simSecondsPerTick: STATIONARY_SPS,
         });
-        const genesis = worldgen.genesisOf(scenario.prepared);
-        const { days } = stationaryHorizon(SPECIES, genesis);
-        const horizon = Math.ceil((days * genesis.laws.day.length) / sps);
+        const { horizon, tenDays } = stationaryTicks(label);
         expect([horizon, tenDays]).toEqual([6_007, 1_260]);
         const run = untilIncapacitated(scenario.world, scenario.spawns, horizon);
         expect(run.incapacitated.size).toBe(8);
@@ -206,7 +213,8 @@ describe("negative controls: the survival test fails each broken brain and world
       const ticks = 1 + Math.ceil(reach(SPECIES.needs.rest.awake, 900_000) / SCENARIO_SPS);
       expect(ticks).toBe(9_073);
       const brain = neverSleeps(utilityController());
-      const scenario = scenarioOf(LABELS.calibration[0] as string, { controllers: { s1: brain } });
+      const terrain = terrainOfLabel(LABELS.calibration[0] as string);
+      const scenario = scenarioFrom(terrain, { controllers: { s1: brain } });
       const records = runScenario(scenario, ticks, { decisions: () => 0 }).beings;
       expect(records.map((record) => record.exhausted > 0)).toEqual(Array(8).fill(true));
       for (const record of records) expect(misses(record)).toContain("rest 0");
@@ -256,7 +264,8 @@ describe("negative controls: the survival test fails each broken brain and world
       for (const [id, tick] of run.incapacitated)
         expect(tick).toBeLessThanOrEqual(bounds[id - 1] ?? 0);
       expect(run.bites).toBe(0);
-      expect([...cues].every((cue) => cue <= 1)).toBe(true);
+      // Every cue the brain sensed was 0: the set holds what it recorded, so it is not empty.
+      expect([...cues]).toEqual([0]);
     },
     CONTROL_MS,
   );
@@ -284,7 +293,7 @@ describe("survival over ten days on the preregistered labels (plan §9.2, test 1
       // Not vacuous: each being got hungry and tired, ate, slept, and walked, and its brain decided.
       expect(record.decisions).toBeGreaterThan(8 * 10 * 10);
     },
-    CHILD_MS,
+    TEST_MS,
   );
 
   test(
@@ -308,8 +317,13 @@ describe("survival over ten days on the preregistered labels (plan §9.2, test 1
       ]);
       expect(record.regrewAndEaten).toBe(true);
       expect(record.decisions).toBeGreaterThan(8 * 10 * 10);
+      // Health never fell here either: it was full at every event and at the last tick.
+      for (const being of record.beings) {
+        expect(being.lowestHealth).toBe(beings.NEED_MAX);
+        expect(being.final?.health).toBe(beings.NEED_MAX);
+      }
     },
-    CHILD_MS,
+    TEST_MS,
   );
 
   test(
@@ -336,6 +350,6 @@ describe("survival over ten days on the preregistered labels (plan §9.2, test 1
       const events = kept.records.flatMap((tick) => ("events" in tick ? [tick.events] : []));
       expect(events.filter((text) => text.includes("being.started")).length).toBeGreaterThan(10);
     },
-    CHILD_MS,
+    TEST_MS,
   );
 });
