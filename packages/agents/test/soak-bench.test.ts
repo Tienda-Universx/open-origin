@@ -82,7 +82,7 @@ describe("the summary of a run", () => {
   test("gives the totals, the minimum of each item, and the beings that miss one", () => {
     const run = {
       beings: [
-        being(1),
+        being(1, { mealCells: ["0,0", "1,0", "2,0", "3,0", "4,0", "5,0", "40,0"], bigMeals: 7 }),
         being(2, { ateOutsideBirthWindow: false, walked: 320, lowestNutrition: 1_234 }),
         being(3, { exhausted: 2, sleeps: 9, restedWakes: 8 }),
       ],
