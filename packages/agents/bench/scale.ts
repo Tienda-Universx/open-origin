@@ -193,7 +193,7 @@ export function spawnsOf(species: "s1" | "s2", cells: readonly Cell[]): Command[
 }
 
 /** A brain that times and counts its decisions: `inner` decides, unchanged. */
-export function timedBrain(inner: beings.Controller) {
+function timedBrain(inner: beings.Controller) {
   const record = { decisions: 0, times: [] as number[] };
   const controller: beings.Controller = {
     brain: inner.brain,

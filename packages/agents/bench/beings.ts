@@ -297,9 +297,9 @@ function searchOnce(cell: Cell, radius: number, heading: number) {
 }
 
 /**
- * The senses at each radius over the cells of 64 dispersed beings, after a pass over every radius
- * and in three rounds, the first a warm-up; and over each window, Dijkstra and A* (searchOnce), heading in turn along each of
- * the eight directions. Returns the median time of the senses at radius 24.
+ * The senses at each radius over the cells of 64 dispersed beings, after a pass over every radius,
+ * in three rounds, the first a warm-up; and over each window, Dijkstra and A* (searchOnce), heading
+ * in turn along each of the eight directions. Returns the median time of the senses at radius 24.
  */
 function micro(): number {
   const cells = dispersedCells(64, benchCenter());
@@ -342,9 +342,9 @@ function alternate(benches: readonly BenchWorld[], measured: number): number[][]
 }
 
 /**
- * The sleeping beings spawned per tick. Each tick processes the beings it spawned at the next one,
- * and a tick that processes many beings at once costs more per being the more there are (massWake),
- * so spawning them in batches keeps that cost out of the steady state that `sleeping` measures.
+ * The sleeping beings spawned per tick. The beings spawned at a tick are processed together at the
+ * next one, and such a tick costs more per being the more there are (massWake), so spawning them
+ * in batches keeps that cost out of the steady state that `sleeping` measures.
  */
 const BATCH = 1_000;
 

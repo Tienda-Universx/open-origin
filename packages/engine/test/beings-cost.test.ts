@@ -131,7 +131,7 @@ const roamer = brain((senses) => {
 type CountedTick = {
   readonly tick: number;
   readonly calls: Calls;
-  /** The occupancy index before and after the tick, and the chunks of the beings' cells after it. */
+  /** The occupancy index before and after the tick, and the chunks of the beings after it. */
   readonly occupied: readonly string[];
   readonly listed: readonly string[];
   readonly after: readonly string[];
@@ -142,7 +142,7 @@ type CountedTick = {
   readonly dayTurns: boolean;
 };
 
-/** The chunks a counted run materializes before any being exists: every window of it covers some. */
+/** The empty chunks a counted run starts with, which every window of its beings covers in part. */
 const EXPLORED = 4_096;
 /** The seconds of a tick, and those of a day of the test genesis. */
 const SPS = 12;
@@ -337,7 +337,7 @@ describe("the calls of the beings system, counted (plan §7)", () => {
     expect(callIssues({ ...pruned, calls: calls(4, ["0,0", "1,0"], 2) })).toEqual([
       "tick 7: writes of the global value: 2, at most 1",
     ]);
-    // One wake that decided, its window of 49 cells from (−24, −24) over 4 chunks: 2 + 4 + 5 reads.
+    // One wake that decided, with a window of 49 cells from (−24, −24) over 4 chunks: 2 + 4 + 5.
     const decided = { ...quiet, wakes: 1, windows: [{ origin: [-24, -24], side: 49 }] as Window[] };
     const sensed = ["-1,-1", "0,-1", "-1,0", "0,0"];
     const keys = [...quiet.calls.keys, ...sensed, "0,0", "0,0", "0,0", "1,0", "-1,-1"];

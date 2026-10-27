@@ -34,7 +34,7 @@ export function median(values: readonly number[]): number {
 }
 
 /** How many ticks of each world warm the JIT up, and how many are then timed. */
-export type Rounds = { readonly warmUp: number; readonly measured: number };
+type Rounds = { readonly warmUp: number; readonly measured: number };
 
 /**
  * The median duration of a tick of `small` and of `large`, in nanoseconds, and their ratio, large

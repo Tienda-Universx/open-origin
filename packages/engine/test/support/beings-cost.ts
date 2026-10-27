@@ -18,7 +18,7 @@ import { type BeingsWorld, behavior, brain, SPECIES, spawn } from "./beings-worl
  */
 
 /** A chunk of a world of beings that holds nothing: what a being leaves behind when it moves on. */
-export function emptyChunk(): beings.BeingsChunk {
+function emptyChunk(): beings.BeingsChunk {
   return { beings: [], depletion: [], due: Number.MAX_SAFE_INTEGER };
 }
 
@@ -41,9 +41,9 @@ export function exploredChunks(
 
 /**
  * The test terrain (beings-world.ts) with the default day of 75,600 s, 6,300 ticks of 12 s, so that
- * no daily prune and no daily processing falls in the first 6,000 ticks.
+ * no daily prune and no daily processing falls before tick 6,300.
  */
-export function longDayGenesis(): worldgen.Genesis {
+function longDayGenesis(): worldgen.Genesis {
   return worldgen.defaultGenesis([11, 12, 13, 14, 15, 16, 17, 18]);
 }
 
@@ -72,8 +72,8 @@ export function sleeper(): beings.Controller {
 }
 
 /**
- * Ten cells of the test terrain, each in its own chunk, where a being of the default species may
- * stand: dispersed beings, five chunks apart at most.
+ * Ten cells of the test terrain, each in its own chunk, two chunks apart from west to east, where a
+ * being of the default species may stand.
  */
 export const DISPERSED_CELLS: readonly (readonly [number, number])[] = Object.freeze(
   Array.from({ length: 10 }, (_, i) => Object.freeze([i * 64 - 300, 7 * i - 30] as const)),
@@ -90,7 +90,8 @@ const SLEEPY_REST = 400_000;
  * beings on DISPERSED_CELLS, stepped to tick 2: spawned at tick 1, each decided at tick 2 to sleep
  * until tick 1,325, so that ticks 3 to 1,324 are quiet. Audit is off: the complexity test times it.
  */
-export function sleepingWorld(chunks: number, ruleset = sleepingRuleset()): BeingsWorld {
+export function sleepingWorld(chunks: number): BeingsWorld {
+  const ruleset = beings.createBeingsRuleset({ controllers: { [SPECIES.id]: sleeper() } });
   const world = createWorld(
     {
       seed: [5, 6],
@@ -108,11 +109,6 @@ export function sleepingWorld(chunks: number, ruleset = sleepingRuleset()): Bein
   step(world, spawns);
   step(world, []);
   return world;
-}
-
-/** The beings ruleset with `sleeper` for the default species. */
-export function sleepingRuleset(): Ruleset<beings.BeingsGlobal, beings.BeingsChunk> {
-  return beings.createBeingsRuleset({ controllers: { [SPECIES.id]: sleeper() } });
 }
 
 /** The calls one run of a system made to its tick context, and the chunk keys it read. */
