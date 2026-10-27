@@ -1,13 +1,14 @@
 /**
  * The cost of the beings' tick (plan §7 and §9.2, test 14; ADR 0023, cost per tick): the work of
  * the beings system grows with occupied chunks, wakes, and decisions, never with the chunks the
- * world has materialized.
+ * world has materialized, nor with pairs of the beings it processes.
  *
  * Two checks, as the plan asks: a timed one, ten sleeping beings in worlds of 1,000 and 200,000
  * empty chunks, as step-cost.test.ts times the kernel; and a deterministic one, a context that
  * counts the calls of the system, which a planted chunkKeys() per tick fails (plan §9.4).
  * beings-fuzz.test.ts pins the reads of a quiet tick exactly; this file bounds every tick, the
- * busy ones too, in a world whose senses cover materialized chunks.
+ * busy ones too, in a world whose senses cover materialized chunks. A third, timed, holds the cost
+ * per being of a tick that processes many beings at once, which T4-8 found quadratic and fixed.
  */
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
@@ -17,6 +18,7 @@ import {
   type Ruleset,
   readView,
   step,
+  worldgen,
   worldStatus,
 } from "../src/index.ts";
 import {
@@ -33,6 +35,8 @@ import {
   behavior,
   brain,
   chunkOf,
+  lifeWith,
+  PREPARED,
   SPECIES,
   spawn,
   testGenesis,
@@ -348,5 +352,104 @@ describe("the calls of the beings system, counted (plan §7)", () => {
     expect(callIssues({ ...quiet, calls: { ...quiet.calls, chunkKeys: 1 } })).toEqual([
       "tick 7: calls of chunkKeys: 1, none allowed",
     ]);
+  });
+});
+
+/**
+ * Many wakes in one tick (AGENTS.md, "Cost per tick"): the beings processed together in a tick must
+ * cost about the same each, however many there are. T4-8's benchmark found that they did not: the
+ * system matched every processed being against every chunk it wrote, so a tick of 16,000 wakes took
+ * 3.3 ms per being against 0.35 ms for 1,000. Here beings idle, each alone in its chunk, at 1,200 s
+ * per tick, the test genesis' whole day, so the daily processing takes every being at every tick,
+ * without a decision. That old work per pair of wakes, about 0.1 µs, is small beside the 85 µs or
+ * so a wake costs, so it shows only when one world holds many more beings than the other: the
+ * median tick of 1,200 beings must cost less than 1.6 times per being the median tick of 50.
+ * Measured on the Codespace (Bun 1.4.4, 2026-10-27; indicative): 0.99 and 1.12 with the fix, and
+ * 2.26 and 2.41 with the system before it; the bound lies about 1.4 times from each. The timing
+ * follows step-cost.test.ts: the worlds stepped alternately, warm-up first, the medians, and a
+ * failed measurement repeated once. Both worlds cost about 1.5 s on the Codespace to build and
+ * time, a third of it their spawns and first decisions.
+ */
+const FEW = 50;
+const MANY = 1_200;
+const PER_BEING_BOUND = 1.6;
+/** The lowest ratio per being measured with the system before the fix, quadratic in the wakes. */
+const QUADRATIC_RATIO = 2.26;
+const WAKE_ROUNDS = { warmUp: 1, measured: 5 } as const;
+
+/** Whether a ratio per being, MANY over FEW, shows no work that grows with pairs of wakes. */
+const scales = (ratio: number) => ratio < PER_BEING_BOUND;
+
+/** A tick as long as the test genesis' day, so that every being is processed at every tick. */
+const DAY_TICK = testGenesis().laws.day.length;
+
+/** A species that senses only its neighbors, so that the first decisions cost little. */
+const NEAR = lifeWith((species) => ({ ...species, senses: { radius: 1 } }));
+
+/** A brain that idles for 46 days: a being that only the daily processing takes again. */
+const idler = brain(
+  () => ({
+    steps: [{ kind: "idle", ms: 4_000_000_000 }],
+    wakeWhen: {},
+    behavior: behavior("rest"),
+  }),
+  "idler@1",
+);
+
+/** The first MANY dry cells in the middle of the chunks from (−25, −25), row by row. */
+const IDLE_CELLS: readonly (readonly [number, number])[] = (() => {
+  const level = worldgen.liquidLevel(testGenesis());
+  const cells: [number, number][] = [];
+  for (let index = 0; cells.length < MANY; index += 1) {
+    const [x, y] = [((index % 50) - 25) * 32 + 16, (Math.floor(index / 50) - 25) * 32 + 16];
+    const rect = { x, y, width: 1, height: 1 };
+    const [elevation = -1] = worldgen.sampleSurface(PREPARED, rect, SPECIES.diet.deposit).elevation;
+    if (elevation >= level) cells.push([x, y]);
+  }
+  return cells;
+})();
+
+/** A world of `count` idle beings on IDLE_CELLS, stepped to tick 2, when each decided. */
+function idleWorld(count: number) {
+  const world = createWorld(
+    {
+      seed: [3, 4],
+      simSecondsPerTick: DAY_TICK,
+      global: beings.beingsGlobal(testGenesis(), NEAR),
+      chunks: {},
+      ruleset: beings.createBeingsRuleset({ controllers: { [SPECIES.id]: idler } }),
+    },
+    { audit: false },
+  );
+  const spawns = IDLE_CELLS.slice(0, count).map((cell, seq) =>
+    spawn(1, { species: SPECIES.id, cell: [...cell] }, seq),
+  );
+  step(world, spawns);
+  step(world, []);
+  return world;
+}
+
+describe("many wakes in one tick cost the same per being", () => {
+  test(`the bound: below ${PER_BEING_BOUND} passes; ${PER_BEING_BOUND} and the quadratic system's ${QUADRATIC_RATIO} fail`, () => {
+    const ratios = [1.12, PER_BEING_BOUND - 0.01, PER_BEING_BOUND, QUADRATIC_RATIO];
+    expect(ratios.map(scales)).toEqual([true, true, false, false]);
+  });
+
+  test(`${FEW} and ${MANY} beings processed at every tick`, () => {
+    const few = idleWorld(FEW);
+    const many = idleWorld(MANY);
+    // Not vacuous, and a first warm-up: the next tick processes every being of both worlds and
+    // writes its chunk.
+    const dirty = [step(few, []).stats.dirtyChunks, step(many, []).stats.dirtyChunks];
+    expect(dirty).toEqual([FEW, MANY]);
+    Bun.gc(true);
+    const measure = () => {
+      const { ratio, smallMedian, largeMedian } = alternatingMedians(few, many, WAKE_ROUNDS);
+      return { smallMedian, largeMedian, perBeing: (ratio * FEW) / MANY };
+    };
+    let result = measure();
+    if (!scales(result.perBeing)) result = measure();
+    // The medians are in the failure message, for the record.
+    expect({ ...result, scales: scales(result.perBeing) }).toMatchObject({ scales: true });
   });
 });
