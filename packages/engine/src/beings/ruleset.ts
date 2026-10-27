@@ -33,7 +33,7 @@ import { type BeingsChunk, beingsChunkIssues, dueOf } from "./chunk.ts";
 import type { Controller, Senses } from "./contracts.ts";
 import { type BeingsGlobal, BRAIN_STREAM, CONTEST_STREAM, type Controllers } from "./env.ts";
 import { type LifeConfig, lifeSeal, type Species, sealedLifeIssues } from "./laws.ts";
-import { insertOccupied, occupancyIssues } from "./occupancy.ts";
+import { insertOccupied, isOccupied, occupancyIssues } from "./occupancy.ts";
 import { NEED_MAX } from "./rates.ts";
 import { range, readFields, readId, readInt, readList, TICKS } from "./schema.ts";
 import { runBeings } from "./system.ts";
@@ -305,7 +305,9 @@ function applySpawn(ctx: TickContext<BeingsGlobal, BeingsChunk>, command: Comman
   const chunk = ctx.writeChunk(key);
   chunk.beings = [...chunk.beings, being].sort((a, b) => a.id - b.id);
   chunk.due = dueOf(chunk.beings);
-  if (!ctx.readGlobal().occupancy.includes(key)) insertOccupied(ctx.writeGlobal().occupancy, key);
+  // Searched first, so that a chunk already listed leaves the global value unwritten.
+  if (!isOccupied(ctx.readGlobal().occupancy, key))
+    insertOccupied(ctx.writeGlobal().occupancy, key);
   ctx.emit("being.spawned", { id: being.id, species: being.species, cell: [x, y] });
   return undefined;
 }

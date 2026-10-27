@@ -1238,10 +1238,10 @@ What the benchmark found beyond the targets, from the tables above:
    the daily prune: 0.7 ms with 16 chunks listed, 10 to 35 ms with 10,012, and 257 ms with 100,012,
    about 1 to 3.5 µs per listed chunk. From about 10,000 occupied chunks a tick that adds one costs
    a twentieth of a tick or more, and from 100,000 more than a whole tick.
-4. **A spawn costs about 0.2 ms**: 1,000 spawns in one tick take 0.17 to 0.33 s. Each prepares the
-   genesis again to check its cell (`spawnBlocked`), and `applySpawn` searches the occupancy index
-   linearly for its chunk, a cost over pairs of spawns and listed chunks that `isOccupied` would
-   remove.
+4. **A spawn costs about 0.2 ms**: 1,000 spawns in one tick take 0.17 to 0.33 s, measured before
+   `applySpawn` searched the occupancy index with `isOccupied`; it had searched it linearly, a cost
+   over pairs of spawns and listed chunks, and the binary search removed it in T4-8. Each spawn
+   still prepares the genesis again to check its cell (`spawnBlocked`).
 
 **When the entity section becomes necessary.** The commit turns changed chunks into canonical
 text, validates, and hashes them at about 25 MB/s per core ([determinism](determinism.md)), about
