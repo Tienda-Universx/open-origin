@@ -16,7 +16,7 @@
  */
 import { beings, worldgen } from "@open-origin/engine";
 import { utilityController } from "../src/index.ts";
-import { ACCEPTANCE, countingBrain, misses, runScenario } from "../test/support/metrics.ts";
+import { ACCEPTANCE, countingBrain, runScenario } from "../test/support/metrics.ts";
 import {
   BEINGS,
   LABELS,
@@ -25,6 +25,7 @@ import {
   type Variant,
   variantLife,
 } from "../test/support/scenario.ts";
+import { beingRows } from "./table.ts";
 
 const TEN_DAYS = 63_000;
 
@@ -128,30 +129,7 @@ function calibrate(label: string, options: Arguments): void {
   console.log(
     `${heading(label, options, { ...run, day })}, regrown and eaten: ${run.regrewAndEaten}`,
   );
-  console.log(
-    "id  incap died rest0 rejct cells out  meals big  sleeps rested walked lowN     lowH     misses",
-  );
-  const widths = [4, 6, 5, 6, 6, 6, 5, 6, 5, 7, 7, 7, 9, 9];
-  for (const record of run.beings) {
-    const cells = [
-      record.id,
-      record.incapacitated,
-      record.died,
-      record.exhausted,
-      record.rejected,
-      record.mealCells.length,
-      record.ateOutsideBirthWindow ? "yes" : "no",
-      record.meals,
-      record.bigMeals,
-      record.sleeps,
-      record.restedWakes,
-      record.walked,
-      record.lowestNutrition,
-      record.lowestHealth,
-      misses(record).join(", ") || "-",
-    ];
-    console.log(cells.map((cell, index) => `${cell}`.padEnd(widths[index] ?? 0)).join(""));
-  }
+  for (const row of beingRows(run)) console.log(row);
 }
 
 if (import.meta.main) {
