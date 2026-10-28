@@ -307,11 +307,16 @@ const encoder = new TextEncoder();
 /**
  * Runs `spawns` in `bench` at tick 1, `warmUp` ticks more, then times `measured` ticks; the
  * memory per being is read after the first decisions, at tick 2, before anything else is kept.
+ * `ticks.after`, when given, receives what each timed step returned, outside its timing.
  */
 export function measureRun(
   bench: BenchWorld,
   spawns: readonly Command[],
-  ticks: { readonly warmUp: number; readonly measured: number },
+  ticks: {
+    readonly warmUp: number;
+    readonly measured: number;
+    readonly after?: (result: StepResult) => void;
+  },
 ): Run {
   const { world, brain } = bench;
   const emptySnapshot = snapshotBytes(world).length;
@@ -334,6 +339,7 @@ export function measureRun(
     const result = step(world, []);
     const ns = Bun.nanoseconds() - start;
     wakes.update(result.changedChunks);
+    ticks.after?.(result);
     samples.push({
       ns,
       wakes: due,
