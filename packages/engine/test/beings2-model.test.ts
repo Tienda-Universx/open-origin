@@ -58,13 +58,14 @@ describe("createBeingsRuleset with rules", () => {
     expect(ruleset.systems.map((system) => [system.name, system.streams])).toEqual([
       ["beings", ["beings.brain", "beings.contest", "beings.crowd", "beings.speech"]],
     ]);
-    expect(Object.keys(ruleset.commands)).toEqual(["beings.spawn"]);
+    expect(Object.keys(ruleset.commands)).toEqual(["beings.spawn", "mind.inject"]);
   });
 
   test("without rules it stays beings@1", () => {
     const ruleset = beings.createBeingsRuleset({ controllers: { s1: idler(1000) } });
     expect(ruleset.versions.ruleset).toBe("beings@1");
     expect(ruleset.systems[0]?.streams).toEqual(["beings.brain", "beings.contest"]);
+    expect(Object.keys(ruleset.commands)).toEqual(["beings.spawn"]);
   });
 
   test('an explicit "beings@1" is beings@1, as when rules is absent', () => {
@@ -74,6 +75,7 @@ describe("createBeingsRuleset with rules", () => {
     });
     expect(ruleset.versions.ruleset).toBe("beings@1");
     expect(ruleset.systems[0]?.streams).toEqual(["beings.brain", "beings.contest"]);
+    expect(Object.keys(ruleset.commands)).toEqual(["beings.spawn"]);
   });
 
   test.each([["beings@3"], ["beings@01"], [2], [null], [""]])(

@@ -163,7 +163,7 @@ describe("checkMind", () => {
       { who: 41, t: 0, act: "greet", tn: 0, ex: 0 },
       { t: 0, cell: [1, 1], act: "tell", tn: 2, ex: 0 },
       { t: 0, act: "greet", tn: 2, ex: 0 },
-      { t: 0, act: "tell", tn: 4, ex: 0 },
+      { t: 0, act: "tell", p: foodAt(1, 1), tn: 4, ex: 0 },
     ];
     expect(pathsOf({ ...VALID, inbox })).toEqual([
       "/mind/inbox/0/cell",
@@ -171,6 +171,9 @@ describe("checkMind", () => {
       "/mind/inbox/2/act",
       "/mind/inbox/3/tn",
     ]);
+    // An injection's message is a tell of a proposition: an external episode holds one.
+    const empty: mind.InboxMessage = { t: 0, act: "tell", tn: 2, ex: 0 };
+    expect(pathsOf({ ...VALID, inbox: [empty] })).toEqual(["/mind/inbox/0/p"]);
     const silent: mind.InboxMessage = { who: 41, t: 0, cell: [1, 1], act: "unknown", tn: 0, ex: 4 };
     expect(issuesOf({ ...VALID, inbox: [silent] })).toEqual([
       {
@@ -272,7 +275,13 @@ describe("checkMind", () => {
 
   test("bounds each store by the largest capacity a law allows", () => {
     const episodes = Array.from({ length: 17 }, (_, index) => own(index + 1));
-    const inbox = Array.from({ length: 5 }, () => ({ t: 0, act: "tell" as const, tn: 2, ex: 0 }));
+    const inbox = Array.from({ length: 5 }, () => ({
+      t: 0,
+      act: "tell" as const,
+      p: foodAt(1, 1),
+      tn: 2,
+      ex: 0,
+    }));
     expect(pathsOf({ ...mindOf({ episodes }), inbox })).toEqual(["/mind/episodes", "/mind/inbox"]);
     expect(issuesOf({ ...mindOf({ episodes }) })[0]?.message).toBe(
       "a store holds at most 16 records, not 17",

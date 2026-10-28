@@ -5,7 +5,7 @@
  * `behavior`, which the engine stores in the being and hands back. A brain of beings@2 (ADR 0024)
  * also declares its behaviors and the namespace of its concepts, and senses others and its mind.
  */
-import type { LocalId, MindView, Proposition } from "../mind/index.ts";
+import type { Act, LocalId, Cell as MindCell, MindView, Proposition } from "../mind/index.ts";
 import type { DeepReadonly } from "../world/contracts.ts";
 import type {
   Activity,
@@ -91,16 +91,29 @@ export interface Controller {
 }
 
 /**
+ * A message as a brain hears it at a decision: the act, and for a known speaker its id and the
+ * cell it spoke from, the proposition of a `tell`, and the speaker's confidence band. A research
+ * injection is heard as a `tell` with no speaker, no cell, and no band. Its taints never reach it.
+ */
+export type HeardMessage = {
+  readonly who?: number;
+  readonly cell?: MindCell;
+  readonly act: Act;
+  readonly p?: Proposition;
+  readonly band?: number;
+};
+
+/**
  * What a brain of beings@2 receives at a decision (ADR 0024, docs/architecture/mind.md
  * "Perception"): the senses of T4, `self` with its six traits and copied by the allowlist of
- * classes.ts; the beings it perceives; what it hears, which speech fills in T5-6 and which is empty
- * until then; and the view of its mind, which never holds a taint.
+ * classes.ts; the beings it perceives; the messages of its inbox, which the decision consumes; and
+ * the view of its mind, which never holds a taint.
  */
 export type Senses2 = Omit<Senses, "self"> & {
   readonly self: Omit<Senses["self"], "traits"> & { readonly traits: Traits2 };
   readonly perceived: {
     readonly beings: readonly PerceivedBeing[];
-    readonly heard: readonly never[];
+    readonly heard: readonly HeardMessage[];
   };
   readonly mind: MindView;
 };
@@ -108,8 +121,9 @@ export type Senses2 = Omit<Senses, "self"> & {
 /**
  * The mental operations a brain of beings@2 proposes (docs/architecture/mind.md, "Beliefs"), at
  * most `mind.ops` in all: episodes the engine copies from percepts of this decision, by reference;
- * recalls; and beliefs formed, revised, and dropped, citing live records by their local ids. A
- * record created in the same decision is cited by the id the brain predicts from `next`.
+ * recalls; beliefs formed, revised, and dropped; and relationships changed, citing live records by
+ * their local ids. A record created in the same decision is cited by the id the brain predicts from
+ * `next`.
  */
 export type MindIntention = {
   readonly remember?: readonly {
@@ -133,6 +147,16 @@ export type MindIntention = {
     readonly ev: readonly LocalId[];
   }[];
   readonly drop?: readonly LocalId[];
+  /**
+   * Changes of the relationship with `who`: signed changes of affinity and trust, each at most
+   * `relations.delta` either way, citing one to three live records, one of which involves `who`.
+   */
+  readonly relate?: readonly {
+    readonly who: number;
+    readonly aff?: number;
+    readonly tr?: number;
+    readonly because: readonly LocalId[];
+  }[];
 };
 
 /** What a brain of beings@2 proposes: an intention of T4, and optionally mental operations. */

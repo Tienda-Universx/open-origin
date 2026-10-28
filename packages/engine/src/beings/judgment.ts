@@ -1,10 +1,12 @@
 /**
  * The judgment of a decision in the second phase (ADR 0023, ADR 0024): the senses the being's brain
  * decides on, fresh copies that share nothing with the world, and the engine's judgment of what it
- * proposes. Under beings@2 a decision first forgets what has faded by now, a law; the senses add
- * the beings the being perceives and the view of its mind after that step; and the mental
- * operations of an accepted intention apply (mental.ts), atomic with the rest of it. The new mind
- * and the decision's ledger are left in the Work, which the third phase writes.
+ * proposes. Under beings@2 a decision first perceives the beings in sight, then applies step 1, a
+ * law: it forgets what has faded by now, updates familiarity and creates relationships, and
+ * consumes the inbox; the senses add the beings it perceives, the messages it hears, and the view
+ * of its mind after that step; and the mental operations of an accepted intention apply
+ * (mental.ts), atomic with the rest of it. The new mind and the decision's ledger are left in the
+ * Work, which the third phase writes.
  */
 import { copyCanonical } from "../canonical/copy.ts";
 import { type Mind, type MindContext, viewOf } from "../mind/index.ts";
@@ -15,11 +17,12 @@ import type { Brain } from "./capture.ts";
 import { copySensed } from "./classes.ts";
 import type { SensedWindow, Senses, Senses2 } from "./contracts.ts";
 import { type BeingsEnv, integrity } from "./env.ts";
+import { heardMessage } from "./hearing.ts";
 import { type Accepted, acceptIntention, type Refused } from "./intention.ts";
 import type { Species2 } from "./life2.ts";
-import { applyOperations, forgetAtDecision, type Percepts } from "./mental.ts";
+import { applyOperations, type Percepts, type StepOne, stepOne } from "./mental.ts";
 import { type MindGrammar, NO_OPERATIONS } from "./operations.ts";
-import { copyPerceived, perceiveBeings, sightOf } from "./perception.ts";
+import { copyPerceived, type PerceivedBeing, perceiveBeings, sightOf } from "./perception.ts";
 import { copyWindow, type SenseInput, senseWindow, senseWindowAndChunks } from "./senses.ts";
 
 /** What sensing the window of the being at this tick needs. */
@@ -83,34 +86,45 @@ function mindContext(env: BeingsEnv, work: Work): MindContext {
   };
 }
 
+/** What the being of beings@2 perceives of the world at a decision: its window and the beings. */
+type Perceived = { readonly window: SensedWindow; readonly beings: readonly PerceivedBeing[] };
+
+/**
+ * The window of the being of beings@2 at this tick, and the beings it perceives from the chunks
+ * that window read, the nearest its attention keeps, in that order.
+ */
+function perceivedBy(env: BeingsEnv, work: Work): Perceived {
+  // validateGlobal accepted laws of life@2.
+  const species = work.species as Species2;
+  const { window, chunks } = senseWindowAndChunks(senseInput(env, work));
+  const limits = {
+    sight: sightOf(species.perception, env.light()),
+    attention: species.perception.attention,
+  };
+  return { window, beings: perceiveBeings(chunks, { id: work.old.id, cell: work.cell }, limits) };
+}
+
 /**
  * The senses of the being of beings@2 at this tick (mind.md, "Perception"), as fresh as those of
- * beings@1: `self` by the allowlist of classes.ts; copies of the beings it perceives, from the
- * chunks its window read; and the view of `mind` at this tick. The engine keeps its own percepts
- * of the decision apart, which a brain that writes to its senses cannot reach.
+ * beings@1: `self` by the allowlist of classes.ts; copies of the beings it perceives; the messages
+ * it hears, without their taints; and the view of its mind after step 1 at this tick. The engine
+ * keeps its own percepts of the decision apart, which a brain that writes to its senses cannot
+ * reach.
  */
 function sensesOf2(
   env: BeingsEnv,
   work: Work,
-  mind: Mind,
-  ctx: MindContext,
+  perceived: Perceived,
+  step1: StepOne,
 ): Sensed & { readonly percepts: Percepts } {
-  // validateGlobal accepted laws of life@2.
-  const species = work.species as Species2;
-  const { window, chunks } = senseWindowAndChunks(senseInput(env, work));
-  const light = env.light();
-  const limits = {
-    sight: sightOf(species.perception, light),
-    attention: species.perception.attention,
-  };
-  const beings = perceiveBeings(chunks, { id: work.old.id, cell: work.cell }, limits);
+  const { window, beings } = perceived;
   const senses: Senses2 = {
     self: copySensed(selfOf(work)) as Senses2["self"],
-    light,
+    light: env.light(),
     window: copyWindow(window),
     draws: env.draws(work.old.id),
-    perceived: { beings: beings.map(copyPerceived), heard: [] },
-    mind: viewOf(mind, ctx),
+    perceived: { beings: beings.map(copyPerceived), heard: step1.heard.map(heardMessage) },
+    mind: viewOf(step1.mind, mindContext(env, work)),
   };
   const { cell, outcome } = work;
   const percepts: Percepts = {
@@ -118,6 +132,7 @@ function sensesOf2(
     cell,
     outcome,
     beings,
+    heard: step1.heard,
     window,
     activities: env.rules.activities,
   };
@@ -126,13 +141,15 @@ function sensesOf2(
 
 /**
  * The grammar of the mental operations of the brain `brain` for the being of `work`: its species'
- * `mind.ops`, the brain's namespace of concepts, and the observables of the world's catalog.
+ * `mind.ops` and `relations.delta`, the brain's namespace of concepts, and the observables of the
+ * world's catalog.
  */
 function grammarOf(env: BeingsEnv, work: Work, brain: Brain): MindGrammar {
   // validateGlobal accepted laws of life@2, and the capture of beings@2 a namespace of concepts.
   const species = work.species as Species2;
   return {
     ops: species.mind.ops,
+    delta: species.relations.delta,
     concepts: brain.concepts as string,
     observable: (id) => observableCatalog(env.prepared()).some((entry) => entry.id === id),
   };
@@ -151,21 +168,24 @@ export function judge(env: BeingsEnv, work: Work): Accepted | Refused {
 }
 
 /**
- * A decision of beings@2 (mind.md, "Beliefs"): step 1 forgets what has faded by now, a law that
- * stays whatever the brain proposes; the brain decides on the view of that mind; and the mental
- * operations of an accepted intention apply, atomic with the rest of it, so that a failing one
- * rejects the whole intention. The new mind and the decision's ledger are left in `work`.
+ * A decision of beings@2 (mind.md, "Beliefs"): step 1 forgets what has faded by now, updates
+ * familiarity with the beings perceived, creating relationships, and consumes the inbox, a law
+ * that stays whatever the brain proposes; the brain decides on the view of that mind; and the
+ * mental operations of an accepted intention apply, atomic with the rest of it, so that a failing
+ * one rejects the whole intention. The new mind and the decision's ledger are left in `work`.
  */
 export function judge2(env: BeingsEnv, work: Work): Accepted | Refused {
   // A being decides at most once a tick: a second decision would replace the first one's ledger.
   if (work.ledger !== undefined)
     throw integrity(`the being ${work.old.id} decided twice at the tick ${env.tick}`);
   const ctx = mindContext(env, work);
+  const perceived = perceivedBy(env, work);
+  const met = perceived.beings.map((being) => being.id);
   // validateChunk accepted the mind of every being of beings@2.
-  const step1 = forgetAtDecision(work.mind as Mind, ctx);
+  const step1 = stepOne(work.mind as Mind, met, ctx);
   work.mind = step1.mind;
   work.ledger = step1.ledger;
-  const { window, senses, percepts } = sensesOf2(env, work, step1.mind, ctx);
+  const { window, senses, percepts } = sensesOf2(env, work, perceived, step1);
   const brain = env.controller(work.species.id);
   const judged = acceptIntention(brain.decide(senses), {
     tick: env.tick,

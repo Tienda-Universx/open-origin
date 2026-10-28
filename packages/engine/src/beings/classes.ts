@@ -202,16 +202,26 @@ const RELATIONSHIP = record("C1", [
   ["who", C1],
 ]);
 
-const MESSAGE = record("C1", [
-  ["act", C1],
-  ["band", C1],
-  ["cell", C1],
-  ["ex", C3],
-  ["p", PROPOSITION],
-  ["t", C1],
-  ["tn", C3],
-  ["who", C1],
+/**
+ * A message in the inbox, and what a brain hears of it at a decision, the members marked sensed:
+ * all but its tick, which a brain never senses, and its taints, which are C3.
+ */
+const MESSAGE_MEMBERS: readonly (readonly [string, ClassNode, boolean])[] = Object.freeze([
+  ["act", C1, true],
+  ["band", C1, true],
+  ["cell", C1, true],
+  ["ex", C3, false],
+  ["p", PROPOSITION, true],
+  ["t", C1, false],
+  ["tn", C3, false],
+  ["who", C1, true],
 ]);
+const MESSAGE: ClassNode = Object.freeze({
+  class: "C1",
+  members: Object.freeze(
+    MESSAGE_MEMBERS.map(([name, node, sensed]) => Object.freeze({ name, node, sensed })),
+  ),
+});
 
 /** The mind of a being: C1, but for the taints of its records and its exposure. */
 const MIND = record("C1", [
@@ -281,6 +291,7 @@ export const EVENT_CLASSES: readonly { readonly type: string; readonly class: Da
         ["being.spawned", "C0"],
         ["being.started", "C0"],
         ["mind.changed", "C1"],
+        ["mind.injected", "C3"],
         ["mind.provenance", "C3"],
       ] as const
     ).map(([type, cls]) => Object.freeze({ type, class: cls })),
@@ -288,7 +299,10 @@ export const EVENT_CLASSES: readonly { readonly type: string; readonly class: Da
 
 /** The class of every command the beings ruleset handles: the admin plane's are operations. */
 export const COMMAND_CLASSES: readonly { readonly type: string; readonly class: DataClass }[] =
-  Object.freeze([Object.freeze({ type: "beings.spawn", class: "C3" as const })]);
+  Object.freeze([
+    Object.freeze({ type: "beings.spawn", class: "C3" as const }),
+    Object.freeze({ type: "mind.inject", class: "C3" as const }),
+  ]);
 
 /** A record whose members are read by name: values the engine built, never a host's. */
 type Members = { readonly [name: string]: unknown };
@@ -344,4 +358,13 @@ function copyMembers(
 export function copySensed(self: Members): Members {
   // BEING_CLASSES is a record node: it always has members.
   return copyMembers(BEING_CLASSES.members as readonly ClassMember[], self, true);
+}
+
+/**
+ * What a brain of beings@2 hears of `message`, a message of its inbox as the engine holds it: the
+ * members the registry marks as sensed, copied by allowlist, never its tick or its taints.
+ */
+export function copyHeard(message: Members): Members {
+  // MESSAGE is a record node: it always has members.
+  return copyMembers(MESSAGE.members as readonly ClassMember[], message, true);
 }

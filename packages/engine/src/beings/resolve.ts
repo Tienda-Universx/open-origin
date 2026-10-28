@@ -10,7 +10,7 @@ import { compareCodeUnits } from "../canonical/order.ts";
 import { simSeconds, type Tick } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import { idleEnd, nextArrival, nextBite } from "./activity.ts";
-import { outcomeOf, type Work } from "./advance.ts";
+import { hearingOf, outcomeOf, type Work } from "./advance.ts";
 import type { Being } from "./being.ts";
 import {
   type Course,
@@ -25,6 +25,7 @@ import { type BeingsChunk, dueOf } from "./chunk.ts";
 import { type BeingsEnv, CONTEST_STREAM, integrity } from "./env.ts";
 import type { Depletion } from "./food.ts";
 import { takenAt } from "./food.ts";
+import { hearingWakes } from "./hearing.ts";
 import { nextLightTick } from "./light.ts";
 import { isOccupied, mergeOccupied, pruneOccupancy } from "./occupancy.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
@@ -172,10 +173,21 @@ function lightTicks(env: BeingsEnv, work: Work): (Tick | undefined)[] {
 }
 
 /**
+ * The next tick, when messages that reached the inbox of the being of beings@2 at this tick wake
+ * it (hearing.ts): its activity at the end of the tick is idle, as a hearer's at a delivery.
+ */
+function hearingTick(env: BeingsEnv, work: Work): Tick | undefined {
+  if (!env.rules.minds || work.mind === undefined) return undefined;
+  return hearingWakes(work.mind, work.activity, hearingOf(env, work, env.tick))
+    ? env.tick + 1
+    : undefined;
+}
+
+/**
  * The record of `work` after this tick: anchored at this tick when its body jumped or its rates
  * changed, and kept on its old anchor otherwise, so that its values never depend on how often it
- * was processed; with its next wake, at least the next tick and at most a day away; and, under
- * beings@2, with its mind.
+ * was processed; with its next wake, at least the next tick and at most a day away, or the next
+ * tick when hearing wakes it; and, under beings@2, with its mind.
  */
 function finalBeing(env: BeingsEnv, work: Work): Being {
   const old = work.old;
@@ -190,6 +202,7 @@ function finalBeing(env: BeingsEnv, work: Work): Being {
     nextLevelTick(course, levelsOf(work.species, extraLevels(work)), clock),
     activityTick(env, work),
     ...lightTicks(env, work),
+    hearingTick(env, work),
     env.tick + ceilDiv(env.dayLength, env.sps),
   ];
   let wake = Number.MAX_SAFE_INTEGER;

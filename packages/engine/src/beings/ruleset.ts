@@ -1,6 +1,6 @@
 /**
  * The ruleset of the beings (ADR 0023, ADR 0024), `beings@1` and, beside it, `beings@2`: one
- * system, `beings`, and one command, `beings.spawn`, over a global value that holds the sealed
+ * system, `beings`, and the command `beings.spawn`, with `mind.inject` under beings@2, over a global value that holds the sealed
  * genesis of worldgen, the sealed laws of life, and the occupancy index, and chunks that hold
  * beings and the food they took. The host gives one brain per species; the ruleset captures them
  * when it is made, so they cannot change later. Each version follows its own rules (rules.ts):
@@ -32,6 +32,7 @@ import { brainVersion, type Controllers, captureControllers } from "./capture.ts
 import { type BeingsChunk, beingsChunkIssues, dueOf } from "./chunk.ts";
 import type { Controller, Controller2 } from "./contracts.ts";
 import type { BeingsGlobal } from "./env.ts";
+import { applyInject, checkInject } from "./inject.ts";
 import { type LifeConfig, lifeSeal, type Species, sealedLifeIssues } from "./laws.ts";
 import { LIFE2_RULES, LIFE2_VERSION, type LifeConfig2 } from "./life2.ts";
 import { insertOccupied, isOccupied, occupancyIssues } from "./occupancy.ts";
@@ -383,6 +384,8 @@ function rulesetOf(
         check: (view, command) => checkSpawn(view, command, rules),
         apply: (ctx, command) => applySpawn(ctx, command, rules),
       },
+      // Only beings of beings@2 hold a mind; beings@1 handles no other command.
+      ...(rules.minds ? { "mind.inject": { check: checkInject, apply: applyInject } } : {}),
     },
     validateGlobal: (value) => globalIssues(value, controllers, rules),
     validateChunk: (key, value) =>

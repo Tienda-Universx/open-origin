@@ -69,7 +69,9 @@ the tick:
   never another being's needs, health, or `condition`. Attention keeps the `perception.attention`
   nearest, by distance, then id. Recognition of individuals is perfect, and terrain hides nothing:
   two simplifications.
-- **What it hears.** The messages in its inbox ([Speech](#speech)), consumed at this decision.
+- **What it hears.** The messages in its inbox ([Speech](#speech)), consumed at this decision, in
+  the order they arrived: each as `{ who?, cell?, act, p?, band? }`, a fresh copy, with neither its
+  tick nor its taints; an injection's as `{ act: "tell", p }`.
 - **Its own experience.** The result of its last activity, and the units it ate if it ate: the
   being's `outcome` in its senses, whose `units`, in `beings@2`, the meal that just ended ate.
   A deposit's exposure is "measurement" in the catalog ([0021](../decisions/0021-procedural-world.md)):
@@ -335,10 +337,16 @@ How the engine reads and applies them (T5-5a):
   before ids that have run out, `mind_malformed`; a `recall` or `drop` of a record not held,
   `unknown_record`; a `believe` or `revise` citing a record twice is `mind_malformed`, then one not
   held `unknown_record`; a `believe` once ids have run out is `mind_malformed`, before its depth,
-  `depth_exceeded`; and a `revise` of a belief not held is `unknown_record`, then `premise_order`,
-  then `depth_exceeded`.
+  `depth_exceeded`; a `revise` of a belief not held is `unknown_record`, then `premise_order`,
+  then `depth_exceeded`; and a `relate` reads as its grammar `who`, an entity id, `aff` and `tr`,
+  signed changes each at most `relations.delta` either way, and `because`, one to three ids, all
+  `mind_malformed` otherwise, then applies: an id cited twice is `mind_malformed`, one not held
+  `unknown_record`, a being with no relationship `unknown_record`, and citations of which none
+  involves `who` `premise_order`.
 - **Percepts.** `{ being: i }` is the i-th being perceived, in the order attention keeps them;
-  `{ heard: i }` the i-th message heard, none until speech (T5-6); `{ food: [x, y] }` a cell of the
+  `{ heard: i }` the i-th message heard, in the order of the inbox, a `heard` episode of a known
+  speaker's message and an `external` one of an injection's, with the message's content and taints;
+  `{ food: [x, y] }` a cell of the
   window, which a cell outside the world never is; and `{ outcome: true }` a `failed` episode when
   the outcome's result is `failed`, whose reasons are exactly those a `failed` episode indexes, an
   `ate` episode when the outcome holds `units`, 0 included, saturating at 2^20, the largest value
@@ -369,6 +377,14 @@ only after a percept or a message of that being. Affinity and trust change only 
 `relations.delta`, and the relationship takes the `tn` of what it cites. Knowing someone is
 familiarity; trusting its claims is a judgment the brain makes by checking its testimony against
 what it later sees.
+
+How the engine applies them (T5-5b): `relate`'s `aff` and `tr` are signed changes, absent meaning
+0, and each result saturates at its bounds, −1000 to 1000 and 0 to 1000. The relationship's `tn`
+becomes its own united with the `tn` of every record the operation cites, so it never shrinks, and
+flows downstream like a belief's; a relationship has no `ex`, and relating grows no exposure. The
+records it cites are refreshed as any citation refreshes them. A record created in the same
+decision may be cited, a `being` episode that a `remember` of that decision made among them, since
+`relate` applies last.
 
 The key is an entity id, so other species, and future human avatars, fit without a new structure.
 Speech from a human avatar will carry `human-external` because of the kind of its controller (T9
@@ -501,10 +517,14 @@ changed a mind when the mind it leaves is not the one it held, a recall alone in
 changes `w` and `r`; both events are emitted then, even when every list is empty. `forgot` lists,
 each with the beliefs that lost it, every record that left the mind but by `drop`: those that faded
 at step 1, by increasing id, then those a full store evicted, in the order of the operations.
-`mind.provenance` lists `{ id, tn, ex, ev }` for each live record the decision created, revised, or
-tainted downstream, by increasing id, an episode with `ev: []`, and `exposure` after the decision;
-the `ev` of a revised belief records the citations it pushed out, those of its previous `ev` it no
-longer holds. A delivery emits `speech.delivered`, and a `mind.provenance` when it changes an
+`mind.provenance` lists `{ id, tn, ex, ev }` for each live record the decision created, revised,
+related, or tainted downstream, by increasing id, an episode with `ev: []`, and `exposure` after the
+decision; the `ev` of a revised belief records the citations it pushed out, those of its previous
+`ev` it no longer holds. `related` lists, by increasing id, each relationship the decision created
+at step 1, one a full store evicted at once included, and each one a `relate` changed; a
+relationship's entry in `mind.provenance` has `ex: 0` and, as `ev`, the records its `relate`
+operations cited, `[]` when it was only created. Familiarity, a law recomputed from perception, is
+not in the ledger. A delivery emits `speech.delivered`, and a `mind.provenance` when it changes an
 exposure; an accepted injection emits `mind.injected` and a `mind.provenance`. Every change of a
 mind is therefore in the ledger.
 
@@ -515,6 +535,21 @@ of the being at `cell`, so the engine never searches the world for it, with `hum
 among its taints. Commands apply before the systems of their tick, so the being wakes at t + 1 under
 the rule of a hearer, without spending its daily wakes. Rejections: `admin_only`, `not_found`,
 `full`, `invalid_inject`.
+
+How the engine applies it (T5-5b): the payload has exactly those members, which the kernel already
+bounds at 8 KiB of canonical text: `being` an entity id; `cell` a cell of the world; `p` a
+proposition of `prop@1` by `mind.checkProposition`, of any namespace; and `taints` a mask from 0 to
+7; anything else is `invalid_inject`, with every issue in its details. The being is found by binary
+search among the beings of the chunk of `cell`, and must stand at that cell, or it is `not_found`;
+an inbox holding `mind.inbox` messages is `full`, so the injections of one tick count as they
+apply. The message is `{ t, act: "tell", p, tn, ex: 0 }`, `t` the tick and `tn` the declared taints
+with `human-external`; the being's exposure grows with it at once. The rule of a hearer, which
+speech (T5-6) shares: messages that reach the inbox at tick t wake the being at t + 1 when its
+activity is idle and its quota counts fewer than `speech.wakesPerDay` wakes by hearing in the day,
+an injection adding none; at t + 1 its idle is interrupted, `being.finished` with the reason
+`heard`, and it decides. The check holds at the delivery, for its wake, and at the end of t, for a
+being processed at t that did not decide then. A being that walks, eats, or sleeps keeps the
+message for its next decision.
 
 An intention or operation that fails validation is a rejection, the being's experience: `malformed`,
 `mind_malformed`, `unknown_record`, `premise_order`, `depth_exceeded`, `talk_unseen`,

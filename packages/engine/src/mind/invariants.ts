@@ -212,18 +212,27 @@ function checkRelationship(
 
 /**
  * Reports a message whose speaker and cell do not come together: a known speaker's message has
- * both, and an injection's has neither, is a `tell`, and carries human-external.
+ * both, and an injection's has neither, is a `tell` of a proposition, and carries human-external.
  */
 function checkSender(message: InboxMessage, path: string, sink: IssueSink): void {
   if (message.who !== undefined && message.cell === undefined) {
     sink.report(`${path}/cell`, "a message from a known speaker has the cell it was said from");
   } else if (message.who === undefined && message.cell !== undefined) {
     sink.report(`${path}/who`, "a message with a cell has a speaker: an injection has neither");
-  } else if (message.who === undefined && message.act !== "tell") {
-    sink.report(`${path}/act`, "an injection's message is a tell");
   } else if (message.who === undefined) {
-    checkInjected(message.tn, `${path}/tn`, sink);
+    checkInjection(message, path, sink);
   } else checkContent(message.act, message.tn | message.ex, path, sink);
+}
+
+/**
+ * Reports an injection's message that is not a `tell` of a proposition carrying human-external,
+ * the only message an `external` episode can be made from.
+ */
+function checkInjection(message: InboxMessage, path: string, sink: IssueSink): void {
+  if (message.act !== "tell") sink.report(`${path}/act`, "an injection's message is a tell");
+  else if (message.p === undefined)
+    sink.report(`${path}/p`, "an injection's message carries its proposition");
+  else checkInjected(message.tn, `${path}/tn`, sink);
 }
 
 function checkMessage(message: InboxMessage, path: string, sink: IssueSink): void {
