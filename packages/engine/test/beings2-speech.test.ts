@@ -430,7 +430,7 @@ describe("a full store of relationships and the quotas of a pair", () => {
     ]);
   });
 
-  test("evicts a relationship whose last act is out of the window, max(gap, cooldown), as before", () => {
+  test("evicts a relationship whose last act is out of the window, the cooldown here, as before", () => {
     // Room for one, held by being 41, addressed exactly 600 s before tick 60, the window: being 2,
     // perceived, takes its place, and being 1 greets it at once.
     const life = speechWith({ turns: 2, gap: 120, cooldown: 600 });
@@ -468,6 +468,44 @@ describe("a full store of relationships and the quotas of a pair", () => {
     const within = run(11);
     expect(refusals(within.events)).toEqual([[60, "talk_quota"]]);
     expect(mindIn(within.world, 1).relations.map(({ who }) => who)).toEqual([41]);
+  });
+
+  test("keeps a conversation that a pause of exactly speech.gap continues, with gap above cooldown", () => {
+    // Room for one, held by being 2, addressed twice, the last exactly the gap, 120 s, before tick
+    // T: the act at T is the third of that conversation, and the next one cools down for 60 s.
+    // Being 3, a newcomer nearer than being 2, would evict it and reset its quotas.
+    const life = speechWith({ turns: 3, gap: 120, cooldown: 60 });
+    const small = {
+      ...life,
+      species: life.species.map((species) => ({
+        ...species,
+        mind: { ...species.mind, relations: 1 },
+      })),
+    };
+    const T = 20;
+    const talking = relationship(1, 2, { f: 24, seen: T - 1, talk: T - 10, turns: 2 });
+    const speaker = {
+      ...being2(1, A, { mind: mindOf({ relations: [talking] }) }),
+      activity: { kind: "idle" as const, start: 0, ms: T * 12_000 },
+      wake: T,
+    };
+    const greets: Script = (_senses, decision) => (decision < 2 ? talk(2, "greet") : idling(LONG));
+    const { world } = scripted(
+      [speaker, being2(2, B), being2(3, NEAR)],
+      { 1: greets },
+      { life: small },
+    );
+    const events = runTo(world, T + 1);
+    // The act begun at T is said when it ends, at T + 1, where the next one is refused.
+    const talks = eventsOfType(events, "being.started").filter(
+      ({ payload }) => (payload as { activity: string }).activity === "talk",
+    );
+    expect(talks.map(({ tick }) => tick)).toEqual([T]);
+    expect(eventsOfType(events, "speech.uttered").map(({ tick }) => tick)).toEqual([T + 1]);
+    expect(refusals(events)).toEqual([[T + 1, "talk_quota"]]);
+    expect(mindIn(world, 1).relations).toEqual([
+      expect.objectContaining({ who: 2, talk: T, turns: 3 }),
+    ]);
   });
 });
 

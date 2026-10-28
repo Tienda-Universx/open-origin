@@ -179,7 +179,7 @@ describe("the view of a mind in the senses", () => {
     moment: { tick, secondsPerTick: 12 },
     laws: mind.defaultMindLaws(),
     retention: 1000,
-    // max(speech.gap, speech.cooldown) of the default laws of life@2.
+    // max(speech.gap + 1, speech.cooldown) of the default laws of life@2.
     talkWindow: 18_900,
   });
 

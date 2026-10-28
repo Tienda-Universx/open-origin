@@ -213,9 +213,9 @@ seconds, with `w = f`, the anchor `seen`, and `relations.halfLife`, which retent
   included, then the oldest (an episode by `t`, a belief by `u`), then the lowest id. A full store
   of relationships admits a being met for the first time and evicts the other relationship with
   the lowest familiarity, then the one seen longest ago, then the lowest id, among those whose being
-  the mind has not addressed in the last `max(speech.gap, speech.cooldown)` seconds: it never
+  the mind has not addressed in the last `max(speech.gap + 1, speech.cooldown)` seconds: it never
   evicts a relationship whose `talk` is a tick from 1 to now, less than that long ago, which holds
-  the quotas of a conversation or its cooldown; a `talk` of 0, or after now, which no world holds,
+  the quotas of a conversation that a pause of at most `gap` continues, or of its cooldown; a `talk` of 0, or after now, which no world holds,
   keeps nothing. When every relationship it holds is within that window, the newcomer gets none,
   and nothing is evicted.
 - A recall, or citing the episode as evidence, sets `w` to `min(1000, s + recall)` and `r` to now.
@@ -388,7 +388,7 @@ such a relationship as seen longest ago. So a brain that decides every tick earn
 that decides every minute while the other stays in view, and familiarity lost to an absence stays
 lost. A relationship exists only after a percept or a message of that being. It also holds the
 quotas of speech to that being, `talk` and `turns`, so a full store never evicts one the mind
-addressed within `max(speech.gap, speech.cooldown)` seconds ("Time, salience, and forgetting"):
+addressed within `max(speech.gap + 1, speech.cooldown)` seconds ("Time, salience, and forgetting"):
 evicting it and meeting the being again would reset a conversation or its cooldown. Affinity and
 trust change only by `relate`, by at most `relations.delta`, and the relationship takes the `tn`
 of what it cites. Knowing someone is familiarity; trusting its claims is a judgment the brain makes
@@ -448,9 +448,10 @@ How the engine applies it (T5-6):
   paused longer than `speech.gap`, or when `speech.cooldown` has passed, at least, since a full
   conversation; `turns + 1` otherwise; and while a full conversation cools down, the act is
   `talk_quota`. So is an act beyond `speech.perDay`, and one to a being the mind holds no
-  relationship with, which happens when ids have run out, or when a full store kept no room for it
-  because the being addressed every being it holds within the window of the store's rule. An act
-  counts whether or not it is later cut short or heard.
+  relationship with after step 1: ids ran out, a full store kept no room for it because the mind
+  addressed every being it holds within the window of the store's rule, or a later perception or
+  speaker of the same step 1 evicted it. An act counts whether or not it is later cut short or
+  heard.
 - **The activity.** `{ kind: "talk", start, to, act, captured }`, where `captured` is
   `{ p?, band?, tn, ex }`, a tell's content and taints, and `{ tn: 0, ex: 0 }` for the other acts.
   `talk` comes last in the list of kinds of activity of `beings@2`, after those of T4, whose index

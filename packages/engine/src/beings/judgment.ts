@@ -84,7 +84,7 @@ function sensesOf(env: BeingsEnv, work: Work): Sensed {
 
 /**
  * The context the mind layer works in for the being of `work` at this tick: a full store keeps the
- * relationship of a being it addressed within `max(speech.gap, speech.cooldown)` seconds, which
+ * relationship of a being it addressed within `max(speech.gap + 1, speech.cooldown)` seconds, which
  * holds the quotas of the pair.
  */
 function mindContext(env: BeingsEnv, work: Work): MindContext {
@@ -96,7 +96,8 @@ function mindContext(env: BeingsEnv, work: Work): MindContext {
     moment: { tick: env.tick, secondsPerTick: env.sps },
     laws: { mind: species.mind, relations: species.relations },
     retention: traits.retention,
-    talkWindow: greatest(gap, cooldown),
+    // A pause of at most `gap` continues a conversation, and one of less than `cooldown` cools it.
+    talkWindow: greatest(gap + 1, cooldown),
   };
 }
 
