@@ -67,7 +67,16 @@ describe("createBeingsRuleset with rules", () => {
     expect(ruleset.systems[0]?.streams).toEqual(["beings.brain", "beings.contest"]);
   });
 
-  test.each([["beings@1"], ["beings@3"], [2], [null], [""]])(
+  test('an explicit "beings@1" is beings@1, as when rules is absent', () => {
+    const ruleset = beings.createBeingsRuleset({
+      controllers: { s1: idler(1000) },
+      rules: "beings@1",
+    });
+    expect(ruleset.versions.ruleset).toBe("beings@1");
+    expect(ruleset.systems[0]?.streams).toEqual(["beings.brain", "beings.contest"]);
+  });
+
+  test.each([["beings@3"], ["beings@01"], [2], [null], [""]])(
     "refuses rules %p with invalid_ruleset",
     (rules) => {
       const error = engineErrorOf(() =>
@@ -77,7 +86,7 @@ describe("createBeingsRuleset with rules", () => {
       expect(error.issues.map(({ path, message }) => ({ path, message }))).toEqual([
         {
           path: "/rules",
-          message: 'the rules are "beings@2", or absent for beings@1',
+          message: 'the rules are "beings@1", the same as absent, or "beings@2"',
         },
       ]);
     },

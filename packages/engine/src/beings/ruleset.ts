@@ -35,14 +35,23 @@ import { type LifeConfig, lifeSeal, type Species, sealedLifeIssues } from "./law
 import { LIFE2_RULES, LIFE2_VERSION, type LifeConfig2 } from "./life2.ts";
 import { insertOccupied, isOccupied, occupancyIssues } from "./occupancy.ts";
 import { NEED_MAX } from "./rates.ts";
-import { BEINGS_RULES, BEINGS2_RULES, BEINGS2_RULESET_VERSION, type BeingsRules } from "./rules.ts";
+import {
+  BEINGS_RULES,
+  BEINGS_RULESET_VERSION,
+  BEINGS2_RULES,
+  BEINGS2_RULESET_VERSION,
+  type BeingsRules,
+} from "./rules.ts";
 import { range, readFields, readId, readInt, readList, TICKS } from "./schema.ts";
 import { runBeings } from "./system.ts";
 
-/** What the host gives the ruleset beings@1: one brain per species of the world's laws of life. */
+/**
+ * What the host gives the ruleset beings@1: one brain per species of the world's laws of life, and
+ * no rules, or "beings@1".
+ */
 export type BeingsRulesetOptions = {
   readonly controllers: { readonly [species: string]: Controller };
-  readonly rules?: undefined;
+  readonly rules?: typeof BEINGS_RULESET_VERSION;
 };
 
 /** What the host gives the ruleset beings@2: one brain of beings@2 per species of life@2. */
@@ -309,18 +318,21 @@ function applySpawn(
   return undefined;
 }
 
-/** The rules the member `rules` of the options names: beings@1 when it is absent. */
+/** The rules the member `rules` of the options names: beings@1 when it is absent or names it. */
 function readRules(value: unknown, issues: IssueList): BeingsRules | undefined {
   if (value === UNREAD) return undefined;
-  if (value === undefined) return BEINGS_RULES;
+  if (value === undefined || value === BEINGS_RULESET_VERSION) return BEINGS_RULES;
   if (value === BEINGS2_RULESET_VERSION) return BEINGS2_RULES;
-  issues.report("/rules", `the rules are "${BEINGS2_RULESET_VERSION}", or absent for beings@1`);
+  issues.report(
+    "/rules",
+    `the rules are "${BEINGS_RULESET_VERSION}", the same as absent, or "${BEINGS2_RULESET_VERSION}"`,
+  );
   return undefined;
 }
 
 /**
- * The beings ruleset over the brains of `options`, one per species: beings@1, or beings@2 when
- * `rules` names it. Throws EngineError("invalid_ruleset") with every problem of the options and the
+ * The beings ruleset over the brains of `options`, one per species: beings@1 when `rules` is absent
+ * or names it, and beings@2 when it names beings@2. Throws EngineError("invalid_ruleset") with every problem of the options and the
  * brains.
  */
 export function createBeingsRuleset(

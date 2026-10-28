@@ -110,8 +110,19 @@ function workOf(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Being>): Wor
 /** Ends the current activity with `result`, idling until the brain decides. */
 function finish(env: BeingsEnv, work: Work, result: string, reason = ""): void {
   env.emit("being.finished", { id: work.old.id, activity: work.activity.kind, result, reason });
-  work.outcome = { result, tick: env.tick, reason };
+  // A meal ended here took only whole bites: a short one ends it in the third phase instead.
+  const eaten =
+    work.activity.kind === "eat" ? work.activity.bites * work.species.diet.biteUnits : 0;
+  work.outcome = outcomeOf(env, work, { result, tick: env.tick, reason }, eaten);
   work.activity = { kind: "idle", start: env.tick, ms: 1 };
+}
+
+/**
+ * `outcome`, the end of the current activity of `work`; under beings@2, the end of a meal also
+ * holds `eaten`, the units it ate in total (mind.md, "Perception": the being's own experience).
+ */
+export function outcomeOf(env: BeingsEnv, work: Work, outcome: Outcome, eaten: number): Outcome {
+  return env.rules.minds && work.activity.kind === "eat" ? { ...outcome, units: eaten } : outcome;
 }
 
 /** Ends the current activity because of `reason`; a walk whose last step arrived is done. */

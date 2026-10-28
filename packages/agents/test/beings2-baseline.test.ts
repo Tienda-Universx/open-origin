@@ -3,7 +3,8 @@
  * and "Verification plan"): wrapped with its five behaviors and a namespace of no concepts, it
  * lives on beings@2 the same life it lives on beings@1, over T4's short determinism subject: at
  * every tick the same events, and every being with the same cell, needs, activity, and every other
- * member of T4; only what beings@2 adds differs, the three traits and the mind.
+ * member of T4; only what beings@2 adds differs, the three traits, the mind, and the units a meal
+ * ate in its outcome, which the test checks are there.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -45,11 +46,17 @@ const SUBJECT: readonly Spawn[] = [
 const TICKS = 120;
 const SEED: Seed = [7, 7];
 
-/** A being of beings@2 without what beings@2 adds: its mind and its three new traits. */
+/** An outcome without the units of a meal, which only beings@2 records. */
+function outcome1(outcome: beings.Outcome): beings.Outcome {
+  const { units: _units, ...rest } = outcome;
+  return rest;
+}
+
+/** A being of beings@2 without what beings@2 adds: its mind, three traits, and a meal's units. */
 function asBeing1(being: beings.Being2): beings.Being {
-  const { mind: _mind, traits, ...body } = being;
+  const { mind: _mind, traits, outcome, ...body } = being;
   const { appetite, sleepiness, curiosity } = traits;
-  return { ...body, traits: { appetite, sleepiness, curiosity } };
+  return { ...body, traits: { appetite, sleepiness, curiosity }, outcome: outcome1(outcome) };
 }
 
 /** What a tick shows of a world of beings: its events, its beings, and its other state. */
@@ -98,7 +105,11 @@ function sensedOf(senses: Parameters<beings.Controller["decide"]>[0]): Sensed {
   const { appetite, sleepiness, curiosity } = senses.self.traits;
   const { origin, side, edgeMs, foodCue } = senses.window;
   return {
-    self: { ...senses.self, traits: { appetite, sleepiness, curiosity } },
+    self: {
+      ...senses.self,
+      traits: { appetite, sleepiness, curiosity },
+      outcome: outcome1(senses.self.outcome),
+    },
     light: senses.light,
     window: { origin, side, edgeMs: [...edgeMs], foodCue: [...foodCue] },
     draws: [...senses.draws],
@@ -161,6 +172,14 @@ describe("the mindless baseline", () => {
     for (const type of ["being.ate", "being.contested", "being.started", "being.finished"])
       expect(types.has(type)).toBe(true);
     expect(one.at(-1)?.occupancy.length).toBeGreaterThan(1);
+    // Meals ended in the run, so the outcomes the comparison set aside held their units.
+    const meals = twice.flatMap(({ events }) =>
+      events.filter(
+        ({ type, payload }) =>
+          type === "being.finished" && (payload as { activity: string }).activity === "eat",
+      ),
+    );
+    expect(meals.length).toBeGreaterThan(0);
     // Only what beings@2 adds differs: neutral traits, and minds as empty as at their spawn.
     for (const being of beingsIn(two) as beings.Being2[]) {
       expect(being.traits).toMatchObject({ sociability: 1000, credulity: 1000, retention: 1000 });

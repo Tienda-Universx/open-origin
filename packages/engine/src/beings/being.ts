@@ -73,8 +73,16 @@ export const RESULTS: readonly string[] = Object.freeze([
   "rejected",
 ]);
 
-/** How the last step ended, when, and why. */
-export type Outcome = { readonly result: string; readonly tick: Tick; readonly reason: string };
+/**
+ * How the last step ended, when, and why; under beings@2, when the step was a meal, also the units
+ * it ate in total, 0 when it ate nothing.
+ */
+export type Outcome = {
+  readonly result: string;
+  readonly tick: Tick;
+  readonly reason: string;
+  readonly units?: number;
+};
 
 /** A target the brain failed to reach, avoided until `until`. */
 export type Cooldown = { readonly cell: Cell; readonly until: Tick };
@@ -140,6 +148,8 @@ export const BEING_BOUNDS = Object.freeze({
   durationMs: range(1, 0x1_0000_0000),
   arrivalMs: range(1, 0x40_0000_0000),
   bites: range(0, 0x10_0000),
+  /** The units a meal ate: at most 2^20 bites of 2^20 units. */
+  eaten: range(0, 0x100_0000_0000),
   plan: range(0, MAX_INTENTION_STEPS - 1),
   cooldowns: range(0, 4),
   reasonLength: 64,
@@ -296,12 +306,19 @@ export function checkBehavior(value: unknown, path: string, sink: IssueSink): vo
   behavior.int("heading", BEING_BOUNDS.heading);
 }
 
-/** Reports every problem of an outcome at `value`. */
-function checkOutcome(value: unknown, path: string, sink: IssueSink): void {
-  const outcome = readFields(value, path, { required: ["reason", "result", "tick"] }, sink);
+/** Reports every problem of an outcome at `value`; one of beings@2 may hold a meal's units. */
+function checkOutcome(value: unknown, path: string, rules: BeingsRules, sink: IssueSink): void {
+  const optional = rules.minds ? ["units"] : [];
+  const outcome = readFields(
+    value,
+    path,
+    { required: ["reason", "result", "tick"], optional },
+    sink,
+  );
   if (outcome === undefined) return;
   outcome.choice("result", RESULTS);
   outcome.int("tick", TICKS);
+  outcome.int("units", BEING_BOUNDS.eaten);
   const reason = outcome.value("reason");
   if (typeof reason !== "string") {
     if (reason !== undefined) sink.report(outcome.at("reason"), "the reason must be a string");
@@ -387,7 +404,7 @@ export function checkBeing(
   checkBehavior(being.value("behavior"), being.at("behavior"), sink);
   checkWakeConditions(being.value("wakeWhen"), being.at("wakeWhen"), sink);
   being.int("wake", TICKS);
-  checkOutcome(being.value("outcome"), being.at("outcome"), sink);
+  checkOutcome(being.value("outcome"), being.at("outcome"), rules, sink);
   checkEach(
     being.value("cooldowns"),
     being.at("cooldowns"),

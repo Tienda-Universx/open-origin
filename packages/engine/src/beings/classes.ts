@@ -237,7 +237,7 @@ const BEING_MEMBERS: readonly (readonly [string, ClassNode, boolean])[] = Object
   ["id", C0, true],
   ["mind", MIND, false],
   ["needs", internal(["nutrition", "rest"]), true],
-  ["outcome", internal(["reason", "result", "tick"]), true],
+  ["outcome", internal(["reason", "result", "tick", "units"]), true],
   ["plan", list("C1", PLAN_STEP), false],
   ["species", C0, true],
   ["stage", C0, false],

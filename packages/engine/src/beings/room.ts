@@ -10,10 +10,11 @@
  * idle 1 ms, so that they decide again at the next tick. Chunks are resolved in the kernel's order
  * of keys, so their events follow that order.
  */
+import { copyCanonical } from "../canonical/copy.ts";
 import { compareCodeUnits } from "../canonical/order.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import type { Work } from "./advance.ts";
-import type { Cell } from "./being.ts";
+import type { Being } from "./being.ts";
 import { type BeingsEnv, CROWD_STREAM } from "./env.ts";
 import type { LifeConfig2 } from "./life2.ts";
 import { greatest } from "./rates.ts";
@@ -35,9 +36,12 @@ function arrivalsOf(env: BeingsEnv, works: readonly Work[]): Arrival[] {
 }
 
 /**
- * The walk that brought `work` into a chunk without room ends where the being started the tick. A
- * walk whose last step arrived already ended in the second phase, where the being decided again:
- * what it started then is replaced too, so it decides at the next tick from the cell it is in.
+ * The walk that brought `work` into a chunk without room ends where the being started the tick, and
+ * the being keeps nothing of a decision it made at this tick (mind.md, "The tick of beings@2"): a
+ * walk whose last step arrived already ended in the second phase, where the being decided again,
+ * and that intention is discarded with what it started, its plan, behavior, wake conditions, and
+ * cooldowns. Its mind is the one it had at the start of the tick: the system shares it, never writes
+ * it. It decides again at the next tick from the cell it is in.
  */
 function crowd(env: BeingsEnv, work: Work): void {
   env.emit("being.finished", {
@@ -46,12 +50,19 @@ function crowd(env: BeingsEnv, work: Work): void {
     result: "failed",
     reason: "crowded",
   });
-  // validateChunk accepted the being's record: its cell is two coordinates.
-  const [x, y] = work.old.cell as Cell;
-  work.cell = [x, y];
+  // Copies of the record validateChunk accepted, detached from the state; its mind is not copied.
+  const { cell, behavior, wakeWhen, cooldowns } = work.old;
+  const restored = copyCanonical({ cell, behavior, wakeWhen, cooldowns }) as Pick<
+    Being,
+    "cell" | "behavior" | "wakeWhen" | "cooldowns"
+  >;
+  work.cell = restored.cell;
   work.outcome = { result: "failed", tick: env.tick, reason: "crowded" };
   work.activity = { kind: "idle", start: env.tick, ms: 1 };
   work.plan = [];
+  work.behavior = restored.behavior;
+  work.wakeWhen = restored.wakeWhen;
+  work.cooldowns = restored.cooldowns;
 }
 
 /** Resolves the arrivals in one chunk, sorted by id, against its free places. */

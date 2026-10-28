@@ -34,7 +34,14 @@ import {
   spawn,
   windowAt,
 } from "./support/beings-world.ts";
-import { beings2World, brain2, life2With } from "./support/beings2-world.ts";
+import {
+  being2,
+  beings2World,
+  brain2,
+  chunksOf,
+  gateMind,
+  life2With,
+} from "./support/beings2-world.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 
 type Cell = readonly [number, number];
@@ -112,6 +119,20 @@ const payloadsAt = (events: readonly EngineEvent[], tick: number, type: string) 
 
 /** The crowded end of a walk, as its being.finished event reports it. */
 const crowded = (id: number) => ({ id, activity: "walk", result: "failed", reason: "crowded" });
+
+/**
+ * A crosser whose decision at its arrival changes everything a decision may change: its behavior,
+ * its wake conditions, and its cooldowns; at its first decision it walks as `crosser` does.
+ */
+const resolute = brain2((senses) => {
+  if (senses.self.outcome.result === "none") return crosser.decide(senses);
+  return {
+    steps: [{ kind: "idle", ms: 6_000_000 }],
+    wakeWhen: { nutritionBelow: 1 },
+    behavior: behavior("rest", 5),
+    cooldowns: [{ cell: [0, 0], ms: 60_000 }],
+  };
+});
 
 describe("the contest for room", () => {
   test("finds crossings for its scenarios", () => {
@@ -230,6 +251,31 @@ describe("the contest for room", () => {
     // At the next tick each decides again, where it started.
     const next = step(world, []);
     expect(next.events.filter(({ type }) => type === "being.started")).toHaveLength(2);
+  });
+
+  test("keeps nothing of a loser's decision at the tick: its record and mind are as they were", () => {
+    const placed = [
+      being2(1, [EDGE + 1, row(0)], { mind: gateMind() }),
+      being2(2, [EDGE, row(0)], { mind: gateMind() }),
+    ];
+    const world = beings2World({
+      controllers: { s1: resolute },
+      life: life2With(undefined, 1),
+      chunks: chunksOf(placed),
+    });
+    // The initial beings decide at tick 1, so their crossings arrive one tick earlier.
+    runTo(world, ARRIVAL - 1);
+    for (const id of [1, 2]) {
+      const lost = beingOf(world, id) as beings.Being2;
+      expect(lost.outcome).toEqual({ result: "failed", tick: ARRIVAL - 1, reason: "crowded" });
+      expect(lost).toMatchObject({
+        behavior: { kind: "travel", since: 1, heading: 0 },
+        wakeWhen: {},
+        cooldowns: [],
+        plan: [],
+      });
+      expect(lost.mind).toEqual(gateMind());
+    }
   });
 
   test("emits the contest for room after the events of the second phase", () => {

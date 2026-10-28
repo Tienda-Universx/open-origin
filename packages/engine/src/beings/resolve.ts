@@ -10,7 +10,7 @@ import { compareCodeUnits } from "../canonical/order.ts";
 import { simSeconds, type Tick } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import { idleEnd, nextArrival, nextBite } from "./activity.ts";
-import type { Work } from "./advance.ts";
+import { outcomeOf, type Work } from "./advance.ts";
 import type { Being } from "./being.ts";
 import {
   type Course,
@@ -66,7 +66,10 @@ function grant(env: BeingsEnv, work: Work, units: number, contested: boolean): v
       result,
       reason: sated ? "" : "food_gone",
     });
-    work.outcome = { result, tick: env.tick, reason: sated ? "" : "food_gone" };
+    // Every earlier bite of the meal was whole, since a short one ends it: this one is the last.
+    const eaten = (work.activity.bites - claim.bites) * work.species.diet.biteUnits + units;
+    const outcome = { result, tick: env.tick, reason: sated ? "" : "food_gone" };
+    work.outcome = outcomeOf(env, work, outcome, eaten);
     work.activity = { kind: "idle", start: env.tick, ms: 1 };
   }
 }
