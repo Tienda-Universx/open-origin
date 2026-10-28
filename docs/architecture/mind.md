@@ -697,6 +697,16 @@ one of them, cooldowns hold what `utility@1` puts there, and no other channel ca
 between decisions. Its code is in `packages/agents/src/brain/mind.ts` and `mind/`; its parameters
 are in `mind/parameters.ts`.
 
+**Composition.** At every decision it asks `utility@1` for its plan. When the plan is to forage, eat,
+or sleep, a need wins: the plan stands and only mental operations are added. Otherwise, in this
+order: a reply to what it heard; after its own act, `behavior.kind` `talk`, an idle of
+`min(60 s, speech.gap)` that waits for an answer, with the plan's wake conditions; when the plan is
+to explore and the being is hungry as `utility@1` feels it (a search), a walk to food it believes in
+beyond its window, else an ask, else the search; and when sated, as it wills, a greet, else a walk
+toward a being to greet it. Each of its walks and its wait keeps the plan's wake conditions and
+cooldowns, and its heading; a talk has no wake condition, since none interrupts it. After any of its
+own behaviors, `utility@1` sees a behavior it does not know, so it holds no commitment then.
+
 **The concept and its rules** (`mind/rules.ts`). `mind@1` forms only `m1.food-at`: one cell as its
 term, a band 0 to 2 as its value, never a negation. Each belief operation is its rule applied to the
 records it cites, reading only their content (an episode's kind, cell, speaker, value, act,
@@ -733,6 +743,35 @@ not cooled, importance their confidence, relevance `⌊1000·R·band / (2·(R + 
 radius R and a distance d. A belief to tell: the same beliefs but not told by the hearer, relevance
 `500·band`. A belief to check: importance `max(cr, 1000 − cr)`, relevance 1000 when contradicted
 and 500 when confirmed.
+
+**Walks** (`mind/paths.ts`) search the window once with Dijkstra. Seeking food walks to the
+reachable cell nearest the believed cell, by Chebyshev distance, then by the shortest route; when
+that is where the being stands, it forgets the belief and searches instead. Approaching walks to the
+reachable cell within `speech.range` of the being, not its cell, by the shortest route, toward the
+nearest perceived being it would greet, awake and not walking, beyond `speech.range` and within
+`⌊8 · sociability / 1000⌋` cells; never twice in a row.
+
+**Speech** (`mind/social.ts`). The brain senses neither the tick nor its quota, so it keeps every
+quota by a budget it counts in its relationships. With the talk window `W = max(speech.gap + 1,
+speech.cooldown)`, it addresses a being only when it never did, within its conversation (a pause of
+at most `speech.gap` and fewer than `speech.turns` acts), or once `W` has passed, so all its acts
+to a being in the last `W` seconds are the `turns` of one conversation, and the engine never evicts
+that relationship within `W`. It speaks only while those turns sum to less than
+`⌊speech.perDay / ⌈dayLength / W⌉⌋`, 2 with the defaults, so no day holds more than
+`speech.perDay` acts and no act is ever `talk_quota`. A hearer is perceived, within `speech.range`,
+not asleep, and held in a relationship. The acts:
+
+- a **reply**, to the first message it answers, in the order heard: an `ask`, with a `tell` of the
+  food it believes most, by retrieval, or `unknown`; a `greet` that opens a conversation, with a
+  `greet`; its own greet answered, or a `tell` while it has said at most one act of the
+  conversation, with a `tell`, as it wills;
+- an **ask** for its species' food (`obs.deposit.<k>`), when searching with no food to seek, to the
+  nearest being it may address;
+- a **greet**, when sated and as it wills, of the nearest being it meets or meets again: one it never
+  addressed, or not within `W`.
+
+It wills an act when `draws[1] mod 1000` is below `min(1000, ⌊800 · sociability / 1000⌋)`. It tells
+a belief that no operation of the same decision changes or evicts.
 
 ## Preregistration
 
