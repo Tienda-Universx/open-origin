@@ -377,7 +377,8 @@ describe("the calls of the beings system, counted (plan §7)", () => {
  * pair of wakes, such as a placement computed per pair. Cheaper work per pair passes it. Planted
  * in a copy, a linear search of the occupancy index or of the leaving ids, about 1 ns a pair, gave
  * 0.89 to 0.93, and a scan of every placed being for each touched chunk, which made the tick of
- * 1,200 beings 20 to 40% slower, gave 0.99 and 1.13. Such scans are left to review and to the
+ * 1,200 beings 58 to 77% slower and one of 8,000 3.2 times slower when timed directly, gave 0.99
+ * and 1.13. Such scans are left to review and to the
  * benchmark's rows of many wakes (packages/agents/bench/beings.ts): a test that caught them would
  * need several times more beings, and CI has no time to spare.
  */

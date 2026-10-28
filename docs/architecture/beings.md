@@ -1061,7 +1061,8 @@ before and after a change; never compare across machines.
   or more per pair of wakes, such as a placement computed per pair, and lets cheaper work pass.
   Planted in a copy, a linear search of the occupancy index or of the leaving ids, about 1 ns a
   pair, gave ratios of 0.89 to 0.93, and a scan of every placed being for each touched chunk,
-  which made the tick of 1,200 beings 20 to 40% slower, gave 0.99 and 1.13. Such scans are left to
+  which made the tick of 1,200 beings 58 to 77% slower and one of 8,000 3.2 times slower when timed
+  directly, side by side in the same world, gave 0.99 and 1.13. Such scans are left to
   review and to the benchmark's rows of many wakes; a test that caught them would cost several
   times more.
 - The fuzz's count of a quiet tick (`beings-fuzz.test.ts`) uses the same counting context.
