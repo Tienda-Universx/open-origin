@@ -254,6 +254,24 @@ describe("an accepted mind.inject", () => {
     expect(mindOf1(w).exposure).toBe(6);
   });
 
+  test("wakes at t + 1 an idle being processed at t without a decision, by the check at the end of t", () => {
+    const { world: w, sensed } = world();
+    runTo(w, 1);
+    // Its idle outlasts a day, so its daily wake processes it at that tick, and it does not decide.
+    const daily = beingOf(w, 1).wake;
+    expect(daily).toBeGreaterThan(T);
+    runTo(w, daily, [inject(daily, claim())]);
+    expect(sensed).toHaveLength(1);
+    expect(beingOf(w, 1).wake).toBe(daily + 1);
+    const events = runTo(w, daily + 1);
+    expect(eventsAt(events, daily + 1)[0]).toEqual([
+      "being.finished",
+      { id: 1, activity: "idle", result: "interrupted", reason: "heard" },
+    ]);
+    expect(sensed).toHaveLength(2);
+    expect(sensed[1]?.perceived.heard).toEqual([{ act: "tell", p: CLAIM }]);
+  });
+
   test("leaves a being that is not woken asleep to it: no decision without an injection", () => {
     const { world: w, sensed } = world();
     runTo(w, T + 3);
@@ -275,7 +293,13 @@ describe("an accepted mind.inject", () => {
     const { world: w, sensed } = world(walker, undefined, WALK_FROM);
     runTo(w, 1);
     expect(beingOf(w, 1).activity.kind).toBe("walk");
-    const events = runTo(w, ARRIVAL, [inject(2, claim())]);
+    const delivered = runTo(w, 2, [inject(2, claim())]);
+    // Its next wake is the one its walk gives, as in a world without the message: not tick 3.
+    const { world: unheard } = world(walker, undefined, WALK_FROM);
+    runTo(unheard, 2);
+    expect(beingOf(w, 1).wake).toBe(beingOf(unheard, 1).wake);
+    expect(beingOf(w, 1).wake).toBeGreaterThan(3);
+    const events = [...delivered, ...runTo(w, ARRIVAL)];
     // Not woken at tick 3, it decided only when its walk ended, and heard the message then.
     expect(ARRIVAL).toBeGreaterThan(3);
     expect(eventsAt(events, 3)).toEqual([]);
