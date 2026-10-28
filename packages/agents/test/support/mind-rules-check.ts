@@ -49,8 +49,18 @@ function perceived(senses: Senses2, percept: Percept): CitedEpisode | undefined 
   return { kind: "outcome" };
 }
 
-/** The records the decision may cite, by local id: those held, and those its operations create. */
-function citable(senses: Senses2, ops: beings.MindIntention): Map<number, CitedRecord> {
+/** The episodes a decision created, by local id, as the engine holds them after its tick. */
+export type Created = ReadonlyMap<number, CitedEpisode>;
+
+/**
+ * The records the decision may cite, by local id: those held, and those its operations create,
+ * rebuilt from their percepts, or taken from `created` when the engine's records are known.
+ */
+function citable(
+  senses: Senses2,
+  ops: beings.MindIntention,
+  created: Created | undefined,
+): Map<number, CitedRecord> {
   const records = new Map<number, CitedRecord>();
   const view = senses.mind;
   for (const record of view.episodes) records.set(record.id, { store: "episodes", record });
@@ -58,7 +68,7 @@ function citable(senses: Senses2, ops: beings.MindIntention): Map<number, CitedR
   for (const record of view.relations) records.set(record.id, { store: "relations", record });
   let next = view.next;
   for (const { percept } of ops.remember ?? []) {
-    const record = perceived(senses, percept);
+    const record = created === undefined ? perceived(senses, percept) : created.get(next);
     if (record !== undefined) records.set(next, { store: "episodes", record });
     next += 1;
   }
@@ -110,10 +120,17 @@ function reviseProblem(records: ReadonlyMap<number, CitedRecord>, op: Revise): s
   return undefined;
 }
 
-/** Every belief operation of `intention` that is not its rule applied to what it cites. */
-export function ruleProblems(senses: Senses2, intention: beings.Intention2): string[] {
+/**
+ * Every belief operation of `intention` that is not its rule applied to what it cites. The
+ * episodes it creates are rebuilt from their percepts unless `created` gives the engine's.
+ */
+export function ruleProblems(
+  senses: Senses2,
+  intention: beings.Intention2,
+  created?: Created,
+): string[] {
   const ops = intention.mind ?? {};
-  const records = citable(senses, ops);
+  const records = citable(senses, ops, created);
   const traits = senses.self.traits;
   return [
     ...(ops.believe ?? []).map((op) => believeProblem(records, op, traits)),
