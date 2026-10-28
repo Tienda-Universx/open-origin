@@ -307,7 +307,8 @@ const encoder = new TextEncoder();
 /**
  * Runs `spawns` in `bench` at tick 1, `warmUp` ticks more, then times `measured` ticks; the
  * memory per being is read after the first decisions, at tick 2, before anything else is kept.
- * `ticks.after`, when given, receives what each timed step returned, outside its timing.
+ * `ticks.start`, when given, runs once before the first timed tick, and `ticks.after` receives
+ * what each timed step returned, both outside the timing.
  */
 export function measureRun(
   bench: BenchWorld,
@@ -315,6 +316,7 @@ export function measureRun(
   ticks: {
     readonly warmUp: number;
     readonly measured: number;
+    readonly start?: () => void;
     readonly after?: (result: StepResult) => void;
   },
 ): Run {
@@ -329,6 +331,7 @@ export function measureRun(
   const wakes = new Wakes(world);
   for (let tick = 3; tick <= 2 + ticks.warmUp; tick += 1)
     wakes.update(step(world, []).changedChunks);
+  ticks.start?.();
   const decideFrom = brain.times.length;
   const samples: Sample[] = [];
   for (let n = 0; n < ticks.measured; n += 1) {

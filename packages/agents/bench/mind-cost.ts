@@ -21,8 +21,9 @@
  *
  * The speech group runs a scripted talker with quotas wide enough to talk at every decision, since
  * `mind@1` says at most two acts in a talk window: it measures what an act costs the engine, not
- * how often `mind@1` speaks. `--ticks N` times N ticks of every scenario instead of its own number.
- * Any other argument, or one given twice, is an error, and exits with code 2. On a shared machine,
+ * how often `mind@1` speaks. `--ticks N` times N ticks of every scenario instead of its own number,
+ * at most 1,223 when the sleeping group runs, whose sleepers wake at tick 1,325. Any other argument,
+ * or one given twice, is an error, and exits with code 2. On a shared machine,
  * run it at low priority: `nice -n 19 bun packages/agents/bench/mind-cost.ts`.
  */
 import {
@@ -32,6 +33,7 @@ import {
   createWorld,
   type EngineEvent,
   readView,
+  type StepResult,
   step,
   worldgen,
 } from "@open-origin/engine";
@@ -87,10 +89,22 @@ export function parseArguments(argv: readonly string[]): Arguments {
       );
     }
   }
-  return { groups: groups.length > 0 ? groups : [...GROUPS], ticks };
+  const chosen = groups.length > 0 ? groups : [...GROUPS];
+  if (chosen.includes("sleeping") && ticks !== undefined && ticks > SLEEPING_TICKS)
+    throw new Error(
+      `--ticks ${ticks} would time the sleeping beings awake: they wake at tick ${SLEEPERS_WAKE}, so the sleeping group times at most ${SLEEPING_TICKS} ticks`,
+    );
+  return { groups: chosen, ticks };
 }
 
 const WARM_UP = 100;
+/**
+ * The tick the sleeping group's sleepers wake: spawned at tick 1 with rest 400,000, they sleep from
+ * tick 2 for the 1,323 ticks full rest takes. The group times the ticks from 2 + WARM_UP on, so at
+ * most SLEEPING_TICKS of them, all before that wake.
+ */
+const SLEEPERS_WAKE = 1_325;
+const SLEEPING_TICKS = SLEEPERS_WAKE - 2 - WARM_UP;
 const SEEDS = labelSeeds(BENCH_LABEL);
 const ms = (ns: number) => (ns / 1e6).toFixed(3);
 const kb = (bytes: number) => (bytes / 1024).toFixed(1);
@@ -197,17 +211,54 @@ export function countWrites(
     }
 }
 
+/** The body and mind of every being of every occupied chunk of `world`, by id. */
+export function partsOf(
+  world: BenchWorld["world"],
+): Map<number, { readonly body: string; readonly mind: string }> {
+  const view = readView(world);
+  const found = new Map<number, { readonly body: string; readonly mind: string }>();
+  for (const key of view.readGlobal().occupancy)
+    for (const being of view.readChunk(key)?.beings ?? [])
+      found.set(being.id, parts(being as beings.Being2));
+  return found;
+}
+
+/**
+ * The writes of the timed ticks of a run of `world`: `start` reads what every being holds before
+ * the first timed tick, so that its first timed write counts as every later one does, and `after`
+ * reads the chunks each timed step wrote.
+ */
+export class WriteCounter {
+  readonly writes: Writes = { beings: 0, bodyOnly: 0, bodyBytes: 0, mindBytes: 0 };
+  readonly #world: BenchWorld["world"];
+  #known = new Map<number, { readonly body: string; readonly mind: string }>();
+
+  constructor(world: BenchWorld["world"]) {
+    this.#world = world;
+  }
+
+  /** Reads every being of every occupied chunk, before the first timed tick. */
+  start(): void {
+    this.#known = partsOf(this.#world);
+  }
+
+  /** Counts the writes of the timed step `result`. */
+  after(result: StepResult): void {
+    countWrites(this.#world, result.changedChunks, this.#known, this.writes);
+  }
+}
+
 /** A run of `mind@1` beings on `cells`, timed, and the writes of its timed ticks. */
 function mindRun(cells: readonly Cell[], measured: number): { run: Run; writes: Writes } {
   const bench = benchWorld2({});
-  const writes: Writes = { beings: 0, bodyOnly: 0, bodyBytes: 0, mindBytes: 0 };
-  const known = new Map<number, { readonly body: string; readonly mind: string }>();
+  const counter = new WriteCounter(bench.world);
   const run = measureRun(bench, spawns2Of("s1", cells, activeDraws(cells.length)), {
     warmUp: WARM_UP,
     measured,
-    after: (result) => countWrites(bench.world, result.changedChunks, known, writes),
+    start: () => counter.start(),
+    after: (result) => counter.after(result),
   });
-  return { run, writes };
+  return { run, writes: counter.writes };
 }
 
 const RUN_HEADER = [
