@@ -14,6 +14,9 @@ export {
   MIND_BOUNDS,
   within,
 } from "./bounds.ts";
+export { ageAt, type MindContext, type Moment, secondsSince } from "./context.ts";
+export { familiarity, familiarSeconds, perceivedAgain } from "./familiarity.ts";
+export { forget } from "./forget.ts";
 export {
   checkMindLaws,
   defaultMindLaws,
@@ -32,3 +35,52 @@ export {
   sameProposition,
   type Term,
 } from "./prop.ts";
+export {
+  ACTS,
+  type Act,
+  type BeingEpisode,
+  type Belief,
+  type Cell,
+  type Episode,
+  EVIDENCE,
+  type ExternalEpisode,
+  FAILURES,
+  freeId,
+  type HeardEpisode,
+  type InboxMessage,
+  type LocalId,
+  type Mind,
+  type MindRecord,
+  newMind,
+  type OwnEpisode,
+  type Quota,
+  type Relationship,
+  recordOf,
+  type TaintMask,
+} from "./records.ts";
+export { type Perceived, perceive, relationshipWith } from "./relations.ts";
+export {
+  beliefSalience,
+  decay,
+  episodeSalience,
+  importanceWithin,
+  isPinned,
+  refreshEpisode,
+  SALIENCE_HALVINGS,
+  scaledHalfLife,
+} from "./salience.ts";
+export {
+  type Admitted,
+  admitBelief,
+  admitEpisode,
+  admitRelationship,
+  type Unlinked,
+  withoutRecords,
+} from "./store.ts";
+export {
+  type BeliefView,
+  type EpisodeView,
+  type MindView,
+  type RelationshipView,
+  viewOf,
+} from "./view.ts";

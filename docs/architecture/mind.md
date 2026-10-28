@@ -75,8 +75,8 @@ the tick:
   the senses of T4 give its food only in bands across the window, and its exact amount is known
   only through the being's own action on its cell.
 - **Its mind.** A view of its episodes, beliefs, and relationships, with ages in simulated seconds
-  (saturating at 2^31 − 1) instead of ticks, and `next`, so that a brain can cite a record it
-  creates in the same decision. A research injection appears in it as a message whose speaker is
+  (saturating at 2^31 − 1) instead of ticks, familiarity as it stands at that moment, from 0 to
+  1000, and `next`, so that a brain can cite a record it creates in the same decision. A research injection appears in it as a message whose speaker is
   not visible: the kind `external` and the evidence bit 8 are C3, and the view shows them as
   `heard` and as told. That a message came with no visible speaker is the one thing the being can
   tell, a declared limit.
@@ -123,7 +123,7 @@ mental content.
 | Member | Class | Content |
 |---|---|---|
 | `traits.sociability`, `.credulity`, `.retention` | C1 | Permille; retention scales both half-lives |
-| `mind.next` | C1 | The next local id, from 1 to 2^31 − 1; local ids only grow and are never reused, and a mind whose ids run out takes no new record |
+| `mind.next` | C1 | The next local id, from 1 to 2^31 − 1; local ids only grow and are never reused, each store keeps its records in increasing id, and a mind whose ids run out takes no new record |
 | `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | C1, their taints C3 | Below |
 | `mind.exposure` | C3 | The being's lifetime exposure: a taint mask that never shrinks |
 | `mind.quota` | C1 | `{ day, said, woken }`: acts said and wakes by hearing in that simulated day, counted as the daily prune of T4 counts it, `⌊seconds / day length⌋` |
@@ -156,7 +156,8 @@ A **relationship** is `{ id, who, f, seen, aff, tr, tn, talk, turns }`: its loca
 being; `f`, its familiarity as seconds of co-presence, decayed by absences, as of the tick `seen` it
 was last perceived, saturating where it gives 1000; affinity from −1000 to 1000, starting at 0;
 trust in its claims from 0 to 1000, starting at 500; its taints; the tick the being last addressed
-it; and the acts addressed to it in the current conversation.
+it, 0 before it ever did; and the acts addressed to it in the current conversation. A mind holds one
+relationship per being.
 
 An **inbox message** is `{ who?, t, cell?, act, p?, band?, tn, ex }`. An injection's message has
 no `who` and no `cell`, and its act is `tell`.
