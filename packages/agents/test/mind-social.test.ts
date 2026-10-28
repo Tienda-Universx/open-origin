@@ -229,6 +229,26 @@ describe("telling and asking", () => {
     expect(decide(hungry).steps).toEqual([talk(5, "ask", `obs.deposit.${SPECIES2.diet.deposit}`)]);
   });
 
+  test("tells no belief its window contradicts or would confirm, which it checks instead", () => {
+    const asked = (cues: readonly (readonly [number, number, number])[], cr: number) =>
+      senses2Of(window([], cues), {
+        seen: [seenBeing(5, [2, 0])],
+        heard: [{ who: 5, cell: [2, 0], act: "ask" }],
+        mind: {
+          next: 10,
+          beliefs: [belief(3, [4, 0], { cr }), belief(4, [40, 0], { v: 1 })],
+          relations: [relationView(2, 5)],
+        },
+      });
+    // Food at (4, 0) is believed most, but the window shows it gone: (40, 0) is told instead.
+    const contradicted = decide(asked([], SEEN_CR));
+    expect(contradicted.steps).toEqual([talk(5, "tell", 4)]);
+    expect(contradicted.mind?.revise).toEqual([{ id: 3, cr: 100, ev: [10] }]);
+    // Shown with its band at the confidence of sight, it is told; doubted, it is confirmed first.
+    expect(decide(asked([[4, 0, 2]], SEEN_CR)).steps).toEqual([talk(5, "tell", 3)]);
+    expect(decide(asked([[4, 0, 2]], 640)).steps).toEqual([talk(5, "tell", 4)]);
+  });
+
   test("never lets an operation evict the belief it tells", () => {
     // A full store: the told belief, old, is the least salient; a landmark in sight would evict it.
     const told = belief(1, [40, 0], { u: 10 * DAY });

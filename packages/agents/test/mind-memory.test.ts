@@ -54,6 +54,64 @@ function belief(
   return { id, p: foodAt(cell, v), cr: SEEN_CR, src: 1, ev: [], lost: 0, dp: 1, u: 0, ...members };
 }
 
+/** `senses` whose mind holds only the records of `ids`, every other input kept, `next` too. */
+function ablated(senses: Senses2, ids: readonly number[]): Senses2 {
+  const view = senses.mind;
+  const kept = <T extends { readonly id: number }>(records: readonly T[]) =>
+    records.filter(({ id }) => ids.includes(id));
+  return {
+    ...senses,
+    mind: {
+      next: view.next,
+      episodes: kept(view.episodes),
+      beliefs: kept(view.beliefs),
+      relations: kept(view.relations),
+    },
+  };
+}
+
+/**
+ * The belief operations of `ops`, each citation of a record the decision creates written as the
+ * percept that creates it: a decision ablated to fewer records proposes fewer operations, so its
+ * new records take other ids, while the records it held keep theirs.
+ */
+function citing(ops: beings.MindIntention, next: number) {
+  const remember = ops.remember ?? [];
+  const cite = (ev: readonly number[]) =>
+    ev.map((id) => (id >= next ? remember[id - next]?.percept : id));
+  return {
+    believe: (ops.believe ?? []).map((op) => ({ ...op, ev: cite(op.ev) })),
+    revise: (ops.revise ?? []).map((op) => ({ ...op, ev: cite(op.ev) })),
+  };
+}
+
+/**
+ * Each belief operation `controller` proposes from `senses`, and the operations of the same kind
+ * it proposes from `senses` ablated to the records that operation cites, and for a revision the
+ * belief it revises.
+ */
+function reformed(
+  senses: Senses2,
+  controller: beings.Controller2,
+): { readonly op: unknown; readonly again: readonly unknown[] }[] {
+  const ops = decide(senses, controller).mind ?? {};
+  const { next } = senses.mind;
+  const again = (ids: readonly number[]) =>
+    citing(decide(ablated(senses, ids), controller).mind ?? {}, next);
+  const { believe, revise } = citing(ops, next);
+  return [
+    ...believe.map((op, index) => ({
+      op,
+      again: again((ops.believe?.[index]?.ev ?? []).filter((id) => id < next)).believe,
+    })),
+    ...revise.map((op, index) => {
+      const original = ops.revise?.[index];
+      const held = [...(original?.ev ?? []), original?.id ?? 0].filter((id) => id < next);
+      return { op, again: again(held).revise };
+    }),
+  ];
+}
+
 const R = 24;
 const window = (cues: readonly (readonly [number, number, number])[] = []) =>
   windowOf({ radius: R, cues });
@@ -254,26 +312,81 @@ describe("the operations of one decision", () => {
     },
   });
 
-  test("keep within the law, by priority: a testimony, a check, then a landmark", () => {
-    const intention = decide(busy);
-    // The check needs three operations and the law allows four: the landmark takes its place.
-    expect(intention.mind).toEqual({
+  test("keep within the law, by priority: a check, a testimony, then a landmark", () => {
+    const lawOf = (ops: number) =>
+      mindController({ species: { ...SPECIES2, mind: { ...SPECIES2.mind, ops } }, dayLength: DAY });
+    // All three, when the law allows them: the episodes take their ids in that order.
+    expect(decide(busy, lawOf(8)).mind).toEqual({
       remember: [
+        { percept: { food: [4, 0] }, w: FOOD_W },
         { percept: { heard: 0 }, w: HEARD_W },
         { percept: { food: [-9, 0] }, w: FOOD_W },
       ],
       believe: [
-        { p: foodAt([30, 0], 2), cr: 800, ev: [10, 2], rule: RULE_IDS.told },
-        { p: foodAt([-9, 0], 2), cr: SEEN_CR, ev: [11], rule: RULE_IDS.seen },
+        { p: foodAt([30, 0], 2), cr: 800, ev: [11, 2], rule: RULE_IDS.told },
+        { p: foodAt([-9, 0], 2), cr: SEEN_CR, ev: [12], rule: RULE_IDS.seen },
       ],
+      revise: [{ id: 3, cr: CONTRADICTED_CR, ev: [10] }],
+      relate: [{ who: 7, tr: -TRUST_STEP, because: [3, 10] }],
     });
-    const lawOf = (ops: number) =>
-      mindController({ species: { ...SPECIES2, mind: { ...SPECIES2.mind, ops } }, dayLength: DAY });
+    // The check takes three of the four the default law allows; neither of the others fits.
+    expect(decide(busy).mind).toEqual({
+      remember: [{ percept: { food: [4, 0] }, w: FOOD_W }],
+      revise: [{ id: 3, cr: CONTRADICTED_CR, ev: [10] }],
+      relate: [{ who: 7, tr: -TRUST_STEP, because: [3, 10] }],
+    });
     expect(decide(busy, lawOf(2)).mind).toEqual({
       remember: [{ percept: { heard: 0 }, w: HEARD_W }],
       believe: [{ p: foodAt([30, 0], 2), cr: 800, ev: [10, 2], rule: RULE_IDS.told }],
     });
     expect(decide(busy, lawOf(0)).mind).toBeUndefined();
+  });
+
+  test("form each belief again from its citations alone: the ablation of the decision", () => {
+    // Decided again with only the records an operation cites, the belief it revises, and every
+    // input that is no record, the decision still proposes it (mind.md, "Evaluation").
+    const law = mindController({
+      species: { ...SPECIES2, mind: { ...SPECIES2.mind, ops: 8 } },
+      dayLength: DAY,
+    });
+    const known = senses2Of(
+      window([
+        [-9, 0, 2],
+        [-3, 1, 2],
+        [2, 2, 1],
+      ]),
+      {
+        heard: [
+          { who: 7, cell: [1, 0], act: "tell", p: foodAt([40, 0], 1), band: 1 },
+          { who: 7, cell: [1, 0], act: "tell", p: foodAt([30, 0], 2), band: 2 },
+        ],
+        mind: {
+          next: 10,
+          beliefs: [
+            belief(3, [4, 0], { cr: 640, src: 2, who: 7 }),
+            belief(4, [-3, 12]),
+            belief(5, [40, 0], { v: 1, cr: 300 }),
+          ],
+          relations: [relationView(2, 7)],
+        },
+      },
+    );
+    // The best cue in sight lies within 12 cells of food it believes in, beyond its window.
+    const novel = senses2Of(
+      window([
+        [0, 20, 2],
+        [5, -5, 1],
+      ]),
+      {
+        mind: { next: 10, beliefs: [belief(3, [0, 30])] },
+      },
+    );
+    const checks = [busy, known, novel].flatMap((senses) =>
+      [brain, law].flatMap((controller) => reformed(senses, controller)),
+    );
+    for (const { op, again } of checks) expect(again).toContainEqual(op);
+    const checked = checks.length;
+    expect(checked).toBeGreaterThanOrEqual(5);
   });
 
   test("never cite a new episode its full store would evict at once", () => {

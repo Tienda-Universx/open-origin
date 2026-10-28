@@ -724,18 +724,23 @@ cites no relationship and weighs as a stranger's at band 1. A checked testimony 
 its speaker by `min(100, relations.delta)` up when the cue shows the claimed band, down otherwise.
 
 **Memory** (`mind/memory.ts`, `mind/operations.ts`). Each decision proposes, by priority and each
-only whole: a **testimony**, the first `tell` of a food claim it does not hold whose `told-food`
-confidence is at least 500, remembered (importance 600) and believed; a **check**, by retrieval, of
-a belief whose cell the window shows with another band, or with its band when the belief's
-confidence is below 900, remembered (importance 500) and revised, and, for a belief told by a being
-it holds a relationship with, `relate` with the trust change, citing the belief and the cue; a
-belief contradicted again at confidence 100 or less is dropped instead; a **forgotten** food, the
-one it could walk no nearer to; a **landmark**, the window's best cue (highest band, then nearest,
-then first by index) farther than 12 cells from every food it believes in at 500 or more, not
-cooled, and not believed at that band already, remembered (importance 500) and believed by
-`seen-food`; and the **being it meets**, the hearer of its act, remembered (importance 400). The
-whole stays within `mind.ops` and the ids left, and cites nothing a full store would evict first:
-the brain predicts each store with the engine's law of salience, as the engine fills it.
+only whole: a **check**, by retrieval, of a belief whose cell the window shows with another band, or
+with its band when the belief's confidence is below 900, remembered (importance 500) and revised,
+and, for a belief told by a being it holds a relationship with, `relate` with the trust change,
+citing the belief and the cue; a belief contradicted again at confidence 100 or less is dropped
+instead; a **testimony**, the first `tell` of a food claim it hears, unless it holds that claim or
+its `told-food` confidence is below 500, remembered (importance 600) and believed; a **forgotten**
+food, the one it could walk no nearer to; a **landmark**, the window's best cue (highest band, then
+nearest, then first by index) that it does not cool, unless that cell lies within 12 cells of food
+it believes in at 500 or more or its band there is believed already, remembered (importance 500) and
+believed by `seen-food`; and the **being it meets**, the hearer of its act, remembered (importance
+400). The whole stays within `mind.ops` and the ids left, and cites nothing a full store would evict
+first: the brain predicts each store with the engine's law of salience, as the engine fills it.
+Which claim a testimony or a landmark forms depends only on what the being hears and sees, its
+records deciding only whether the claim is new, and the check, the one operation its records
+choose, comes first; so the decision, made again with only the records an operation cites, the
+belief it revises, and every input that is no record, proposes that operation again, the ablation
+of [Evaluation](#evaluation), which `mind-memory.test.ts` checks on decisions built by hand.
 
 **Retrieval** (`mind/retrieval.ts`) scores a record `⌊1000·H / (H + age)⌋ · importance · relevance`,
 `H` the half-life of a belief scaled by retention, in one pass; ties go to the lower id, and a score
@@ -763,16 +768,17 @@ that relationship within `W`. It speaks only while those turns sum to less than
 not asleep, and held in a relationship. The acts:
 
 - a **reply**, to the first message it answers, in the order heard: an `ask`, with a `tell` of the
-  food it believes most, by retrieval, or `unknown`; a `greet` that opens a conversation, with a
-  `greet`; its own greet answered, or a `tell` while it has said at most one act of the
-  conversation, with a `tell`, as it wills;
+  food it believes most, by retrieval, among the beliefs its window would not check, or `unknown`;
+  a `greet` that opens a conversation, with a `greet`; its own greet answered, or a `tell` while it
+  has said at most one act of the conversation, with a `tell`, as it wills;
 - an **ask** for its species' food (`obs.deposit.<k>`), when searching with no food to seek, to the
   nearest being it may address;
 - a **greet**, when sated and as it wills, of the nearest being it meets or meets again: one it never
   addressed, or not within `W`.
 
-It wills an act when `draws[1] mod 1000` is below `min(1000, sociability)`. It tells
-a belief that no operation of the same decision changes or evicts.
+It wills an act when `draws[1] mod 1000` is below `min(1000, sociability)`. It tells a belief
+that no operation of the same decision changes or evicts, never one the window contradicts or
+would confirm, which it checks instead.
 
 ## Preregistration
 
@@ -937,18 +943,31 @@ beings, the beings that missed an item of the mind, and the population's counts.
 | 07 | as 06, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41 | 0, 0, 0 |
 | 08 | as 06, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35 | 0, 0, 0 |
 | 09 | as 06; mindless baseline, `/2`, `--spawn 2` | every item; being 5 the same as in run 08 | (no mind) | — | 0 rejected |
+| 10 | as 06, with the final brain | every item on every label; lowest nutrition 420,855; health never fell | none | conversations 48, 60, 52, 36; revised down 25, 25, 36, 36; from testimony 54, 60, 56, 48; trust checked 43, 24, 32, 36 | 0, 0, 0; diverse on every label |
+| 11 | as 10, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41 | 0, 0, 0 |
+| 12 | as 10, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35 | 0, 0, 0 |
+
+Runs 06 to 08 ran the brain of the freeze. A review of the ablation of
+[Evaluation](#evaluation) then found that the brain chose a landmark and a testimony by records
+they did not cite; the brain now puts the check first, takes the first testimony it hears, and the
+best cue in sight as the landmark, and tells no belief its window would check ("How `mind@1`
+decides"). No law and no parameter changed, so the freeze stands; runs 10 to 12 repeat runs 06 to
+08 with the final brain, which is the one the evaluation runs.
 
 In every run with `mind@1`, no being spent more than 1‰ of its awake time talking, against a
 target of at most 5%, since its budget allows two acts in a talk window of 18,900 s. A run of 10
 days of one label took 11.8 to 20.7 s of wall time, against 8.9 to 9.3 s under the mindless
-baseline, with 13.5 to 21.7 decisions per being and day against 12.6 to 12.9. Calibration used about 8 minutes of compute.
+baseline, with 13.5 to 21.7 decisions per being and day against 12.6 to 12.9. Calibration used
+about 12 minutes of compute.
+
+
 
 **A declared limit.** The spawn draws `--spawn 1` and `/2` are no registered scenario, only checks
 on the same terrain. On `calibration/2` with `--spawn 2`, being 5 spawned out of sight of food and
-of every other being, searched 1,550 cells away, reached nutrition 0, and never met anyone: the
-mindless baseline lives exactly the same life (run 09), so no brain that perceives only its window
-can greet a being it never sees. The evaluation's item "every being greeted and was greeted" fails
-on a label that places a being so.
+of every other being, searched 1,550 cells away, reached nutrition 0, and never met anyone, in runs
+08 and 12: the mindless baseline lives exactly the same life (run 09), so no brain that perceives
+only its window can greet a being it never sees. The evaluation's item "every being greeted and was
+greeted" fails on a label that places a being so.
 
 ## Cost
 

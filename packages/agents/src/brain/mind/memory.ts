@@ -1,20 +1,25 @@
 /**
  * The mental operations of one decision of `mind@1` (ADR 0024, docs/architecture/mind.md "Beliefs"
- * and "The brain mind@1"). The brain considers, in this order, what it hears, what it sees of what
- * it believes, and what it sees anew:
+ * and "The brain mind@1"). The brain considers, in this order, what it sees of what it believes,
+ * what it hears, and what it sees anew:
  *
- * - a **testimony**: a `tell` of a food claim it does not hold, remembered and believed by
- *   told-food, citing the relationship with its speaker when it holds one;
  * - a **check**: the belief of a cell it sees whose cue contradicts it, or confirms a belief it
  *   held with less than the confidence of sight; the cue is remembered and the belief revised,
  *   and for a testimony its trust in the speaker changed, citing the belief and the cue; a belief
  *   already contradicted and contradicted again is dropped;
- * - a **landmark**: the best food cue in sight, farther than LANDMARK_SPACING from any food it
+ * - a **testimony**: the first `tell` of a food claim it hears, unless it holds it already,
+ *   remembered and believed by told-food, citing the relationship with its speaker when it holds
+ *   one;
+ * - a **landmark**: the best food cue in sight, unless it lies within LANDMARK_SPACING of food it
  *   believes in, remembered and believed by seen-food;
  *
  * and, from the act it chose, an unreachable food it forgets and a being it meets. Each is all or
  * nothing, and is added only when the whole decision may still be proposed (operations.ts). Every
- * belief operation is its rule applied to what it cites (rules.ts); none cites nothing.
+ * belief operation is its rule applied to what it cites (rules.ts); none cites nothing. Which
+ * claim a testimony or a landmark forms depends on what the being hears and sees, never on a
+ * record it does not cite, and the check, the only operation that its records choose, comes first:
+ * decided again with only the records an operation cites, the decision proposes it again, the
+ * ablation of mind.md ("Evaluation").
  */
 import { type beings, type DeepReadonly, mind } from "@open-origin/engine";
 import { greatest } from "../curves.ts";
@@ -85,23 +90,30 @@ function relationWith(recall: Recall, who: number | undefined): mind.Relationshi
  */
 function testimony(recall: Recall, ops: Ops): Intent | undefined {
   const { heard } = recall.senses.perceived;
-  for (let index = 0; index < heard.length; index += 1) {
-    const message = heard[index] as Senses2["perceived"]["heard"][number];
-    const claim = message.act === "tell" ? foodClaim(message.p) : undefined;
-    if (claim === undefined || heldOrBelieved(recall, ops, claim.cell, claim.v)) continue;
-    const known = relationWith(recall, message.who);
-    const cited: CitedRecord[] = [{ store: "episodes", record: heardEpisode(message) }];
-    if (known !== undefined) cited.push({ store: "relations", record: known });
-    const formed = toldFood(cited, recall.senses.self.traits);
-    if (formed === undefined || formed.cr < TESTIMONY_FLOOR) continue;
-    const id = nextEpisode(recall, ops);
-    const ev = known === undefined ? [id] : [id, known.id];
-    return {
-      remember: [{ percept: { heard: index }, w: HEARD_W, cited: true }],
-      believe: [{ p: formed.p, cr: formed.cr, ev, rule: RULE_IDS.told }],
-    };
-  }
-  return undefined;
+  const index = heard.findIndex(
+    (message) => message.act === "tell" && foodClaim(message.p) !== undefined,
+  );
+  const message = heard[index];
+  const claim = message === undefined ? undefined : foodClaim(message.p);
+  if (message === undefined || claim === undefined) return undefined;
+  if (heldOrBelieved(recall, ops, claim.cell, claim.v)) return undefined;
+  const known = relationWith(recall, message.who);
+  const cited: CitedRecord[] = [{ store: "episodes", record: heardEpisode(message) }];
+  if (known !== undefined) cited.push({ store: "relations", record: known });
+  const formed = toldFood(cited, recall.senses.self.traits);
+  if (formed === undefined || formed.cr < TESTIMONY_FLOOR) return undefined;
+  const id = nextEpisode(recall, ops);
+  return {
+    remember: [{ percept: { heard: index }, w: HEARD_W, cited: true }],
+    believe: [
+      {
+        p: formed.p,
+        cr: formed.cr,
+        ev: known === undefined ? [id] : [id, known.id],
+        rule: RULE_IDS.told,
+      },
+    ],
+  };
 }
 
 /** A belief the window shows to be contradicted, or confirmed when the being doubted it. */
@@ -208,12 +220,12 @@ function betterSight(a: Sighted, b: Sighted | undefined): boolean {
 
 /**
  * The landmark in sight: the cell of the window with the highest food cue, then the nearest, then
- * the first by index, farther than LANDMARK_SPACING from every landmark the being has, not cooled,
- * and whose band at that cell the mind does not already believe or doubt.
+ * the first by index, that it does not cool; none when that cell lies within LANDMARK_SPACING of a
+ * landmark the being has, or its band there is one the mind already believes or doubts. The cell
+ * is chosen from what the being sees alone, so its records decide only whether it is new.
  */
 function sighted(recall: Recall, ops: Ops): Sighted | undefined {
   const { window, self } = recall.senses;
-  const known = landmarks(recall, ops);
   const cooled = self.cooldowns.map(({ cell }) => cell);
   let best: Sighted | undefined;
   for (let index = 0; index < window.side * window.side; index += 1) {
@@ -224,13 +236,13 @@ function sighted(recall: Recall, ops: Ops): Sighted | undefined {
       (window.origin[0] as number) + column,
       (window.origin[1] as number) + (index - column) / window.side,
     ];
-    if (known.some((landmark) => chebyshev(landmark, cell) <= LANDMARK_SPACING)) continue;
     if (cooled.some((other) => chebyshev(other, cell) === 0)) continue;
-    if (heldOrBelieved(recall, ops, cell, cue)) continue;
     const candidate = { cell, cue, distance: chebyshev(cell, self.cell) };
     if (betterSight(candidate, best)) best = candidate;
   }
-  return best;
+  if (best === undefined || heldOrBelieved(recall, ops, best.cell, best.cue)) return undefined;
+  const near = (landmark: mind.Cell) => chebyshev(landmark, best.cell) <= LANDMARK_SPACING;
+  return landmarks(recall, ops).some(near) ? undefined : best;
 }
 
 /** A landmark: the food cue of the landmark in sight, remembered and believed by seen-food. */
@@ -260,7 +272,7 @@ export type ActNeeds = {
 };
 
 /**
- * The mental operations of the decision, by priority: a testimony, a check, a food the act
+ * The mental operations of the decision, by priority: a check, a testimony, a food the act
  * forgets, a landmark, and the being the act meets, each added only when it fits. Undefined when
  * the decision proposes none.
  */
@@ -270,8 +282,8 @@ export function mentalOperations(
   needs: ActNeeds,
 ): beings.MindIntention | undefined {
   const recall: Recall = { senses, laws, keep: needs.keep === undefined ? [] : [needs.keep] };
-  let ops = attempt(recall, NO_OPS, testimony(recall, NO_OPS));
-  ops = attempt(recall, ops, check(recall, ops));
+  let ops = attempt(recall, NO_OPS, check(recall, NO_OPS));
+  ops = attempt(recall, ops, testimony(recall, ops));
   const { forget } = needs;
   if (
     forget !== undefined &&

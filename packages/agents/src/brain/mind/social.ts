@@ -19,9 +19,9 @@
  */
 import { type beings, type DeepReadonly, floorDiv, type mind } from "@open-origin/engine";
 import { felt, greatest } from "../curves.ts";
-import { chebyshev } from "./cells.ts";
+import { chebyshev, cueAt } from "./cells.ts";
 import type { BrainLaws } from "./laws.ts";
-import { SPEAK_WILL, TELL_FLOOR } from "./parameters.ts";
+import { SEEN_CR, SPEAK_WILL, TELL_FLOOR } from "./parameters.ts";
 import { memoryHalfLife, retrieve } from "./retrieval.ts";
 import { foodClaim } from "./rules.ts";
 
@@ -96,18 +96,32 @@ function hearerOf(senses: Senses2, laws: BrainLaws, who: number): Hearer | undef
   return { index, being, relation };
 }
 
+/** The beliefs a being may tell `hearer`: food it believes at TELL_FLOOR or more, not from it. */
+function tellable(
+  senses: Senses2,
+  belief: Senses2["mind"]["beliefs"][number],
+  hearer: number,
+): { readonly v: number } | undefined {
+  const claim = foodClaim(belief.p);
+  if (claim === undefined || claim.v === 0 || belief.cr < TELL_FLOOR || belief.who === hearer)
+    return undefined;
+  // A belief the window would check, contradicted or doubted, is checked rather than told.
+  const cue = cueAt(senses.window, claim.cell);
+  const checked = cue !== undefined && (cue !== claim.v || belief.cr < SEEN_CR);
+  return checked ? undefined : claim;
+}
+
 /**
- * The belief to tell `hearer`, by retrieval: food it believes at TELL_FLOOR or more, not told it
- * by that being, the higher band the more relevant.
+ * The belief to tell `hearer`, by retrieval among those it may tell, the higher band the more
+ * relevant.
  */
 function toTell(senses: Senses2, laws: BrainLaws, hearer: number): number | undefined {
   const halfLife = memoryHalfLife(laws, senses.self.traits.retention);
   const told = retrieve(
     senses.mind.beliefs,
     (belief) => {
-      const claim = foodClaim(belief.p);
-      if (claim === undefined || claim.v === 0 || belief.cr < TELL_FLOOR) return undefined;
-      if (belief.who === hearer) return undefined;
+      const claim = tellable(senses, belief, hearer);
+      if (claim === undefined) return undefined;
       return { id: belief.id, age: belief.u, importance: belief.cr, relevance: 500 * claim.v };
     },
     halfLife,
