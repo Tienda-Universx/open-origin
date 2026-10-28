@@ -6,6 +6,7 @@
  * the result is a Work that the third phase resolves and applies.
  */
 import { copyCanonical } from "../canonical/copy.ts";
+import type { Mind } from "../mind/index.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import type { DeepReadonly } from "../world/contracts.ts";
 import { arrivedSteps, bitesDue, idleEnd } from "./activity.ts";
@@ -14,6 +15,7 @@ import {
   BEING_BOUNDS,
   type Behavior,
   type Being,
+  type Being2,
   type Cell,
   type Cooldown,
   type CooldownRequest,
@@ -60,12 +62,25 @@ export type Work = {
   jumped: boolean;
   claim: Claim | undefined;
   died: boolean;
+  /**
+   * The mind of a being of beings@2, the very value its chunk holds: never copied at a wake, so
+   * that an unchanged mind is the same value in the record the tick writes.
+   */
+  readonly mind: DeepReadonly<Mind> | undefined;
 };
 
-/** A fresh, detached working copy of `being` at `env.tick`. */
+/** The members of `being` but its mind, which a wake never copies. */
+function withoutMind(being: DeepReadonly<Being2>): object {
+  const { mind: _shared, ...body } = being;
+  return body;
+}
+
+/** A fresh, detached working copy of `being` at `env.tick`; a mind stays the state's value. */
 function workOf(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Being>): Work {
   const species = env.species(being.species);
-  const plain = copyCanonical(being) as Being;
+  // validateChunk accepted every being of beings@2 with its mind.
+  const mindful = env.rules.minds ? (being as unknown as DeepReadonly<Being2>) : undefined;
+  const plain = copyCanonical(mindful === undefined ? being : withoutMind(mindful)) as Being;
   const body = bodyAt(species, plain, env.tick, env.sps);
   return {
     from,
@@ -83,6 +98,7 @@ function workOf(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Being>): Wor
     jumped: false,
     claim: undefined,
     died: false,
+    mind: mindful?.mind,
   };
 }
 
@@ -303,8 +319,9 @@ function addCooldowns(
 function decide(env: BeingsEnv, work: Work): void {
   work.cooldowns = activeCooldowns(env, work.cooldowns);
   const window = windowOf(env, work);
-  const proposal = env.controller(work.species.id).decide(sensesOf(env, work, window));
-  const judged = acceptIntention(proposal, { tick: env.tick, window });
+  const brain = env.controller(work.species.id);
+  const proposal = brain.decide(sensesOf(env, work, window));
+  const judged = acceptIntention(proposal, { tick: env.tick, window, behaviors: brain.behaviors });
   if (judged.kind === "rejected") {
     refuse(env, work, judged.reason);
     return;

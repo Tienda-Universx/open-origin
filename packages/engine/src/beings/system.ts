@@ -6,16 +6,19 @@
  */
 import type { TickContext } from "../world/contracts.ts";
 import { advance } from "./advance.ts";
+import type { Controllers } from "./capture.ts";
 import type { BeingsChunk } from "./chunk.ts";
-import { type BeingsGlobal, type Controllers, envOf } from "./env.ts";
+import { type BeingsGlobal, envOf } from "./env.ts";
 import { applyWorks, collectDue, resolveClaims } from "./resolve.ts";
+import type { BeingsRules } from "./rules.ts";
 
-/** One tick of the beings of the world behind `ctx`, with the ruleset's brains. */
+/** One tick of the beings of the world behind `ctx`, with the ruleset's brains and rules. */
 export function runBeings(
   ctx: TickContext<BeingsGlobal, BeingsChunk>,
   controllers: Controllers,
+  rules: BeingsRules,
 ): void {
-  const env = envOf(ctx, controllers);
+  const env = envOf(ctx, controllers, rules);
   const works = collectDue(env).map(({ key, being }) => advance(env, key, being));
   const takes = resolveClaims(env, works);
   applyWorks(env, works, takes);

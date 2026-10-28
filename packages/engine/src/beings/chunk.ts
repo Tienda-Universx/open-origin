@@ -9,6 +9,7 @@ import { readChunkKey } from "../world/chunk.ts";
 import { CHUNK_CELLS, chunkOfCell } from "../worldgen/index.ts";
 import { type Being, checkBeing, MAX_TICK } from "./being.ts";
 import type { Depletion } from "./food.ts";
+import { BEINGS_RULES, type BeingsRules, type BeingsVersion, rulesOf } from "./rules.ts";
 import { range, readFields, readInt, readList, TICKS } from "./schema.ts";
 
 /**
@@ -17,9 +18,12 @@ import { range, readFields, readInt, readList, TICKS } from "./schema.ts";
  */
 export type BeingsChunk = { beings: Being[]; depletion: Depletion[]; due: number };
 
-/** The bounds of a chunk: up to 2^16 beings, one depletion entry per cell, takes up to 2^20. */
+/**
+ * The bounds of a chunk of beings@1: up to 2^16 beings, one depletion entry per cell, takes up to
+ * 2^20. A chunk of beings@2 holds at most 1,024 beings, the largest capacity a law allows.
+ */
 export const CHUNK_BOUNDS = Object.freeze({
-  beings: range(0, 0x1_0000),
+  beings: BEINGS_RULES.chunkBeings,
   depletion: range(0, CHUNK_CELLS * CHUNK_CELLS),
   cell: range(0, CHUNK_CELLS * CHUNK_CELLS - 1),
   taken: range(1, 0x10_0000),
@@ -52,14 +56,15 @@ function checkPlace(
 function checkBeings(
   value: unknown,
   chunk: { x: number; y: number } | undefined,
+  rules: BeingsRules,
   issues: IssueList,
 ): void {
-  const beings = readList(value, "/beings", CHUNK_BOUNDS.beings, issues);
+  const beings = readList(value, "/beings", rules.chunkBeings, issues);
   let previous: number | undefined;
   beings?.forEach((being, index) => {
     const path = `/beings/${index}`;
     const before = issues.count;
-    checkBeing(being, path, issues);
+    checkBeing(being, path, issues, rules);
     if (issues.count !== before) return;
     // checkBeing reported nothing, so `being` is a valid Being.
     const valid = being as Being;
@@ -101,13 +106,17 @@ function checkDue(due: number, beings: readonly Being[], issues: IssueList): voi
 }
 
 /**
- * Every problem of `value` as the chunk `key` of the beings layer, for the ruleset's
- * validateChunk: its beings, each in a cell of this chunk and ordered by id; its depletion,
- * ordered by cell; and its due tick, which must be the earliest wake when every being is valid.
- * `value` is canonical, as the kernel passes it to a validator; a host that holds an arbitrary
- * value copies it first with copyCanonical. Never throws for a canonical value.
+ * Every problem of `value` as the chunk `key` of the beings layer of the ruleset `version`, for the
+ * ruleset's validateChunk: its beings, each in a cell of this chunk and ordered by id; its
+ * depletion, ordered by cell; and its due tick, which must be the earliest wake when every being is
+ * valid. `value` is canonical, as the kernel passes it to a validator; a host that holds an
+ * arbitrary value copies it first with copyCanonical. Never throws for a canonical value.
  */
-export function beingsChunkIssues(key: ChunkKey, value: unknown): Issue[] {
+export function beingsChunkIssues(
+  key: ChunkKey,
+  value: unknown,
+  version: BeingsVersion = "beings@1",
+): Issue[] {
   const issues = new IssueList();
   if (value === undefined) {
     issues.report("", "the chunk is missing");
@@ -116,7 +125,7 @@ export function beingsChunkIssues(key: ChunkKey, value: unknown): Issue[] {
   const chunk = readFields(value, "", { required: ["beings", "depletion", "due"] }, issues);
   if (chunk === undefined) return issues.issues;
   const before = issues.count;
-  checkBeings(chunk.value("beings"), readChunkKey(key).coord, issues);
+  checkBeings(chunk.value("beings"), readChunkKey(key).coord, rulesOf(version), issues);
   // The earliest wake means something only when every being, and the list itself, is valid.
   const beingsValid = issues.count === before && Array.isArray(chunk.value("beings"));
   checkDepletion(chunk.value("depletion"), issues);

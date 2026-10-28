@@ -171,7 +171,8 @@ function lightTicks(env: BeingsEnv, work: Work): (Tick | undefined)[] {
 /**
  * The record of `work` after this tick: anchored at this tick when its body jumped or its rates
  * changed, and kept on its old anchor otherwise, so that its values never depend on how often it
- * was processed; with its next wake, at least the next tick and at most a day away.
+ * was processed; with its next wake, at least the next tick and at most a day away; and, under
+ * beings@2, with its mind.
  */
 function finalBeing(env: BeingsEnv, work: Work): Being {
   const old = work.old;
@@ -209,6 +210,8 @@ function finalBeing(env: BeingsEnv, work: Work): Being {
     wake: wake > env.tick ? wake : env.tick + 1,
     outcome: work.outcome,
     cooldowns: work.cooldowns,
+    // A mind of beings@2 that did not change is the very value the chunk held, not a copy.
+    ...(work.mind === undefined ? {} : { mind: work.mind }),
   };
 }
 

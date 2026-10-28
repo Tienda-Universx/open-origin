@@ -9,6 +9,7 @@ export {
   BEING_BOUNDS,
   type Behavior,
   type Being,
+  type Being2,
   beingIssues,
   type Cell,
   type Cooldown,
@@ -17,18 +18,22 @@ export {
   type Outcome,
   type PlanStep,
   RESULTS,
+  type Traits,
+  type Traits2,
   type WakeConditions,
 } from "./being.ts";
 export { type Body, bodyAt } from "./body.ts";
 export { type BeingsChunk, beingsChunkIssues, CHUNK_BOUNDS, dueOf } from "./chunk.ts";
 export {
   type Controller,
+  type Controller2,
   DIRECTIONS,
   type Intention,
   MAX_INTENTION_STEPS,
   MAX_WALK_STEPS,
   type SensedWindow,
   type Senses,
+  type Senses2,
 } from "./contracts.ts";
 export { type BeingsGlobal, BRAIN_STREAM, CONTEST_STREAM } from "./env.ts";
 export { type Depletion, takenAt } from "./food.ts";
@@ -83,6 +88,13 @@ export {
 } from "./rates.ts";
 export {
   BEINGS_RULESET_VERSION,
+  BEINGS2_RULESET_VERSION,
+  type BeingsVersion,
+  CROWD_STREAM,
+  SPEECH_STREAM,
+} from "./rules.ts";
+export {
+  type Beings2RulesetOptions,
   type BeingsRulesetOptions,
   beingsGlobal,
   createBeingsRuleset,

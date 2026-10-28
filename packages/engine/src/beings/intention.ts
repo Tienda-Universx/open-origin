@@ -39,8 +39,15 @@ export type Accepted = {
 /** An intention the engine refused, with a short reason for the being's outcome. */
 export type Refused = { readonly kind: "rejected"; readonly reason: string };
 
-/** When an intention is judged, and the window the brain sensed then, centered on the being. */
-export type IntentionContext = { readonly tick: Tick; readonly window: SensedWindow };
+/**
+ * When an intention is judged, the window the brain sensed then, centered on the being, and, for a
+ * brain of beings@2, the behaviors it declared, which `behavior.kind` must name.
+ */
+export type IntentionContext = {
+  readonly tick: Tick;
+  readonly window: SensedWindow;
+  readonly behaviors?: readonly string[] | undefined;
+};
 
 /** The intention's own members, once its copy passed every check. */
 type Valid = {
@@ -88,6 +95,11 @@ function readIntention(raw: unknown): Valid | undefined {
   return issues.count === 0 ? (copy as Valid) : undefined;
 }
 
+/** Whether `behavior` names a behavior the brain declared, when it declared any (beings@2). */
+function declared(behavior: Behavior, context: IntentionContext): boolean {
+  return context.behaviors === undefined || context.behaviors.includes(behavior.kind);
+}
+
 /**
  * The cumulative milliseconds of each arrival of the walk `dirs` from the window's center, where
  * the being stands, or undefined when one of its steps cannot be taken: impassable, or leaving the
@@ -125,13 +137,15 @@ function activityOf(step: PlanStep, tick: Tick, arrivals: number[]): Activity {
 /**
  * Judges `raw`, what a brain returned, at `context`: the accepted activity, plan, and cooldowns to
  * add, or a refusal with one of the reasons `malformed` (not an intention of the right shape and
- * bounds), `walk_not_first` (a walk is the first step or none), and `walk_blocked` (a step of the
- * walk cannot be taken). Never throws: the canonical copy reads each member once through its own
- * descriptor, so an accessor, or a Proxy whose traps throw, is refused.
+ * bounds, or a behavior the brain did not declare), `walk_not_first` (a walk is the first step or
+ * none), and `walk_blocked` (a step of the walk cannot be taken). Never throws: the canonical copy
+ * reads each member once through its own descriptor, so an accessor, or a Proxy whose traps throw,
+ * is refused.
  */
 export function acceptIntention(raw: unknown, context: IntentionContext): Accepted | Refused {
   const intention = readIntention(raw);
-  if (intention === undefined) return { kind: "rejected", reason: "malformed" };
+  if (intention === undefined || !declared(intention.behavior, context))
+    return { kind: "rejected", reason: "malformed" };
   const [first, ...rest] = intention.steps;
   if (first === undefined) return { kind: "rejected", reason: "malformed" };
   if (rest.some((step) => step.kind === "walk"))
