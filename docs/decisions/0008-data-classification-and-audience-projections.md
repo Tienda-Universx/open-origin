@@ -28,6 +28,10 @@ Refined by [0021](0021-procedural-world.md): the world seed predicts all of the 
 but not terrain, which comes from a separate terrain seed. Both seeds are C3, and so is every
 digest that contains them, the state root included.
 
+Refined by [0024](0024-mind-memory-beliefs-and-speech.md): the taints and exposure of an
+inhabitant's records, and the captured content of a talk in progress, are C3, because C1 may reach
+the inhabitant itself and those must not.
+
 Mechanisms:
 - Explicit projection functions (`toPublicView`, `toResearchView`) with allowlisted DTOs in
   `protocol`. An entity is never serialized whole.

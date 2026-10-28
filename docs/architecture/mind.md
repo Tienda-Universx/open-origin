@@ -1,0 +1,671 @@
+# Mind
+
+The mind of T5: what a being perceives, remembers, believes, and feels about others, and how it
+speaks, with provenance and inheritable taints on every belief
+([0024](../decisions/0024-mind-memory-beliefs-and-speech.md), which refines
+[0006](../decisions/0006-provenance-and-inheritable-contamination-taints.md),
+[0008](../decisions/0008-data-classification-and-audience-projections.md),
+[0021](../decisions/0021-procedural-world.md), and
+[0023](../decisions/0023-autonomous-beings.md)). This page is the specification that T5's pull
+requests implement, and the preregistration of its scenarios. It extends [Beings](beings.md),
+whose `beings@1` stays as it is.
+
+| Part | Code | Pull request |
+|---|---|---|
+| `beings@1` goldens; follow-ups 1–3 of tracker L53; parallel `bun test` | `packages/engine/test`, `src/beings/{resolve,ruleset}.ts`, `package.json` | T5-2 |
+| The pure mind layer and its scans | `packages/engine/src/mind`, `tests/repo/engine-purity.ts` | T5-3 |
+| `beings@2`, `life@2`, perception, capacity, the scale gate | `packages/engine/src/beings`, `packages/agents/bench` | T5-4 |
+| Memory and belief operations, taints, the ledger | `packages/engine/src/beings` | T5-5a |
+| Relationships, `mind.inject`, the fuzz with the ledger oracle | `packages/engine/src/beings`, `packages/engine/test` | T5-5b |
+| Speech and its templates | `packages/engine/src/beings`, `packages/agents/src/speech` | T5-6 |
+| The brain `mind@1` and the calibration | `packages/agents/src/brain` | T5-7 |
+| Determinism, observers, and adversarial tests | `packages/agents/test`, `packages/engine/test/support` | T5-8 |
+| The evaluation, the cost, and the close | `packages/agents/{test,bench}` | T5-9 |
+
+## Layers
+
+```
+packages/agents       brain "mind@1": composes utility@1 unchanged; pure rules rule(cited);
+   │                  retrieval; social policy; templates speech@1
+   │ decide(senses) → intention with mental operations and talk steps
+   ▼
+src/beings            ruleset "beings@2" beside "beings@1": perception, reading and copying of
+   │                  untrusted input, validation, contests, delivery, events
+   │ typed values, already copied and bounded
+   ▼
+src/mind              pure: propositions, records, taints, salience, forgetting, formation rules
+```
+
+`src/mind` imports only `int`, `errors`, and the modules under `canonical/` and `digest/`: never
+`world/*`, `time/*`, `worldgen`, or `beings`, so it cannot read the world, and it never reads
+untrusted input, which `beings` copies and bounds first. It receives the tick and its simulated
+seconds as numbers, and computes no time of its own.
+`src/beings` imports it; the kernel and worldgen do not; `src/index.ts` exports it as the
+namespace `mind`. It holds no module state, under the rule that applies to `beings`.
+
+## The five levels
+
+| Level | Where it lives | Who produces it |
+|---|---|---|
+| 1. What exists | The state of the engine | The engine; reference truth is C3 |
+| 2. What can be perceived | `perceptible(view, being)` | The engine, by the laws of the species |
+| 3. What was perceived | `senses.perceived` | The engine: attention picks at most K |
+| 4. What is remembered | `mind.episodes` | The brain picks; the engine copies the content |
+| 5. What is believed | `mind.beliefs` | The brain proposes; the engine validates and taints |
+
+Level 3 is a subset of level 2, which is a subset of level 1. A belief may be false: the engine
+validates its structure and references, never its truth, and no belief changes the world.
+
+## Perception
+
+At each decision the engine builds, on top of the senses of T4 and from the state at the start of
+the tick:
+
+- **Other beings.** From the chunks the window already reads (one shared loop with
+  `senseWindow`, a refactor that changes no output of `beings@1`): every being at Chebyshev
+  distance at most `sight` from the cell, where `sight` is `perception.sight.day`, or
+  `perception.sight.dim` when the light of the instant is below `perception.dimBelow`. Each gives
+  its id, species, cell, the kind of its activity, and the direction of its current step: C0 only,
+  never another being's needs, health, or `condition`. Attention keeps the `perception.attention`
+  nearest, by distance, then id. Recognition of individuals is perfect, and terrain hides nothing:
+  two simplifications.
+- **What it hears.** The messages in its inbox ([Speech](#speech)), consumed at this decision.
+- **Its own experience.** The result of its last activity, and the units it ate if it ate.
+  A deposit's exposure is "measurement" in the catalog ([0021](../decisions/0021-procedural-world.md)):
+  the senses of T4 give its food only in bands across the window, and its exact amount is known
+  only through the being's own action on its cell.
+- **Its mind.** A view of its episodes, beliefs, and relationships, with ages in simulated seconds
+  (saturating at 2^31 − 1) instead of ticks, and `next`, so that a brain can cite a record it
+  creates in the same decision. A research injection appears in it as a message whose speaker is
+  not visible: the kind `external` and the evidence bit 8 are C3, and the view shows them as
+  `heard` and as told. That a message came with no visible speaker is the one thing the being can
+  tell, a declared limit.
+
+The senses and the view are built by allowlist, derived from the
+[classification registry](#classification): `tn`, `ex`, `exposure`, and the captured content of a
+talk in progress never reach a brain, and neither do the `draws` of T4 reach the view or, in T9, a
+prompt, because they reveal the kernel's randomness.
+
+## State
+
+### Laws of `life@2`
+
+`life@2` keeps every law of a `life@1` species, unchanged and with the same defaults, and adds:
+
+| Law | Meaning | Default | Validated |
+|---|---|---|---|
+| `perception.sight.day`, `.dim` | Cells seen in light and in dim light | 12, 4 | 0 to the window radius R |
+| `perception.dimBelow` | The radiance below which sight is dim; the default genesis goes from 40 at night to 1,000 at its peak | 150 | 0 to 2^20 |
+| `perception.attention` | Beings perceived per decision | 6 | 0 to 8 |
+| `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | Capacities | 8, 8, 6, 2 | 0–16, 0–16, 0–12, 0–4 |
+| `mind.ops` | Mental operations per decision | 4 | 0 to 8 |
+| `mind.depth` | Deepest inference | 6 | 1 to 8 |
+| `mind.halfLife.episode`, `.belief` | Half-life of salience, in seconds, scaled by `retention` | 75,600, 302,400 | 1 to 2^31 − 1 |
+| `mind.floor`, `.pinLevel`, `.pins`, `.recall` | Salience below which an episode is forgotten; importance from which it never fades; pinned episodes per being; the importance a recall adds | 50, 900, 2, 200 | 0–999, 1–1000 and above `floor`, 0–4, 0–1000 |
+| `relations.rate` | Familiarity per second of co-presence, a ratio; `f` saturates at `⌈1000 / rate⌉` seconds | 5/36 | as the rates of T4, and `⌈1000 / rate⌉ ≤ 2^22`, so every product of the salience formula stays a safe integer |
+| `relations.gap`, `.halfLife` | Longest pause between two perceptions still counted as co-presence; half-life of familiarity in absence, in seconds, not scaled by traits | 600, 756,000 | 1 to 2^31 − 1 |
+| `relations.delta` | Largest change of affinity or trust in one operation | 200 | 0 to 1000 |
+| `speech.range`, `.actMs` | Reach of speech in cells; duration of one act | 3, 4,000 | 1 to 8 and at most `perception.sight.dim`; 1–60,000 |
+| `speech.turns`, `.gap`, `.cooldown` | Acts one being addresses to another in one conversation; the longest pause between two delivered acts of a conversation, and the pause one pair keeps after a full one, in seconds | 3, 120, 18,900 | 1–8, 1 to 2^31 − 1 |
+| `speech.perDay`, `.wakesPerDay` | Acts a being may say, and times hearing may wake it, per simulated day | 10, 8 | 0 to 64; `perDay` is 0 when `mind.relations` is 0, because the quotas per pair live in relationships |
+| `capacity` | Beings per chunk | 64 | 1 to 1,024 |
+| `traits` | The trait bounds of T4, now for six traits: also `sociability`, `credulity`, and `retention` | [800, 1,200] each | the rule of T4 |
+
+The defaults are where calibration starts (T5-7); the values frozen after it replace them here.
+Durations of 75,600 s are one day of the default genesis, written as data, because each world has
+its own day.
+
+### The mind of a being
+
+A `beings@2` being adds `mind` and the three traits; `beings.spawn` accepts the traits but never
+mental content.
+
+| Member | Class | Content |
+|---|---|---|
+| `traits.sociability`, `.credulity`, `.retention` | C1 | Permille; retention scales both half-lives |
+| `mind.next` | C1 | The next local id, from 1 to 2^31 − 1; local ids only grow and are never reused, and a mind whose ids run out takes no new record |
+| `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | C1, their taints C3 | Below |
+| `mind.exposure` | C3 | The being's lifetime exposure: a taint mask that never shrinks |
+| `mind.quota` | C1 | `{ day, said, woken }`: acts said and wakes by hearing in that simulated day, counted as the daily prune of T4 counts it, `⌊seconds / day length⌋` |
+
+An **episode** is `{ id, kind, t, cell, who?, v?, p?, act?, band?, tn?, ex?, w, r }`: its local id;
+its kind; the tick it happened; the cell; the being it concerns or who spoke; a value; for a
+message, its proposition, act, and the speaker's confidence band; for a message, its taints; its
+importance `w` from 0 to 1000; and the tick `r` its salience is anchored at.
+
+| Kind | Made from | Content |
+|---|---|---|
+| `food` | The window's food cue at a cell | `cell`, `v`: the band 0, 1, or 2 |
+| `being` | A perceived being | `who`, `cell`, `v`: the kind of its activity, as its index in the activity list |
+| `ate` | Its own last bite | `cell`, `v`: the units eaten |
+| `failed` | Its own last result | `cell`, `v`: the index of the reason |
+| `heard` | A message from a known speaker | `who`, `cell`, `act`, `p?`, `band?`, `tn`, `ex` |
+| `external` | A research injection; the kind is C3, and the view shows it as `heard` with no speaker | `p`, `tn`; no speaker, no cell |
+
+The reasons a `failed` episode indexes, in this order: `no_food`, `food_gone`, `incapacitated`,
+`crowded`.
+
+A **belief** is `{ id, p, cr, src, who?, ev, lost, tn, ex, dp, u }`: its proposition; its
+confidence from 0 to 1000; `src`, the mask of the kinds of evidence that ever supported it (1 seen,
+2 told, 4 inferred, 8 external, the last C3 and shown to the brain as 2), which only grows; `who`,
+the last speaker it came from; `ev`, the local ids of the live records it cites, at most 3; `lost`,
+how many cited records it has lost, up to 2^31 − 1; its taints `tn` and `ex`; its depth `dp`; and
+`u`, the tick it was last formed, revised, or cited.
+
+A **relationship** is `{ id, who, f, seen, aff, tr, tn, talk, turns }`: its local id; the other
+being; `f`, its familiarity as seconds of co-presence, decayed by absences, as of the tick `seen` it
+was last perceived, saturating where it gives 1000; affinity from −1000 to 1000, starting at 0;
+trust in its claims from 0 to 1000, starting at 500; its taints; the tick the being last addressed
+it; and the acts addressed to it in the current conversation.
+
+An **inbox message** is `{ who?, t, cell?, act, p?, band?, tn, ex }`. An injection's message has
+no `who` and no `cell`, and its act is `tell`.
+
+### Propositions `prop@1`
+
+`{ p, a, v?, neg? }`: a concept id; one or two terms, each `{ e: id }`, `{ c: [x, y] }`, or
+`{ n: integer }`; an optional integer value; and `neg: true` for its negation. At most 96 bytes of
+canonical text.
+
+A concept id is an engineering identifier, never shown to an inhabitant
+([0021](../decisions/0021-procedural-world.md)), and not an enum. It matches
+`^[a-z][a-z0-9]*(\.[a-z0-9][a-z0-9-]*)+$` with at most 48 characters, in a namespace:
+`obs.` followed by an observable of the catalog, or the namespace a brain declares when it is
+captured, such as `m1.` for `mind@1`, whose concepts are defined over observables:
+
+| Concept | Terms | Value | Definition |
+|---|---|---|---|
+| `m1.food-at` | a cell | a band 0–2 | The band of the effective food of the species' deposit at the cell |
+| `m1.food-near` | a cell | — | Some cell within 8 cells of it holds food of band 1 or more |
+
+The engine validates the structure, never the meaning. The typed hypothesis trees of plan §K.8
+come as `prop@2`.
+
+## Time, salience, and forgetting
+
+The salience of a record at a moment, with `E` the seconds from its anchor to the moment:
+
+```
+H = max(1, ⌊halfLife · retention / 1000⌋)       k = ⌊E / H⌋
+s = 0                                            when k ≥ 30
+a = ⌊w / 2^k⌋    s = a − ⌊(a − ⌊a / 2⌋) · (E mod H) / H⌋   otherwise
+```
+
+It is exact, never increases with E, and uses no power function or shift that could overflow. For
+an episode, `w` is its importance and the anchor is `r`; an episode with `w ≥ pinLevel` keeps
+`s = w`. For a belief, `w` is `max(cr, 1000 − cr)` and the anchor is `u`. A relationship's
+familiarity at a moment is `min(1000, ⌊rate · f′⌋)`, where `f′` is `f` itself when the seconds
+since `seen` are at most `relations.gap`, and otherwise `f` decayed by the formula over all those
+seconds, with `w = f`, the anchor `seen`, and `relations.halfLife`, which retention does not scale.
+
+- An episode with `s < floor` is forgotten. Beliefs and relationships are never forgotten by
+  salience; they are displaced when their store is full.
+- A full store of episodes or beliefs evicts the record with the lowest salience, the new one
+  included, then the oldest (an episode by `t`, a belief by `u`), then the lowest id. A full store
+  of relationships always admits a being met for the first time and evicts the other relationship
+  with the lowest familiarity, then the one seen longest ago, then the lowest id.
+- A recall, or citing the episode as evidence, sets `w` to `min(1000, s + recall)` and `r` to now.
+  At most `pins` episodes have `w ≥ pinLevel`: beyond that, a new importance is capped at
+  `pinLevel − 1`.
+- Forgetting is applied only when the being decides. The view a brain gets is a pure function of
+  the mind and the moment, so it is the same whether the being was processed often or seldom; the
+  ticks at which records leave the state, and their events, follow the being's decisions.
+
+## Provenance and taints
+
+The taint mask has 1 `model-prior-suspect`, 2 `human-external`, and 4 `implementation-leak`. ADR
+0006 classifies a belief by its lineage, and plan §K.7 calls it reasoned when it formed without
+prior contaminated inputs: two criteria, kept in two fields.
+
+| Record | `tn`, lineage | `ex`, exposure |
+|---|---|---|
+| A `food`, `being`, `ate`, or `failed` episode | ∅ | ∅ |
+| A `heard` episode of a `tell` | The `tn` of the speaker's belief, captured when it decided to speak | The `ex` of that belief ∪ the speaker's `exposure` at that decision |
+| A `heard` episode of `greet`, `ask`, or `unknown` | ∅: the act carries no content | ∅ |
+| An `external` episode | `human-external` and the taints the injection declares | ∅ |
+| A relationship | The union of the `tn` of the records an operation cited for it | — |
+| A new belief | The union of the `tn` of what it cites, plus `model-prior-suspect` when it cites nothing | `exposure` ∪ the `ex` of what it cites |
+| A revised belief | Its own ∪ the new evidence's: never smaller | `exposure` ∪ its own ∪ the new evidence's |
+
+- `exposure` grows with the `tn` and `ex` of every message that reaches the inbox, and with the
+  `tn` of every belief the being forms. It never shrinks. A message that is not delivered adds
+  nothing: it was never an input.
+- A belief is **reasoned** when `tn ∪ ex = ∅`. Lineage is exact; exposure is strict and cannot be
+  avoided by what a brain cites or by rephrasing a proposition.
+- **Taints flow downstream.** When the taints of a record grow (a revision, a `relate` that cites a
+  tainted record), every belief that cites it, directly or through other beliefs, takes them too, in
+  the same decision or delivery, visiting beliefs by increasing id: one pass, since a belief only
+  cites beliefs of a lower id, over at most `mind.beliefs` beliefs. `mind.provenance` records each
+  growth. A belief's taints therefore always contain those of everything it cites now.
+- A chunk is invalid if any belief has a `tn` or `ex` that does not contain the union over the
+  live records it cites, so not even a crafted snapshot holds an unclosed taint; a legal world
+  always satisfies it, because of the flow above.
+- When a cited record is forgotten or displaced, its id leaves `ev`, `lost` grows, and the ledger
+  records the link; `tn`, `ex`, `src`, and `who` stay in the belief.
+
+**The ledger.** Every change of a mind emits events (see [Events](#events)); the events of a tick
+enter its checksum, and T7 persists those checksums by batch, so the ledger is tamper-evident. The
+state keeps summaries; the ledger keeps the whole provenance graph, which a test oracle rebuilds.
+T7 must never prune these events.
+
+**Hidden channels.** A brain can keep information outside its records: `behavior.kind`, the cells of
+its cooldowns, the steps of a plan, the thresholds of `wakeWhen`, and the values it proposes. In
+`beings@2`, `behavior.kind` is one of the behaviors the brain declares when it is captured. The rest
+cannot be removed without removing behavior; `ex` covers them, because it does not depend on what a
+belief cites.
+
+**Limits.** A brain that hides a tainted premise can make `tn` name the wrong kind of taint, never
+an empty one when `ex` is counted. Influence through the world, such as following a being that was
+told something, is not traced. The whole-decision ablation of `mind@1` is a property of that brain,
+not a guard against hostile ones.
+
+## Beliefs
+
+An intention of `beings@2` may carry `mind`, with at most `mind.ops` operations in all:
+
+| Operation | Effect |
+|---|---|
+| `remember: [{ percept, w }]` | An episode from a percept of this decision, copied by the engine: `{ being: index }`, `{ heard: index }`, `{ food: cell }` within the window, or `{ outcome: true }` |
+| `recall: [id]` | Refreshes an episode |
+| `believe: [{ p, cr, ev, rule }]` | A belief citing live records; adopting a proposition already held revises it |
+| `revise: [{ id, cr, ev? }]` | New confidence, and new evidence added |
+| `drop: [id]` | Removes a belief |
+| `relate: [{ who, aff?, tr?, because }]` | Changes a relationship, citing in `because` one to three live records, at least one of which involves `who` |
+
+At a decision, in this order:
+
+1. the engine forgets what has faded by now, and updates familiarity, creating a relationship for
+   each perceived being and each speaker heard that has none (affinity 0, trust 500): first the
+   perceived beings in the order attention keeps them, then the speakers of the inbox by increasing
+   id, each evicting by the rule above when the store is full;
+2. the brain decides on the view of that mind;
+3. the operations apply in this order of kinds: `remember`, `recall`, `believe`, `revise`, `drop`,
+   `relate`, each kind in the order given. New records take the ids `next`, `next + 1`, and so on in
+   that order, so a brain cites a record created in the same decision by the id it predicts from
+   `next`.
+
+The operations are atomic: if any fails, the intention is rejected with that operation's reason and
+no operation applies; what step 1 did stays, because it is a law, not a proposal.
+
+- A belief may cite episodes and relationships of any id, but only beliefs of a **lower** id, so
+  support cannot be circular. Its depth is one more than the deepest belief it cites, at most
+  `mind.depth`.
+- `revise` must cite at least one record it did not cite before; `ev` keeps the three most recent
+  citations, and the ledger records any it drops. `src`, `tn`, and `ex` keep what the dropped ones
+  brought.
+- A record **involves** a being when it is a `being` or `heard` episode whose `who` is that being,
+  or a belief whose `who` is that being.
+- Validation receives the decision's **manifest**: in T5 the whole live mind; in T9 the context of
+  the prompt, where citing a record outside it will add `model-prior-suspect`.
+- `rule` names the brain's rule, at most 32 characters, for the ledger. In `mind@1` each belief
+  operation is the output of an exported pure function of the records it cites, the being's
+  traits, and the laws of its species, and of nothing else.
+
+| Failure | Reason |
+|---|---|
+| A member, a count, a bound, or a grammar of the operations | `mind_malformed` |
+| A percept, record, or being that the mind does not hold | `unknown_record` |
+| A belief citing a belief of a higher or equal id, or a `revise` with nothing new | `premise_order` |
+| Deeper than `mind.depth` | `depth_exceeded` |
+
+A brain of `beings@2` declares, besides its version and its `decide`, `behaviors`, the 1 to 16
+identifiers its `behavior.kind` may take, and `concepts`, the namespace of its concepts; the capture
+refuses one without them. `utility@1` runs on `beings@2` as the mindless baseline through a test
+helper that adds its five behaviors and no concepts, under its own brain version.
+
+## Relationships
+
+Familiarity is a law. At each perception of `who`, if the seconds since `seen` are at most
+`relations.gap`, they are added to `f`, exactly, with no rounding; after a longer absence `f`
+decays over the whole absence and nothing is added; then `seen` becomes now. The first perception
+adds nothing. So a brain that decides every tick earns no more than one that decides every minute
+while the other stays in view, and familiarity lost to an absence stays lost. A relationship exists
+only after a percept or a message of that being. Affinity and trust change only by `relate`, by at most
+`relations.delta`, and the relationship takes the `tn` of what it cites. Knowing someone is
+familiarity; trusting its claims is a judgment the brain makes by checking its testimony against
+what it later sees.
+
+The key is an entity id, so other species, and future human avatars, fit without a new structure.
+Speech from a human avatar will carry `human-external` because of the kind of its controller (T9
+and later).
+
+## Speech
+
+| Act | Content | When the being decides it |
+|---|---|---|
+| `greet` | — | The hearer was perceived in this decision, at distance at most `speech.range`, and its activity is not `sleep` |
+| `ask` | A concept the species perceives: the `obs.` id of its food deposit | As for `greet` |
+| `tell` | One of its beliefs: the engine captures its proposition, its confidence band (≥ 800: 2; ≥ 500: 1; else 0), its `tn`, and its `ex` united with the speaker's `exposure` at that decision | As for `greet`, and the belief exists |
+| `unknown` | — ("I do not know") | As for `greet` |
+
+A `talk { to, act, about? }` step lasts `speech.actMs`, counts as idle for the needs, and is always
+the last step of its intention, so the being decides when it ends. The
+captured content lives in the activity as a C3 member the senses never copy. The quotas: at most
+`speech.perDay` acts per simulated day, and at most `speech.turns` acts to the same hearer in a
+conversation, which ends after a pause longer than `speech.gap`; after a full one, the pair keeps
+`speech.cooldown` before the being addresses that hearer again. A failed quota or condition is the
+rejection `talk_unseen` (the hearer was not perceived in this decision), `talk_out_of_range`,
+`talk_unheld` (no such belief), `talk_quota`, or `ask_concept` (a concept the species does not
+perceive). Hearing does not interrupt a being that is talking: its inbox waits for the decision at
+the end of the act, which every act reaches.
+
+Delivery, when the act ends at tick t:
+
+1. **Phase 2,** from the state at the start of t: the hearer exists, is within `speech.range`, is
+   not asleep, and is not incapacitated. The speaker decides at the end of its act, so the hearer's
+   chunk is among those its window reads, and finding the hearer reads nothing more. A talk cut
+   short by forced sleep, incapacity, or death delivers nothing.
+2. **Phase 3:** a hearer that died at t hears nothing; when more messages reach a hearer than its
+   inbox has room for, its speakers, by increasing id, are ordered by `random.permutation` on the
+   stream `beings.speech`, keyed by the hearer's id, and the first fill the room; the rest are not
+   heard.
+3. **Phase 4:** each message merges into the hearer's final record, found by binary search, in
+   order of speaker id, before its chunk's `due` is computed; the hearer's chunk is written; its
+   `exposure` grows; and it wakes at t + 1 only if its activity is `idle` and
+   `quota.woken < speech.wakesPerDay`. A hearer that walks, eats, or sleeps keeps the message for
+   its next decision: hearing interrupts no meal and no walk.
+
+The speaker learns nothing about whether it was heard, so a hearer's `condition` never leaks. The
+templates of `speech@1` (`packages/agents`, pure, versioned) render acts for logs and for T6's feed;
+a test checks that no template seeds a target topic (plan §K.4), which restricts what we inject, not
+what inhabitants think.
+
+## The tick of `beings@2`
+
+1. `collectDue`, as in T4.
+2. `advance`, by id, over the state at the start of the tick: physiology and arrivals; the delivery
+   of a talk that ends; and, at a decision, the senses, the percepts, and the view, then `decide`,
+   called without `this`, the validation, and the new mind from `src/mind`.
+3. `resolveClaims` for food; then the **contest for room**: a chunk has as free places `capacity`
+   less the beings it holds when the beings system starts, after the commands of the tick (spawns
+   included), since a departure frees no place until the next tick. When more beings arrive than it has free places, the arrivals, by increasing id, are ordered
+   by `random.permutation` on the stream `beings.crowd`, keyed by the lowest arriving id, and the
+   first take the places. The rest end their walk at the cell they started the tick in, which their
+   own chunk still counts, with the result `failed`, the reason `crowded`, an idle of 1 ms, and a
+   wake at t + 1. Then deliveries are resolved.
+4. `applyWorks`: the final records, where an unchanged mind is the same value, not a copy; then the
+   deliveries; then `due` and the occupancy.
+5. Events: those of phase 2 by being id, each being's in the order T4 emits them, then its
+   `mind.changed` and `mind.provenance`, then its `speech.uttered`; those of phase 3, contests by
+   place as in T4, then the contest for room by chunk key; those of phase 4, deliveries by hearer
+   id, then speaker id.
+
+A being's mind is copied only when it decides. A spawn into a chunk at `capacity` is rejected with
+`invalid_spawn`.
+
+## Versions and compatibility
+
+`createBeingsRuleset({ controllers })` stays `beings@1` with `life@1`, byte for byte.
+`createBeingsRuleset({ controllers, rules: "beings@2" })` requires `life@2`; any other `rules`
+value is refused with `invalid_ruleset`. Each version is one immutable object of rules with its own
+lists: the members of a being, the kinds of activity, the validators. They differ in `ruleset.ts`
+(`readTraits`, `newBeing`, `globalIssues`, the capture), `being.ts`, `chunk.ts`, `laws.ts`,
+`env.ts`, `advance.ts` (`workOf`, `carryOn`, `sensesOf`), `intention.ts`, `body.ts`,
+`resolve.ts` (`finalBeing`, `activityTick`, `applyWorks`), and `beings.beingIssues`.
+
+| Version | Content |
+|---|---|
+| Ruleset | `beings@1` unchanged; `beings@2` new |
+| Laws | `life@1` unchanged; `life@2` new |
+| Brain | `s1:utility@1` unchanged; `s1:mind@1` new |
+| Propositions, speech | `prop@1`, `speech@1` |
+| Kernel | `ENGINE_VERSION` 0.1.0, snapshot version 1: unchanged |
+
+`beings@1` changes only where a world faulted or a host was misconfigured, so no valid history
+changes: a spawn into a chunk that holds 65,536 beings is rejected with `invalid_spawn` instead of
+poisoning the world, and the capture refuses a `decide` that is an async function or a generator
+(T5-2). `beings@2` also treats a result of `decide` that is not a plain record, a promise among
+them, as a code error that poisons the world, and calls `decide` without `this`. An intention with
+a member that is not canonical is still rejected as `malformed` in both. The engine cannot handle a
+promise (it may not name `Promise`), so the host's contract (T6) must handle rejections it leaves
+unhandled.
+
+Before any code changes, T5-2 adds goldens computed on `6fa7375`: digests of the per-tick checksums
+of T4's fuzz seeds, of T4's determinism subject, of `countedRun`, and of the default and `heldout/1`
+runs of the survival child, which already runs them. Every T4 test runs unchanged.
+[Determinism](determinism.md) needs no change: its suite rules apply to `beings@2` as written.
+
+## Events
+
+| Event | Class | Payload |
+|---|---|---|
+| `speech.uttered` | C0 | `{ id, to, act, p?, band?, cell }`, when an act ends without being cut short |
+| `speech.delivered` | C1, the hearer's | `{ id, to }` |
+| `speech.unheard` | C3, because its reason tells the hearer's condition | `{ id, to, reason }`: `range`, `asleep`, `gone`, `full`, or `condition` |
+| `mind.changed` | C1 | `{ id, encoded, formed, revised, dropped, forgot, related }`: ids, with each formed belief's rule and each forgotten record's citing beliefs |
+| `mind.provenance` | C3 | `{ id, records, exposure }`: the `tn`, `ex`, and evidence of each record created or revised, and the being's exposure |
+| `mind.injected` | C3 | `{ id }`, for an accepted `mind.inject` |
+
+A decision with changes to a mind emits one `mind.changed` and one `mind.provenance`. A delivery
+emits `speech.delivered`, and a `mind.provenance` when it changes an exposure; an accepted
+injection emits `mind.injected` and a `mind.provenance`. Every change of a mind is therefore in the
+ledger.
+
+## Commands and faults
+
+`mind.inject { being, cell, p, taints }` is admin-only: it adds an `external` message to the inbox
+of the being at `cell`, so the engine never searches the world for it, with `human-external` always
+among its taints. Commands apply before the systems of their tick, so the being wakes at t + 1 under
+the rule of a hearer, without spending its daily wakes. Rejections: `admin_only`, `not_found`,
+`full`, `invalid_inject`.
+
+An intention or operation that fails validation is a rejection, the being's experience: `malformed`,
+`mind_malformed`, `unknown_record`, `premise_order`, `depth_exceeded`, `talk_unseen`,
+`talk_out_of_range`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies brain output with
+`copyCanonicalReported`, refuses accessors and proxies, reads every length once and bounds it
+before iterating, and requires exact members, NFC strings, and the grammars above.
+
+## Classification
+
+| Class | What T5 adds |
+|---|---|
+| C0 | The `talk` activity and its hearer; `speech.uttered` |
+| C1 | Episodes, beliefs, and relationships without their taints; the inbox; the three traits; `mind.quota`; `mind.changed`, `speech.delivered` |
+| C3 | `tn`, `ex`, `exposure`; the episode kind `external` and the evidence bit 8; the captured content of a talk in progress; `speech.unheard`, `mind.provenance`, `mind.injected`, `mind.inject`; the laws of `life@2`; reference truth |
+
+Taints are C3, not C1, because C1 may reach the inhabitant itself
+([0008](../decisions/0008-data-classification-and-audience-projections.md)), and an inhabitant
+must never see them. A classification registry in code covers every member, nested ones included,
+every event, and every command; a test fails when a member has no class, and the allowlist of the
+senses is derived from it. T6 builds its projections on it.
+
+## The brain `mind@1`
+
+`mind@1` lives in new files of `packages/agents/src/brain` and leaves `utility@1`, `parameters.ts`,
+and `freeze.test.ts` untouched. It keeps `utility@1`'s behaviors for survival and adds:
+
+- going to food it remembers or was told about, when none is in sight;
+- greeting a being it meets or meets again, asking for food when hungry and knowing none, telling
+  food it believes to a being that asks or that it knows, answering "I do not know", and waiting a
+  moment, idle, for an answer;
+- revising a belief when what it sees contradicts it, and changing its trust in a speaker by what
+  its testimony turned out to be.
+
+Each belief operation is an exported pure function of the records it cites, the being's traits,
+and the laws of its species. Retrieval ranks records by age, importance, and relevance (plan §K.3)
+in one pass. Traits modulate it: sociability its will to speak, credulity the confidence it gives
+to testimony, retention its memory. A message whose speaker is not visible is weighed as one from a
+being it does not know, with the trust of a new relationship.
+
+## Preregistration
+
+Registered before any calibration. Every choice below is fixed: none is left to the pull request
+that implements it.
+
+### Seeds and scenario
+
+The rule of [T4](beings.md#seeds) with the labels of T5:
+
+| Set | Labels | Use |
+|---|---|---|
+| Default | `open-origin/t5/default` | The evaluation in CI |
+| Calibration | `open-origin/t5/calibration/1` to `/4` | Calibrating the laws of `life@2` and `mind@1`, and nothing else |
+| Held out | `open-origin/t5/heldout/1` to `/6` | Evaluation: `/1` in CI, all six in the soak |
+| Reserve | `open-origin/t5/heldout/7` to `/12` | Replacement after a burn |
+| Bench | `open-origin/t5/bench` | The benchmark; measuring on it burns nothing |
+
+The scenario is [T4's](beings.md#scenario) with the default laws of `life@2` and the brain
+`mind@1`. Each being draws, in this order: its cell, nutrition, rest, appetite, sleepiness,
+curiosity, sociability, credulity, and retention, the last three within their bounds.
+
+The spawn areas, computed with the rule of T4 on `worldgen@1` before any law of mind existed:
+
+| Label | Coverage (cells of 2^20) | Area needs | Center chunk | Land cells | Food cells |
+|---|---|---|---|---|---|
+| `default` | 50,666 (4.83%) | 446 | (0, 0) | 9,071 | 2,034 |
+| `calibration/1` | 83,737 (7.99%) | 736 | (0, 0) | 9,216 | 909 |
+| `calibration/2` | 71,377 (6.81%) | 628 | (−3, 3) | 9,216 | 1,295 |
+| `calibration/3` | 100,314 (9.57%) | 882 | (−5, 3) | 9,216 | 929 |
+| `calibration/4` | 73,110 (6.97%) | 643 | (0, 0) | 9,216 | 6,220 |
+| `heldout/1` | 110,492 (10.54%) | 972 | (0, 0) | 9,216 | 9,216 |
+| `heldout/2` | 68,739 (6.56%) | 605 | (2, 5) | 9,216 | 927 |
+| `heldout/3` | 54,948 (5.24%) | 483 | (−12, 10) | 6,980 | 643 |
+| `heldout/4` | 97,076 (9.26%) | 854 | (−3, −7) | 5,132 | 2,217 |
+| `heldout/5` | 74,556 (7.11%) | 656 | (−2, 16) | 5,974 | 893 |
+| `heldout/6` | 74,492 (7.10%) | 655 | (2, 1) | 9,216 | 1,390 |
+| `heldout/7` | 64,619 (6.16%) | 568 | (1, 4) | 4,866 | 874 |
+| `heldout/8` | 73,031 (6.96%) | 642 | (−4, 7) | 4,768 | 1,732 |
+| `heldout/9` | 88,614 (8.45%) | 779 | (−4, 4) | 9,216 | 2,159 |
+| `heldout/10` | 54,864 (5.23%) | 483 | (−13, 6) | 7,731 | 849 |
+| `heldout/11` | 90,985 (8.68%) | 800 | (0, 0) | 9,216 | 1,458 |
+| `heldout/12` | 110,036 (10.49%) | 968 | (5, 15) | 8,498 | 2,311 |
+
+### Targets of calibration
+
+Expressed in the world's day L, with neutral traits:
+
+| Target | Range |
+|---|---|
+| An episode of importance 500, never recalled, is forgotten | 2 L to 5 L after it happened |
+| Familiarity after 1 L of continuous co-presence | at least 500 |
+| Familiarity after 10 L of absence, against before it | at most a half |
+| Time a being spends talking | at most 5% of its awake time |
+| The survival of T4 | every item of [T4's acceptance](beings.md#evaluation) on every calibration seed |
+
+### Evaluation
+
+- The laws of `life@2` and `mind@1` are calibrated on the calibration seeds only, then frozen
+  together in T5-7, with `mind-freeze.test.ts` pinning the seal of the default `life@2` and a digest
+  of `mind@1`'s parameters. Because much of T5's behavior is code, CI also pins the exact results of
+  the evaluation; changing them burns every held-out label already evaluated, and the evaluation
+  moves to the reserve.
+- The held-out seeds run only in T5-9, after the adversarial work of T5-8, so that fixing a
+  laundering bug burns nothing.
+- Each item below is a predicate over the events of the run (the ledger), so a test computes it
+  without judging:
+  - a belief **from its own observations**: a `believe` that cites a `food`, `being`, `ate`, or
+    `failed` episode;
+  - a belief **from testimony**: a `believe` or `revise` that cites a `heard` episode of a `tell`;
+  - a belief **revised down after seeing it contradicted**: a `revise` of an `m1.food-at` belief that
+    lowers `cr` and cites, at the same cell, a `food` episode whose band differs from the belief's
+    or a `failed` episode whose reason is `no_food` or `food_gone`;
+  - **trust changed by checking a testimony**: a `relate` with a nonzero trust change that cites a
+    belief whose `who` is that being and whose `src` includes told, and, at that belief's cell, a
+    `food`, `ate`, or `failed` episode;
+  - a **conversation**: delivered acts between one pair, at least one in each direction, each
+    delivered within `speech.gap` of the one before;
+  - **greeted and was greeted**: a `speech.delivered` of a `greet` with the being as speaker, and one
+    with it as hearer;
+  - **hungry with no food in sight**: a decision with nutrition below 500,000 and a food cue of 0 in
+    every cell of the window.
+- Acceptance on the default seed and `heldout/1`, over 63,000 ticks:
+  - **every being** meets every item of T4's acceptance, where a rejected mental operation counts as
+    a rejected intention; encoded at least one `food` and one `being` episode; formed at least three
+    beliefs from its own observations; and holds at least one relationship at the last tick;
+  - **the population** revised at least one belief down after seeing it contradicted; held at least
+    10 conversations; every being greeted and was greeted; formed at least one belief from
+    testimony; and changed trust at least once by checking a testimony;
+  - **integrity:** no belief of `mind@1` has `model-prior-suspect`; the ledger oracle matches every
+    taint and link; every flow invariant holds at every tick; no quota is exceeded; every belief
+    operation equals its rule applied to what it cites;
+  - **diversity:** at the last tick, the sets of believed propositions of any two beings differ.
+- Informative hypotheses for the soak, on `heldout/1` to `/6`, recorded whatever they show:
+  - **memory:** the median time from hungry with no food in sight to the next bite is shorter under
+    `mind@1` than under `mind@1` with every capacity of `mind` at 0 and `speech.perDay` at 0, paired
+    by label;
+  - **a false claim:** at tick 6,300 (1 L), `mind.inject` gives the being of lowest id
+    `m1.food-at` with band 2 at the nearest cell, by Chebyshev distance of at least 5, then y, then x,
+    that is passable and has no food, with `human-external` only; it is revised below 500, or
+    dropped, within 2 L on at least five of the six labels;
+  - **credulity:** across the 48 beings, the share of beliefs from testimony that are false one day
+    after they form, by the reference truth, decreases as credulity decreases (a Spearman
+    correlation, reported with its value).
+- **The ablation of whole decisions** (soak, `mind@1` only, every decision of the being of lowest id
+  on each held-out label): for each belief operation, with ids kept, (a) `decide` again with the
+  records it cites removed: no operation forms or revises the same proposition unless it cites other
+  live records; (b) `decide` again with only the records it cites, and every input that is not a
+  record: an operation with the same proposition and the same citations is among the result.
+  Confidence, and believe against revise, are not compared.
+
+## Cost
+
+Targets, measured with the named scenarios of [T4's benchmark](beings.md#the-scale-benchmark):
+
+- One decision of `mind@1`, end to end, by T4's method: in "dispersed 1,000", median at most 4 ms
+  (T4 measured 2.96 to 3.27 ms); in "concentrated 10, 3 × 3", where beings see each other, median
+  at most 5 ms.
+- A wake that does not decide: in the same run of "dispersed 1,000" under `beings@1` and under
+  `beings@2` with every mind at capacity, the median cost of such a wake differs by at most 150 µs.
+- A sleeping being: at most 1 µs per tick, and no mental work for a being that is not due, by count.
+- "dispersed 10": median at most 1 ms. "dispersed 1,000": median at most 50 ms, p99 at most 100 ms,
+  and p99 hashed at most 1 MB.
+- Many speaking: 1,000 beings in 500 pairs cost linearly in acts; 50 speaking to one hearer cost at
+  most its `speech.wakesPerDay` decisions a day.
+- **The largest mind**, which tests build exactly: every episode a `heard` episode of a `tell` and
+  every message in the inbox a `tell`, each with every optional member; every belief with `who` and
+  three citations; every relationship full; propositions with `neg`. With values typical of v0.1
+  (coordinates −99,999, ticks 99,999,999, local ids 999, entity ids 99,999, so a proposition of
+  63 B) it must stay at most 4.5 KB; measured while planning, 4,056 B. With the largest values
+  (coordinates −2^31, ticks and entity ids 2^53 − 1, local ids 2^31 − 1, propositions of 96 B), at
+  most 6 KB; measured, 5,711 B. A chunk at `capacity` is then at most 64 × 6.3 KB, about 0.4 MB.
+  Shorter member names would save about 4%, so the names stay readable.
+- If a decision or the p99 of "dispersed 1,000" misses its target, the window's edges, about two
+  fifths of a decision ([beings](beings.md#the-scale-benchmark)), are optimized by a refactor that
+  changes no output; a miss that remains is recorded as it is.
+
+**The gate of the entity section.** In T5-4, before the brain exists, a benchmark brain gives every
+being of "dispersed 1,000" **the gate's mind**, the record mix a `mind@1` being holds, decided
+here: 5 `food`, 1 `being`, 1 `ate`, and 1 `heard` episode of a `tell`; 8 beliefs of `m1.food-at`,
+each citing 2 records; 6 relationships; an empty inbox, which every decision consumes; typical
+values and propositions without `neg`. It measured 2,680 B while planning, so a being is about
+3.2 KB, and the estimate from T4's 112.4 KB at p99 is about 0.7 MB, below the trigger. If the
+measured p99 hashed is below 1 MB, the entity section stays in T7. If not, the capacities come down
+first (the largest mind at 6 episodes, 6 beliefs, and 4 relationships measured 3,096 B with
+typical values); if the smallest useful mind is still above it, T5 stops for the maintainer's
+decision, because bringing the section forward changes the kernel,
+`ENGINE_VERSION`, and the goldens of T2 to T4. "dispersed 10,000" already crosses it: at about
+1.3 KB per being its p99 reaches 1 MB ([beings](beings.md#ceilings)), so with minds it is a ceiling
+outside what v0.1 supports, measured and recorded in T5-9. For T7, the section needs one hash term
+per component, body and mind, so that a step rehashes about 0.5 KB rather than about 4 KB; T5-9
+measures the share of writes that change only the body as evidence for that design.
+
+## Verification plan
+
+| Requirement | Pull request |
+|---|---|
+| Two beings in different situations form different episodes, each equal to its percept | T5-5a |
+| An observation's belief traces back to a percept that matches the state of its tick | T5-5a |
+| A testimony keeps its speaker, tick, and act, in the belief and in the ledger | T5-6 |
+| A derived belief inherits the taints of its premises: random graphs against an oracle, and a chain of five beings | T5-3, T5-8 |
+| Forgetting, displacement, adoption again, and corroboration never lower a taint | T5-3, T5-8 |
+| A false injected claim changes nothing in the world; the being goes, finds nothing, and revises | T5-8 |
+| Relationships change only by perceptions and delivered acts; familiarity is equal for idles of 1 ms and of 60 s, at the ticks both decide | T5-5b, T5-6 |
+| Speech is refused out of reach, to the sleeping, and to the unseen; it arrives at t + 1; a hearer that died, moved out of reach, fell asleep, or has a full inbox hears nothing; quotas hold | T5-6 |
+| No path to models; purity and brain-symbol scans | every pull request |
+| `utility@1` on `beings@1` unchanged; `utility@1` on `beings@2` as the mindless baseline; `mind@1` meets T4's survival items | T5-2, T5-4, T5-9 |
+| The determinism suite with audit, cuts at the first act, delivery, forgetting, revision, injection, contest for room, day edge, new chunk, and seeded ticks; `child-resume`; `interleave`; a fresh controller per decision; resume at mid-run | T5-8, T5-9 |
+| Observers that read minds every tick change nothing; a coupled observer diverges | T5-8 |
+| Fuzz with invariants at every tick and the ledger oracle; planted defects | T5-5b, T5-8 |
+| The cost targets and the gate | T5-4, T5-9 |
+
+Each planted defect must fail its test: a union of the first premise only; a revision that clears
+taints; an exposure that does not grow with a belief of its own; forgetting without a ledger entry;
+delivery out of reach, to the asleep, in the same tick, or waking a walker; telling a belief not
+held; an observation with content from the brain; a relationship without an encounter; familiarity
+by count of decisions; taints in the senses or the view; a view that shares values with the state; a
+brain with memory in a closure, or that passes senses between beings of one tick; salience that
+decays per decision; perception after a write; an extra chunk read; a sweep of minds per tick;
+capacity checked only in phase 2; a mind copied at every wake; an observer that compacts a mind;
+citing a higher id; a belief without evidence and without `model-prior-suspect`; an injection
+without `human-external`; a belief operation that is not its rule; a speaker that never stops; many
+speakers to one hearer.

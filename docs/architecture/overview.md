@@ -107,7 +107,7 @@ apps/server (Bun)
     Cognitive allocator ──commands (applyTick, seq)───────▶ packages/engine
     Cognitive allocator ──calls───────────────────────────▶ packages/ai-gateway
     Persistence: batches, checkpoints, idempotency, lock ◀──batches── packages/engine
-    packages/agents: policies, memory, prompts, provenance (depends on engine)
+    packages/agents: policies, prompts (depends on engine); memory and provenance live in the engine's state
     packages/ai-gateway: modes off / mock / free-only / paid, caps
           │                                   │
           ▼                                   ▼
@@ -127,8 +127,8 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | `apps/web/` | T8 | Public interface (React + PixiJS) |
 | `apps/admin/` | T8, T9 | Local admin panel; AI controls in T9 |
 | `packages/ui/` | T8 | Design system: tokens + components (CSS Modules) |
-| `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 adds worldgen in `src/worldgen` (space, the sealed genesis, terrain, the calendar, and primitive observables) and the ChaCha20 function terrain draws from: pure functions that rulesets call inside `step`, proven by a probe ruleset in the determinism suite ([0021](../decisions/0021-procedural-world.md)). T4 adds `src/beings`, a layer above worldgen with the body of the beings: needs and health in closed form, bounded senses, actions validated and executed, contests over food, the occupancy index, and sealed laws of life; its ruleset runs the suite with worldgen inside `step` ([0023](../decisions/0023-autonomous-beings.md), [beings](beings.md)). T7 adds the migration chain of snapshot versions (plan §5.2) |
-| `packages/agents/` | T4, T5 | T4: the deterministic brain behind the engine's controller port (Utility AI, Dijkstra and A*), a pure function of the senses the engine builds ([0023](../decisions/0023-autonomous-beings.md)); T5: memory, prompts, provenance |
+| `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 adds worldgen in `src/worldgen` (space, the sealed genesis, terrain, the calendar, and primitive observables) and the ChaCha20 function terrain draws from: pure functions that rulesets call inside `step`, proven by a probe ruleset in the determinism suite ([0021](../decisions/0021-procedural-world.md)). T4 adds `src/beings`, a layer above worldgen with the body of the beings: needs and health in closed form, bounded senses, actions validated and executed, contests over food, the occupancy index, and sealed laws of life; its ruleset runs the suite with worldgen inside `step` ([0023](../decisions/0023-autonomous-beings.md), [beings](beings.md)). T5 adds `src/mind`, a pure layer of propositions, records, taints, salience, and forgetting that cannot read the world, and the ruleset `beings@2` beside `beings@1`, with perception, mental operations, relationships, and speech ([0024](../decisions/0024-mind-memory-beliefs-and-speech.md), [mind](mind.md)). T7 adds the migration chain of snapshot versions (plan §5.2) |
+| `packages/agents/` | T4, T5 | T4: the deterministic brain behind the engine's controller port (Utility AI, Dijkstra and A*), a pure function of the senses the engine builds ([0023](../decisions/0023-autonomous-beings.md)); T5: the brain `mind@1`, which composes `utility@1` and proposes what to remember, believe, and say, and the templates of speech ([0024](../decisions/0024-mind-memory-beliefs-and-speech.md)); T9: prompts |
 | `packages/protocol/` | T6 | DTOs per audience |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
 | `tests/` | T1, T6, T7 | T1: repository checks in `tests/repo/` (see `AGENTS.md`, Automated controls); T6: end-to-end synchronization and observer-invariance tests; T7: crash-recovery tests ([0019](../decisions/0019-end-to-end-testing-strategy.md)) |
@@ -164,6 +164,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 | [0021](../decisions/0021-procedural-world.md) | Procedural world: latent terrain, a sealed genesis, ChaCha20 for terrain, primitive observables |
 | [0022](../decisions/0022-single-shared-public-universe.md) | A single public universe, shared and synchronized in real time: one clock, fixed speed, no time controls for users |
 | [0023](../decisions/0023-autonomous-beings.md) | Autonomous beings: a body in the engine, a brain in `agents` that only proposes, decision points, exact time, sealed laws of life |
+| [0024](../decisions/0024-mind-memory-beliefs-and-speech.md) | The mind: perception, memory that fades, beliefs with lineage and exposure taints, relationships, and speech by structured acts, in a parallel ruleset `beings@2` |
 
 ## Related
 
@@ -174,6 +175,9 @@ From plan §G. Each package is created in the batch that needs it; there are no 
   check ([0021](../decisions/0021-procedural-world.md)).
 - [Beings](beings.md): the body, senses, brain port, tick, and the preregistration of T4's
   scenarios ([0023](../decisions/0023-autonomous-beings.md)).
+- [Mind](mind.md): perception, memory, beliefs and their taints, relationships, speech, the tick
+  of `beings@2`, and the preregistration of T5's scenarios
+  ([0024](../decisions/0024-mind-memory-beliefs-and-speech.md)).
 - [Interfaces](interfaces.md): planes, message flow, acceptance criteria, and roadmap of both
   interfaces.
 - [Data classification](data-classification.md): access by interface, enforcement map, and tests

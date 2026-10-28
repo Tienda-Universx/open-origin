@@ -34,6 +34,11 @@ what **they** may think or say.
 belief inherits the union of its sources' taints, including testimony between inhabitants.
 Analysis can filter whole lineages.
 
+Refined by [0024](0024-mind-memory-beliefs-and-speech.md): a belief carries two measures that only
+grow, `tn`, the union over its lineage, which this table classifies, and `ex`, the inhabitant's
+lifetime exposure when it formed, which the "Reasoned" row requires; a belief is reasoned when both
+are empty.
+
 Controls (§K.7):
 1. Context ablation, offline, on the research budget.
 2. Control worlds without the phenomena in question, for base rates.
@@ -46,7 +51,8 @@ Controls (§K.7):
    laws differ from Earth's.
 5. Self-reference policy: tag, do not intervene. Recommended default (plan O-14), to be confirmed
    by the maintainer before T5 implements it. A research world may declare another policy as part
-   of its recorded experimental configuration.
+   of its recorded experimental configuration. Refined by
+   [0024](0024-mind-memory-beliefs-and-speech.md): the maintainer confirmed it on 2026-10-28.
 
 **Composable scientific representations (§K.8).** The action space is finite but composable:
 - Open ontology: concepts are registered IDs (not enums) defined compositionally over primitive
@@ -70,7 +76,9 @@ Controls (§K.7):
   recorded in [0008](0008-data-classification-and-audience-projections.md) (O-15).
 - **Open questions (O-13, O-14):** controls 4 and 5 are research-design choices that stay
   recommended defaults until the maintainer confirms them (see Decision). The accepted decision
-  (provenance, inheritable taints, no lexical blocking) does not depend on the answer.
+  (provenance, inheritable taints, no lexical blocking) does not depend on the answer. The
+  maintainer confirmed O-13 on 2026-10-25 ([0021](0021-procedural-world.md)) and O-14 on 2026-10-28
+  ([0024](0024-mind-memory-beliefs-and-speech.md)).
 
 ## Alternatives considered
 

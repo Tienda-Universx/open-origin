@@ -140,7 +140,7 @@ knows, and what only operators see stay apart:
 |---|---|---|---|
 | Internal reality | The genesis, the latent fields, the materialized state | the kernel and worldgen | C3 for the genesis; visible parts reach C0 only through projections |
 | Observable data | Quantities with a unit, range, version, and exposure | the worldgen catalog | T6 decides each projection |
-| Knowledge | What an inhabitant believes, with its provenance | T5 | C1 |
+| Knowledge | What an inhabitant believes, with its provenance | T5 | C1; its taints C3, refined by [0024](0024-mind-memory-beliefs-and-speech.md) |
 | Administration and research | The genesis, complete fields, human labels, reference truth | the admin and research planes (T6, T8) | C3 |
 
 **Primitive observables.** `elevation`, `liquid.depth`, `substrate`, `thermal`, `radiance`, and

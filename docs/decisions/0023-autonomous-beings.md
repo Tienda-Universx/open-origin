@@ -223,6 +223,8 @@ recommended moment is T7, with snapshot version 2, because the seed changes shap
   that the evaluation never uses ([beings](../architecture/beings.md#preregistration)).
 - Revisit:
   - in T5: perception, memory, and relationships over these senses, events, and the controller;
+    done by [0024](0024-mind-memory-beliefs-and-speech.md) in a parallel ruleset `beings@2`, which
+    leaves this one unchanged;
   - in T6: the projections of being fields and events;
   - in T7: the entity section and the kernel's randomness;
   - when the benchmark shows terrain reads limiting decisions: a terrain cache across ticks keyed by
