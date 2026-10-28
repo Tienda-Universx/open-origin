@@ -26,7 +26,7 @@ export {
   MIND_BOUNDS,
   within,
 } from "./bounds.ts";
-export { ageAt, type MindContext, type Moment, secondsSince } from "./context.ts";
+export type { MindContext, Moment } from "./context.ts";
 export { familiarity, familiarSeconds, perceivedAgain } from "./familiarity.ts";
 export { forget } from "./forget.ts";
 export { checkMind } from "./invariants.ts";
@@ -40,7 +40,6 @@ export {
 } from "./laws.ts";
 export {
   checkProposition,
-  copyProposition,
   isConceptId,
   PROP_BOUNDS,
   PROP_VERSION,
@@ -77,23 +76,12 @@ export {
   decay,
   episodeSalience,
   importanceWithin,
-  isPinned,
   refreshEpisode,
-  SALIENCE_HALVINGS,
   scaledHalfLife,
 } from "./salience.ts";
 export { settle } from "./settle.ts";
+export { type Admitted, admitEpisode, type Unlinked } from "./store.ts";
 export {
-  type Admitted,
-  admitBelief,
-  admitEpisode,
-  admitRelationship,
-  type Unlinked,
-  withoutRecords,
-} from "./store.ts";
-export {
-  citedTaints,
-  coversTaints,
   exposureAfterBelief,
   exposureAfterMessage,
   formedTaints,

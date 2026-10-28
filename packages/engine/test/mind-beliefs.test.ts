@@ -167,6 +167,8 @@ describe("believe", () => {
 
   test("takes no new record once ids have run out", () => {
     const full = { ...SOURCES, next: INT31_MAX };
+    expect(mind.freeId(full)).toBeUndefined();
+    expect(mind.freeId({ ...SOURCES, next: INT31_MAX - 1 })).toBe(INT31_MAX - 1);
     expect(reasonOf(full, { believe: [believe([1])] })).toBe("mind_malformed");
     const last = applied({ ...SOURCES, next: INT31_MAX - 1 }, { believe: [believe([1])] }).mind;
     expect(last.beliefs[0]?.id).toBe(INT31_MAX - 1);

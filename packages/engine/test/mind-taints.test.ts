@@ -29,6 +29,7 @@ const {
   LIVE_MANIFEST,
   recordOf,
   revisedTaints,
+  settle,
   TAINTS,
   taintsOf,
 } = mind;
@@ -303,6 +304,24 @@ describe("downstream flow", () => {
     for (let round = 0; round < 200; round += 1) flowed += randomRound(random, round);
     // The flow itself was exercised (44 growths with this seed), not only the rules of a new belief.
     expect(flowed).toBeGreaterThan(20);
+  });
+
+  test("settle flows a relationship's grown lineage to the beliefs that cite it, by increasing id", () => {
+    // A `relate` citing a tainted record has just grown relationship 2's lineage.
+    const subject = mindOf({
+      relations: [relationship(2, 41, { tn: 4 })],
+      beliefs: [belief(3, { ev: [2], src: 4 }), belief(4, { ev: [3], dp: 2, src: 4 }), belief(5)],
+    });
+    const { mind: after, tainted } = settle(subject);
+    expect(after.beliefs.map(({ id, tn, ex }) => ({ id, tn, ex }))).toEqual([
+      { id: 3, tn: 4, ex: 0 },
+      { id: 4, tn: 4, ex: 0 },
+      { id: 5, tn: 0, ex: 0 },
+    ]);
+    expect(tainted).toEqual([3, 4]);
+    // Settled already: the same mind, and nothing grows.
+    expect(settle(after)).toEqual({ mind: after, tainted: [] });
+    expect(settle(after).mind).toBe(after);
   });
 
   test("a revision's new taints reach every belief that cites it, directly or not", () => {

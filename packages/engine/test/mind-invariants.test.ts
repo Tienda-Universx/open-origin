@@ -142,6 +142,11 @@ describe("checkMind", () => {
     expect(pathsOf({ ...VALID, ...change })).toEqual(expected);
   });
 
+  test("bounds a failed episode's value by the reasons it indexes", () => {
+    expect(mind.FAILURES).toEqual(["no_food", "food_gone", "incapacitated", "crowded"]);
+    expect(mind.MIND_BOUNDS.failure).toEqual({ min: 0, max: mind.FAILURES.length - 1 });
+  });
+
   test("bounds every member of an episode by its kind", () => {
     const episodes: mind.Episode[] = [
       own(1, { v: 3, w: 1001, t: -1 }),
