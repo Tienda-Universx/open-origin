@@ -8,11 +8,11 @@
  * frozen laws.
  */
 import { describe, expect, test } from "bun:test";
-import type { beings, mind } from "@open-origin/engine";
+import { type beings, canonicalize, type mind } from "@open-origin/engine";
 import { Sfc32 } from "../../engine/test/support/sfc32.ts";
 import { foodAt } from "../src/brain/mind/rules.ts";
 import { mindController } from "../src/brain/mind.ts";
-import { reformed } from "./support/mind-ablation.ts";
+import { ablationA, ablationB, reformed } from "./support/mind-ablation.ts";
 import { ruleProblems } from "./support/mind-rules-check.ts";
 import {
   DAY,
@@ -147,5 +147,65 @@ describe("the ablation of the decisions of mind@1", () => {
     expect(misses.slice(0, 3)).toEqual([]);
     // Not vacuous: the decisions formed and revised many beliefs.
     expect(checked).toBeGreaterThan(DECISIONS / 2);
+  });
+});
+
+/**
+ * A decision `mind@1` makes a landmark of: food of band 2 two cells east of the being, a belief
+ * of food beyond its window, id 20, and nothing heard.
+ */
+const LANDMARK = senses2Of(windowOf({ radius: 24, cues: [[2, 0, 2]] }), {
+  light: NOON,
+  mind: {
+    next: 50,
+    beliefs: [{ id: 20, p: foodAt([60, 0], 2), cr: 900, src: 1, ev: [], lost: 0, dp: 1, u: 0 }],
+  },
+});
+
+/**
+ * `mind@1`, plus a defect: a belief that the food of the cell of belief 20 is of band 1, citing
+ * `cites`, which a decision that holds belief 20 forms and one that does not never does.
+ */
+const hiding =
+  (cites: (senses: Senses2) => number[]) =>
+  (senses: Senses2): beings.Intention2 => {
+    const intention = brain.decide(senses);
+    if (!senses.mind.beliefs.some(({ id }) => id === 20)) return intention;
+    const ops = intention.mind ?? {};
+    const hidden = { p: foodAt([60, 0], 1), cr: 500, ev: cites(senses), rule: "seen-food" };
+    return { ...intention, mind: { ...ops, believe: [...(ops.believe ?? []), hidden] } };
+  };
+
+describe("the ablations of a recorded decision (a) and (b)", () => {
+  test("hold for mind@1, which forms its landmark from the cue it cites", () => {
+    const intention = brain.decide(LANDMARK);
+    expect(intention.mind?.believe?.map(({ rule }) => rule)).toEqual(["seen-food"]);
+    const decide = (senses: Senses2) => brain.decide(senses);
+    expect(ablationA(LANDMARK, intention, decide).misses).toEqual([]);
+    expect(ablationB(LANDMARK, intention, decide)).toEqual([]);
+  });
+
+  test("(b) finds a belief whose premise the brain read but did not cite", () => {
+    // The hidden belief cites the landmark's new episode: decided with only that, it is gone.
+    const decide = hiding((senses) => [senses.mind.next]);
+    const misses = ablationB(LANDMARK, decide(LANDMARK), decide);
+    expect(misses.map(({ op }) => op.p)).toEqual([canonicalize(foodAt([60, 0], 1))]);
+  });
+
+  test("(a) finds a belief that the brain forms without the record it cites", () => {
+    // The hidden belief cites belief 20 itself, then reads it from nowhere: removed, it cites
+    // nothing, and the proposition comes back with no evidence.
+    const decide = (senses: Senses2) => {
+      const made = hiding(({ mind }) =>
+        mind.beliefs.filter(({ id }) => id === 20).map(({ id }) => id),
+      )(senses);
+      if (senses.mind.beliefs.some(({ id }) => id === 20)) return made;
+      const ops = made.mind ?? {};
+      const unfounded = { p: foodAt([60, 0], 1), cr: 500, ev: [], rule: "seen-food" };
+      return { ...made, mind: { ...ops, believe: [...(ops.believe ?? []), unfounded] } };
+    };
+    const { misses, removable } = ablationA(LANDMARK, decide(LANDMARK), decide);
+    expect(removable).toBe(1);
+    expect(misses.map(({ op }) => op.p)).toEqual([canonicalize(foodAt([60, 0], 1))]);
   });
 });
