@@ -495,7 +495,13 @@ How the engine delivers it (T5-6):
 The speaker learns nothing about whether it was heard, so a hearer's `condition` never leaks. The
 templates of `speech@1` (`packages/agents`, pure, versioned) render acts for logs and for T6's feed;
 a test checks that no template seeds a target topic (plan §K.4), which restricts what we inject, not
-what inhabitants think.
+what inhabitants think. `renderAct` writes an act as `speech.uttered` reports it, in English: the
+speaker and the hearer, as "being" and their id unless the caller names them; a greet, an ask for
+food, an "I do not know", or a tell with its confidence (sure, fairly sure, unsure, by band) and its
+claim, the food of a cell or near it for `m1.food-at` and `m1.food-near`, and any other concept
+written as its id and its terms. The audit renders every act, band, negation, and kind of term and
+finds no consciousness, creator, simulation, or external reality, nor AI, game, player, or server;
+an inhabitant's own concept, whatever it names, is written as it is.
 
 ## The tick of `beings@2`
 
