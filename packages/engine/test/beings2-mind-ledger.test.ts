@@ -33,6 +33,16 @@ import { belief, heard, mindOf, own } from "./support/mind-records.ts";
 
 const LONG = 6_000_000;
 
+/**
+ * The time budget of the two tests that run hundreds of decisions. They are synchronous, so Bun
+ * cannot interrupt them: it fails a test that ran longer than its timeout, and the default of 5 s is
+ * not a budget anyone measured (step-fuzz.test.ts). Measured on 2026-10-28 with Bun 1.4.4: the
+ * decisions test takes 1.9 s alone on the 2-core Codespace and 3.8 to 5.1 s on the CI runner under
+ * `bun test --parallel`, where 5.1 s failed it once; the forgetting test, 1.2 s and 2.7 s. 30 s
+ * allows about six times the slowest run of either on CI.
+ */
+const DECISIONS_BUDGET_MS = 30_000;
+
 /** A cell where a being may stand, from which it can walk four steps east. */
 const CELL: Cell = findCell([-128, -128], 256, {
   food: 0,
@@ -225,45 +235,49 @@ describe("the events of a decision that changed a mind", () => {
 });
 
 describe("decisions", () => {
-  test("happen at most once per being and tick, on every path that reaches one", () => {
-    // Walks that end, planned meals that cannot start, and wake conditions: each reaches a decision.
-    const restless = brain2((senses) => {
-      const [a = 0, b = 0] = senses.draws;
-      const wakeWhen = a % 3 === 0 ? { nutritionBelow: senses.self.needs.nutrition - 1 } : {};
-      if (a % 4 === 0 && walkMs(senses.window as beings.SensedWindow, "0") !== undefined)
-        return { steps: [{ kind: "walk", dirs: "0" }], wakeWhen, behavior: behavior("travel") };
-      return {
-        steps: [
-          { kind: "idle", ms: 1 + (b % 30_000) },
-          { kind: "eat", untilNutrition: beings.NEED_MAX },
-        ],
-        wakeWhen,
-        behavior: behavior("eat"),
-        mind: { remember: [{ percept: { food: cellOf(senses) }, w: 1 + (b % 900) }] },
+  test(
+    "happen at most once per being and tick, on every path that reaches one",
+    () => {
+      // Walks that end, planned meals that cannot start, and wake conditions: each reaches a decision.
+      const restless = brain2((senses) => {
+        const [a = 0, b = 0] = senses.draws;
+        const wakeWhen = a % 3 === 0 ? { nutritionBelow: senses.self.needs.nutrition - 1 } : {};
+        if (a % 4 === 0 && walkMs(senses.window as beings.SensedWindow, "0") !== undefined)
+          return { steps: [{ kind: "walk", dirs: "0" }], wakeWhen, behavior: behavior("travel") };
+        return {
+          steps: [
+            { kind: "idle", ms: 1 + (b % 30_000) },
+            { kind: "eat", untilNutrition: beings.NEED_MAX },
+          ],
+          wakeWhen,
+          behavior: behavior("eat"),
+          mind: { remember: [{ percept: { food: cellOf(senses) }, w: 1 + (b % 900) }] },
+        };
+      });
+      const decided: number[] = [];
+      const counting: beings.Controller2 = {
+        ...restless,
+        decide: (senses) => {
+          decided.push(senses.self.id);
+          return restless.decide(senses);
+        },
       };
-    });
-    const decided: number[] = [];
-    const counting: beings.Controller2 = {
-      ...restless,
-      decide: (senses) => {
-        decided.push(senses.self.id);
-        return restless.decide(senses);
-      },
-    };
-    const cells = [0, 1, 2, 3].map((dx): Cell => [CELL[0] + dx, CELL[1]]).filter(standable);
-    const world = beings2World({
-      controllers: { s1: counting },
-      chunks: chunksOf(cells.map((cell, index) => being2(index + 1, cell))),
-    });
-    let decisions = 0;
-    for (let tick = 1; tick <= 300; tick += 1) {
-      decided.length = 0;
-      runTo(world, tick);
-      decisions += decided.length;
-      expect([tick, decided.length]).toEqual([tick, new Set(decided).size]);
-    }
-    expect(decisions).toBeGreaterThan(300);
-  });
+      const cells = [0, 1, 2, 3].map((dx): Cell => [CELL[0] + dx, CELL[1]]).filter(standable);
+      const world = beings2World({
+        controllers: { s1: counting },
+        chunks: chunksOf(cells.map((cell, index) => being2(index + 1, cell))),
+      });
+      let decisions = 0;
+      for (let tick = 1; tick <= 300; tick += 1) {
+        decided.length = 0;
+        runTo(world, tick);
+        decisions += decided.length;
+        expect([tick, decided.length]).toEqual([tick, new Set(decided).size]);
+      }
+      expect(decisions).toBeGreaterThan(300);
+    },
+    DECISIONS_BUDGET_MS,
+  );
 });
 
 describe("forgetting", () => {
@@ -390,56 +404,60 @@ describe("forgetting", () => {
     expect(walking.at(-1)?.tick).toBeLessThan(changed.tick);
   });
 
-  test("gives the same view at the ticks two worlds decide, however often each decided", () => {
-    // Episodes that fade at different moments of the run, a pinned one, and beliefs citing them.
-    const rich = mindOf({
-      episodes: [
-        own(1, { w: 60 }),
-        own(2, { w: 200 }),
-        own(3, { w: 999 }),
-        own(4, { w: 520, t: 5, r: 5 }),
-      ],
-      beliefs: [
-        belief(5, { ev: [1, 2] }),
-        belief(6, { ev: [5, 4], dp: 2 }),
-        belief(7, { ev: [3], cr: 100 }),
-      ],
-    });
-    const life = lawsOf({ halfLife: { episode: 600, belief: 1200 } });
-    /** The view at each tick the being decided, and its mind at every tick, idling `ms` each time. */
-    const run = (ms: number) => {
-      const sensed: unknown[] = [];
-      const brain = brain2((senses) => {
-        sensed.push(senses.mind);
-        return idling(ms);
+  test(
+    "gives the same view at the ticks two worlds decide, however often each decided",
+    () => {
+      // Episodes that fade at different moments of the run, a pinned one, and beliefs citing them.
+      const rich = mindOf({
+        episodes: [
+          own(1, { w: 60 }),
+          own(2, { w: 200 }),
+          own(3, { w: 999 }),
+          own(4, { w: 520, t: 5, r: 5 }),
+        ],
+        beliefs: [
+          belief(5, { ev: [1, 2] }),
+          belief(6, { ev: [5, 4], dp: 2 }),
+          belief(7, { ev: [3], cr: 100 }),
+        ],
       });
-      const world = beings2World({
-        controllers: { s1: brain },
-        life,
-        chunks: chunksOf([being2(1, CELL, { mind: rich })]),
-      });
-      const views = new Map<number, unknown>();
-      const minds = new Map<number, mind.Mind>();
-      for (let tick = 1; tick <= 301; tick += 1) {
-        const before = sensed.length;
-        runTo(world, tick);
-        if (sensed.length > before) views.set(tick, sensed.at(-1));
-        minds.set(tick, (beingOf(world, 1) as beings.Being2).mind);
+      const life = lawsOf({ halfLife: { episode: 600, belief: 1200 } });
+      /** The view at each tick the being decided, and its mind at every tick, idling `ms` each time. */
+      const run = (ms: number) => {
+        const sensed: unknown[] = [];
+        const brain = brain2((senses) => {
+          sensed.push(senses.mind);
+          return idling(ms);
+        });
+        const world = beings2World({
+          controllers: { s1: brain },
+          life,
+          chunks: chunksOf([being2(1, CELL, { mind: rich })]),
+        });
+        const views = new Map<number, unknown>();
+        const minds = new Map<number, mind.Mind>();
+        for (let tick = 1; tick <= 301; tick += 1) {
+          const before = sensed.length;
+          runTo(world, tick);
+          if (sensed.length > before) views.set(tick, sensed.at(-1));
+          minds.set(tick, (beingOf(world, 1) as beings.Being2).mind);
+        }
+        return { views, minds };
+      };
+      const often = run(12_000);
+      const seldom = run(600_000);
+      const common = [...seldom.views.keys()].filter((tick) => often.views.has(tick));
+      expect(common).toEqual([1, 51, 101, 151, 201, 251, 301]);
+      expect(often.views.size).toBe(301);
+      for (const tick of common) {
+        expect([tick, often.views.get(tick)]).toEqual([tick, seldom.views.get(tick)]);
+        expect([tick, often.minds.get(tick)]).toEqual([tick, seldom.minds.get(tick)]);
       }
-      return { views, minds };
-    };
-    const often = run(12_000);
-    const seldom = run(600_000);
-    const common = [...seldom.views.keys()].filter((tick) => often.views.has(tick));
-    expect(common).toEqual([1, 51, 101, 151, 201, 251, 301]);
-    expect(often.views.size).toBe(301);
-    for (const tick of common) {
-      expect([tick, often.views.get(tick)]).toEqual([tick, seldom.views.get(tick)]);
-      expect([tick, often.minds.get(tick)]).toEqual([tick, seldom.minds.get(tick)]);
-    }
-    // Not vacuous: records faded within the run, and the frequent decider forgot them sooner.
-    expect(seldom.minds.get(301)?.episodes.map(({ id }) => id)).toEqual([3]);
-    expect(often.minds.get(30)?.episodes.length).toBe(3);
-    expect(seldom.minds.get(30)?.episodes.length).toBe(4);
-  });
+      // Not vacuous: records faded within the run, and the frequent decider forgot them sooner.
+      expect(seldom.minds.get(301)?.episodes.map(({ id }) => id)).toEqual([3]);
+      expect(often.minds.get(30)?.episodes.length).toBe(3);
+      expect(seldom.minds.get(30)?.episodes.length).toBe(4);
+    },
+    DECISIONS_BUDGET_MS,
+  );
 });
