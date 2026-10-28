@@ -29,13 +29,15 @@ import {
 } from "./being.ts";
 import { type Body, bodyAt } from "./body.ts";
 import { DIRECTIONS } from "./contracts.ts";
-import type { BeingsEnv } from "./env.ts";
+import { type Addressed, address } from "./delivery.ts";
+import { type BeingsEnv, integrity } from "./env.ts";
 import { dayOfTick, type Hearing, hearingWakes, wokenBy } from "./hearing.ts";
 import { judge, judge2 } from "./judgment.ts";
 import type { Species } from "./laws.ts";
 import type { Species2 } from "./life2.ts";
 import { type MindLedger, mindChanged, mindProvenance } from "./mental.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
+import type { CoveredChunk } from "./senses.ts";
 import { type Talk, type Utterance, utteranceOf, utteredPayload } from "./speech.ts";
 
 /** How long a being idles after its brain proposed something the engine refused, in ms. */
@@ -82,6 +84,10 @@ export type Work = {
   ledger: MindLedger | undefined;
   /** What the being said, when a talk of its ended at this tick without being cut short. */
   spoken: Utterance | undefined;
+  /** Where phase 2 found the hearer of what the being said, or why it does not hear. */
+  addressed: Addressed | undefined;
+  /** The chunks the window of the being's decision at this tick read, where a hearer stands. */
+  covered: readonly CoveredChunk[] | undefined;
 };
 
 /** The members of `being` but its mind, which a wake never copies. */
@@ -117,6 +123,8 @@ function workOf(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Being>): Wor
     mind: mindful?.mind,
     ledger: undefined,
     spoken: undefined,
+    addressed: undefined,
+    covered: undefined,
   };
 }
 
@@ -385,9 +393,21 @@ export function advance(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Bein
   // A forced sleep that began now leaves nothing else to do at this tick.
   if (!work.died && (work.activity.kind !== "sleep" || before === "sleep")) carryOn(env, work);
   emitMind(env, work);
-  if (work.spoken !== undefined)
-    env.emit("speech.uttered", utteredPayload(work.old.id, work.spoken));
+  if (work.spoken !== undefined) utter(env, work, work.spoken);
   return work;
+}
+
+/**
+ * Emits `spoken`, what the being of `work` said at this tick, and finds its hearer among the beings
+ * of the chunks its window read for the decision at the end of its act (delivery.ts, phase 2).
+ */
+function utter(env: BeingsEnv, work: Work, spoken: Utterance): void {
+  env.emit("speech.uttered", utteredPayload(work.old.id, spoken));
+  if (work.covered === undefined)
+    throw integrity(`the being ${work.old.id} did not decide at the end of its act`);
+  // Only a being of beings@2 talks, and validateGlobal accepted laws of life@2 for it.
+  const { range } = (work.species as Species2).speech;
+  work.addressed = address(spoken, work.covered, range);
 }
 
 /**

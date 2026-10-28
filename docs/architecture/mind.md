@@ -471,6 +471,27 @@ Delivery, when the act ends at tick t:
    `quota.woken < speech.wakesPerDay` in the day of t. A hearer that walks, eats, or sleeps keeps
    the message for its next decision: hearing interrupts no meal and no walk.
 
+How the engine delivers it (T5-6):
+
+- **Phase 2.** The hearer is found by binary search among the beings of each chunk the window of
+  the speaker's decision at the end of its act read. It is not heard, with the first reason that
+  holds: `gone` when none of those chunks holds it, because it died before t or left them; `range`
+  beyond `speech.range`, by Chebyshev distance from the speaker's cell; `asleep`; `condition`.
+- **Phase 3.** A hearer that died at t is `gone` for the acts that reached it in phase 2. Its room
+  is its species' `mind.inbox` less the messages its mind holds at the end of t: a hearer that
+  decided at t consumed its inbox, and a loser of the contest for room holds the mind it started
+  the tick with. When no room is left, every message is `full`, without a draw.
+- **The message** is `{ who, t, cell, act, p?, band?, tn, ex }`: the speaker, the tick of the
+  delivery, the speaker's cell, and what its talk captured. A greet, an ask, and an unknown carry
+  no content and no taint.
+- **Phase 4.** A hearer processed at t takes its messages in its final record, whose wake follows
+  the rule of a hearer; the record of a hearer the tick did not process is written anew in its
+  chunk, with its messages and, when the rule wakes it, a wake at t + 1 at the latest. Its chunk is
+  among those the tick writes, and its `due` follows.
+- **Events.** After those of phase 3, for each hearer by increasing id and each of its speakers by
+  increasing id: `speech.delivered`, followed by `mind.provenance` `{ id, records: [], exposure }`
+  of the hearer when that message grew its exposure; or `speech.unheard` with its reason.
+
 The speaker learns nothing about whether it was heard, so a hearer's `condition` never leaks. The
 templates of `speech@1` (`packages/agents`, pure, versioned) render acts for logs and for T6's feed;
 a test checks that no template seeds a target topic (plan §K.4), which restricts what we inject, not
@@ -551,7 +572,7 @@ runs of the survival child, which already runs them. Every T4 test runs unchange
 | Event | Class | Payload |
 |---|---|---|
 | `speech.uttered` | C0 | `{ id, to, act, p?, band?, cell }`, when an act ends without being cut short: the speaker, the hearer, the act, a tell's proposition and band, and the speaker's cell |
-| `speech.delivered` | C1, the hearer's | `{ id, to }` |
+| `speech.delivered` | C1, the hearer's | `{ id, to }`: the speaker and the hearer |
 | `speech.unheard` | C3, because its reason tells the hearer's condition | `{ id, to, reason }`: `range`, `asleep`, `gone`, `full`, or `condition` |
 | `mind.changed` | C1 | `{ id, encoded, formed, revised, dropped, forgot, related }`: ids, with each formed belief's rule and each forgotten record's citing beliefs |
 | `mind.provenance` | C3 | `{ id, records, exposure }`: the `tn`, `ex`, and evidence of each record created, revised, or tainted downstream, and the being's exposure |

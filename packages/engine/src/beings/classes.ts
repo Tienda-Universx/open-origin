@@ -328,6 +328,8 @@ export const EVENT_CLASSES: readonly { readonly type: string; readonly class: Da
         ["mind.changed", "C1"],
         ["mind.injected", "C3"],
         ["mind.provenance", "C3"],
+        ["speech.delivered", "C1"],
+        ["speech.unheard", "C3"],
         ["speech.uttered", "C0"],
       ] as const
     ).map(([type, cls]) => Object.freeze({ type, class: cls })),

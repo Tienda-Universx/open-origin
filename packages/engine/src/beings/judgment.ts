@@ -231,6 +231,8 @@ export function judge2(env: BeingsEnv, work: Work): Accepted | Refused {
     throw integrity(`the being ${work.old.id} decided twice at the tick ${env.tick}`);
   const ctx = mindContext(env, work);
   const perceived = perceivedBy(env, work);
+  // The chunks the window read: where the hearer of a talk that ended at this tick stands.
+  work.covered = perceived.chunks;
   const met = perceived.beings.map((being) => being.id);
   // validateChunk accepted the mind of every being of beings@2.
   const step1 = stepOne(work.mind as Mind, met, ctx);

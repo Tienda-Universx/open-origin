@@ -105,6 +105,7 @@ export {
   BEINGS2_RULESET_VERSION,
   type BeingsVersion,
   CROWD_STREAM,
+  SPEECH_STREAM,
 } from "./rules.ts";
 export {
   type Beings2RulesetOptions,

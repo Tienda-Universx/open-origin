@@ -77,7 +77,8 @@ describe("a talk", () => {
       "being.finished",
       { id: 1, activity: "talk", result: "done", reason: "" },
     ]);
-    // The being decides at the end of its act, and speech.uttered is its last event of the phase.
+    // The being decides at the end of its act, and speech.uttered is its last event of the phase;
+    // the delivery comes after every event of the phases before it.
     expect(sensed.get(1)).toHaveLength(2);
     expect(own.map(([type]) => type)).toEqual([
       "being.finished",
@@ -85,8 +86,9 @@ describe("a talk", () => {
       "mind.changed",
       "mind.provenance",
       "speech.uttered",
+      "speech.delivered",
     ]);
-    expect(own.at(-1)).toEqual(["speech.uttered", { id: 1, to: 2, act: "greet", cell: [...A] }]);
+    expect(own.at(-2)).toEqual(["speech.uttered", { id: 1, to: 2, act: "greet", cell: [...A] }]);
   });
 
   test("counts as idle for the needs", () => {
