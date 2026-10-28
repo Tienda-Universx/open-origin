@@ -59,6 +59,15 @@ const TEST_MS = 180_000;
 
 const HELDOUT_1 = LABELS.heldout[0] as string;
 
+/**
+ * The digest of every tick's checksum of each run, pinned on `6fa7375` before T5 shared any code
+ * with `beings@2`: `beings@1` and `utility@1` must keep every output byte for byte (ADR 0024).
+ */
+const TRAILS = {
+  default: "171c9406d17a4a7b29d6586f0cc74927",
+  heldout: "3f605d4904d2dd0ce6f8311407f2b038",
+} as const;
+
 /** The two runs of the survival test, started before the first test. */
 let runs: { readonly default: JsonChild; readonly heldout: JsonChild } | undefined;
 const outputs = new Map<string, Promise<SurvivalOutput>>();
@@ -253,6 +262,15 @@ describe("survival over ten days on the preregistered labels (plan §9.2, test 1
         expect(being.lowestHealth).toBe(beings.NEED_MAX);
         expect(being.final?.health).toBe(beings.NEED_MAX);
       }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "both runs keep, tick by tick, the checksums they had before T5 (beings@1 and utility@1 unchanged)",
+    async () => {
+      const [ran, held] = await Promise.all([outputOf("default"), outputOf("heldout")]);
+      expect({ default: ran.trail, heldout: held.trail }).toEqual(TRAILS);
     },
     TEST_MS,
   );

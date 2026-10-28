@@ -10,6 +10,7 @@ import {
   beings,
   type Command,
   createWorld,
+  digest,
   type EngineEvent,
   readView,
   step,
@@ -189,8 +190,18 @@ function toCell(key: string): [number, number] {
   return [x, y];
 }
 
+/**
+ * Each fuzz seed with the digest of every tick's checksum, pinned on `6fa7375` before T5 shared any
+ * code with `beings@2`: `beings@1` must keep every output byte for byte (ADR 0024).
+ */
+const SEEDS_AND_TRAILS: readonly (readonly [number, string])[] = [
+  [1, "48b4961ce4d22edf15e38bf44604743c"],
+  [2, "35516ed5c4ec549a4dc6a4a79884789d"],
+  [3, "bb43865e64b55b5021f420ebace72e19"],
+];
+
 describe("fuzzing", () => {
-  test.each([1, 2, 3])("keeps every invariant after each tick (seed %i)", (seed) => {
+  test.each(SEEDS_AND_TRAILS)("keeps every invariant after each tick (seed %i)", (seed, trail) => {
     const random = new Sfc32(seed);
     // A small radius keeps each of the many decisions cheap: the fuzz is after the tick's
     // invariants, and beings-senses.test.ts covers the window itself.
@@ -198,6 +209,7 @@ describe("fuzzing", () => {
     const world = beingsWorld({ controllers: { [SPECIES.id]: chaotic }, seed: [seed, 99], life });
     let spawned = 0;
     let bites = 0;
+    const checksums: string[] = [];
     for (let tick = 1; tick <= 250; tick += 1) {
       let count = random.below(30) === 0 ? 1 : 0;
       if (tick < 20) count = random.below(3);
@@ -207,7 +219,8 @@ describe("fuzzing", () => {
       const before = new Map(
         beingsIn(earlier).map(({ cell }) => [`${cell[0]},${cell[1]}`, foodAt(earlier, cell, tick)]),
       );
-      const { events } = step(world, commands);
+      const { events, checksum } = step(world, commands);
+      checksums.push(checksum);
       spawned += events.filter((event) => event.type === "being.spawned").length;
       const chunks = chunksOf(world);
       checkInvariants(world, chunks);
@@ -224,6 +237,7 @@ describe("fuzzing", () => {
     expect(spawned).toBeGreaterThan(5);
     expect(bites).toBeGreaterThan(0);
     expect(worldStatus(world)).toEqual({ kind: "ok", tick: 250 });
+    expect(digest(checksums)).toBe(trail);
   });
 });
 

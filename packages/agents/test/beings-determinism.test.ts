@@ -29,6 +29,7 @@ import {
   type ChunkKey,
   type Command,
   type CommandHandler,
+  digest,
   EngineError,
   encodeSnapshot,
   type RulesetSystem,
@@ -68,6 +69,12 @@ const SEEDS: readonly [Seed, Seed] = [
   [8, 9],
 ];
 const BUDGET_MS = 60_000;
+
+/**
+ * The digest of every checksum of the reference run, pinned on `6fa7375` before T5 shared any code
+ * with `beings@2`: `beings@1` and `utility@1` must keep every output byte for byte (ADR 0024).
+ */
+const REFERENCE_TRAIL = "b8103d3ca8b2a2bd034bc17a5a0d75c6";
 
 /** The five beings of the subject, spawned at tick 1. */
 const SUBJECT: readonly Spawn[] = [
@@ -340,6 +347,10 @@ describe("the determinism suite on a world of beings (plan §9.2, tests 7 and 9)
       const events = report.reference.flatMap((record) =>
         "events" in record ? [record.events] : [],
       );
+      const checksums = report.reference.map((record) =>
+        "checksum" in record ? record.checksum : record.fault,
+      );
+      expect(digest(checksums)).toBe(REFERENCE_TRAIL);
       for (const type of ["being.started", "being.ate", "being.contested", "being.finished"])
         expect(events.some((text) => text.includes(type))).toBe(true);
     },

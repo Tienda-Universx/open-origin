@@ -1,4 +1,10 @@
-import { type beings, encodeSnapshot, type StepResult, worldgen } from "@open-origin/engine";
+import {
+  type beings,
+  digest,
+  encodeSnapshot,
+  type StepResult,
+  worldgen,
+} from "@open-origin/engine";
 import { type TickRecord, tickRecord } from "../../../engine/test/support/determinism-records.ts";
 import { utilityController } from "../../src/index.ts";
 import { randomWalker, stationary } from "./brains.ts";
@@ -60,9 +66,12 @@ const keep = input.keep;
 let snapshot: string | undefined;
 let final: string | undefined;
 const records: TickRecord[] = [];
+/** Every tick's checksum, in order, whose digest the output carries. */
+const checksums: string[] = [];
 
 /** Records what one step did that the output needs. */
 function onStep(result: StepResult): void {
+  checksums.push(result.checksum);
   for (const event of result.events) {
     const { id } = event.payload as { id: number };
     if (event.type === "being.incapacitated" && !incapacitated.has(id))
@@ -83,6 +92,7 @@ const output: SurvivalOutput = {
   dayLength: worldgen.genesisOf(scenario.prepared).laws.day.length,
   simSecondsPerTick: options.simSecondsPerTick ?? SCENARIO_SPS,
   incapacitatedAt: [...incapacitated].sort(([a], [b]) => a - b),
+  trail: digest(checksums),
   ...(kept === undefined ? {} : { kept }),
 };
 await Bun.write(Bun.stdout, JSON.stringify(output));
