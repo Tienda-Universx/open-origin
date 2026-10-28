@@ -37,6 +37,7 @@ export {
   type Controller,
   type Controller2,
   DIRECTIONS,
+  type HeardMessage,
   type Intention,
   type Intention2,
   MAX_INTENTION_STEPS,

@@ -1,12 +1,12 @@
 /**
  * The mental operations an intention of beings@2 may carry (ADR 0024, docs/architecture/mind.md
- * "Beliefs"): `remember`, `recall`, `believe`, `revise`, and `drop`, at most `mind.ops` in all.
+ * "Beliefs"): `remember`, `recall`, `believe`, `revise`, `drop`, and `relate`, at most `mind.ops` in
+ * all.
  * Brain output is untrusted: before the intention is copied, every list and record of its `mind` is
  * bounded from its length, read once, so that no huge value is iterated; then its canonical copy is
  * read here into typed operations, with exact members, bounds, and grammars, every problem reported
  * with its path. Any problem here is the rejection `mind_malformed`. What the operations refer to,
  * the percepts of the decision and the records of the mind, is judged when they apply (mental.ts).
- * `relate` arrives with relationships (T5-5b); until then it is an unknown member.
  */
 import { ownKeyCount, sortedOwnKeys } from "../canonical/order.ts";
 import { lengthOf } from "../canonical/value.ts";
@@ -18,6 +18,7 @@ import {
   type LocalId,
   MIND_BOUNDS,
   type Proposition,
+  type RelateOperation,
   type ReviseOperation,
 } from "../mind/index.ts";
 import { readMember } from "../world/members.ts";
@@ -41,6 +42,7 @@ export type MindOperations = {
   readonly believe: readonly BelieveOperation[];
   readonly revise: readonly ReviseOperation[];
   readonly drop: readonly LocalId[];
+  readonly relate: readonly RelateOperation[];
 };
 
 /** No mental operation: the operations of an intention without `mind`. */
@@ -50,21 +52,23 @@ export const NO_OPERATIONS: MindOperations = Object.freeze({
   believe: Object.freeze([]),
   revise: Object.freeze([]),
   drop: Object.freeze([]),
+  relate: Object.freeze([]),
 });
 
 /**
- * What the grammar of the operations depends on: the being's `mind.ops`; the namespace of the
- * brain's concepts; and whether an id names an observable of the world's catalog, for a concept of
- * the namespace `obs`.
+ * What the grammar of the operations depends on: the being's `mind.ops`; its `relations.delta`, the
+ * largest change of affinity or trust in one `relate`; the namespace of the brain's concepts; and
+ * whether an id names an observable of the world's catalog, for a concept of the namespace `obs`.
  */
 export type MindGrammar = {
   readonly ops: number;
+  readonly delta: number;
   readonly concepts: string;
   readonly observable: (id: string) => boolean;
 };
 
 /** The members of `mind`, one per kind of operation, in the order the kinds apply. */
-const KINDS = Object.freeze(["remember", "recall", "believe", "revise", "drop"] as const);
+const KINDS = Object.freeze(["remember", "recall", "believe", "revise", "drop", "relate"] as const);
 /** The members of a percept, of which it holds exactly one. */
 const PERCEPTS = Object.freeze(["being", "food", "heard", "outcome"] as const);
 
@@ -75,9 +79,10 @@ const INDEXES = range(0, INT31_MAX);
 
 /**
  * The most entries, at every depth, that the `mind` of an intention may hold before it is copied:
- * more than the largest legal operations hold, 165 with `mind.ops` at its largest, 8: the five
+ * more than the largest legal operations hold, 166 with `mind.ops` at its largest, 8: the six
  * members of `mind`, eight entries, and eight `believe` of 19 entries each (four members, three
- * citations, and a proposition of four members, two terms, and their two cells).
+ * citations, and a proposition of four members, two terms, and their two cells), the largest
+ * operation; a `relate` holds 7 (four members and three citations).
  */
 const SCAN_ENTRIES = 256;
 /** The longest string or key the scan allows: a concept id has at most 48 characters. */
@@ -259,6 +264,36 @@ function readRevise(value: unknown, path: string, sink: IssueList): ReviseOperat
   return id === undefined || cr === undefined ? undefined : { id, cr, ev };
 }
 
+/** The citations of a `relate`: one to three local ids. */
+const BECAUSE = range(1, MIND_BOUNDS.citations.max);
+
+/**
+ * A `relate` operation: the being `who`, signed changes of affinity and trust each within
+ * `relations.delta`, and the records it cites.
+ */
+function readRelate(
+  value: unknown,
+  path: string,
+  delta: number,
+  sink: IssueList,
+): RelateOperation | undefined {
+  const members = { required: ["because", "who"], optional: ["aff", "tr"] };
+  const fields = readFields(value, path, members, sink);
+  if (fields === undefined) return undefined;
+  const who = fields.int("who", MIND_BOUNDS.entity);
+  const change = range(-delta, delta);
+  const aff = fields.int("aff", change);
+  const tr = fields.int("tr", change);
+  const because = readIds(fields.value("because"), fields.at("because"), BECAUSE, sink);
+  if (who === undefined) return undefined;
+  return {
+    who,
+    ...(aff === undefined ? {} : { aff }),
+    ...(tr === undefined ? {} : { tr }),
+    because,
+  };
+}
+
 /**
  * The operations of `value`, the canonical copy of an intention's `mind`, read by `grammar`;
  * undefined after any problem, each reported to `issues` with its path under `/mind`.
@@ -277,13 +312,16 @@ export function readMindOperations(
   const count = lists.reduce((sum, list) => sum + (list?.length ?? 0), 0);
   if (count > grammar.ops)
     issues.report("/mind", `${count} operations: a decision makes at most ${grammar.ops}`);
-  const [remember, recall, believe, revise, drop] = lists;
+  const [remember, recall, believe, revise, drop, relate] = lists;
   const operations: MindOperations = {
     remember: entries(remember, fields.at("remember"), (e, at) => readRemember(e, at, issues)),
     recall: localIds(recall, fields.at("recall"), issues),
     believe: entries(believe, fields.at("believe"), (e, at) => readBelieve(e, at, grammar, issues)),
     revise: entries(revise, fields.at("revise"), (e, at) => readRevise(e, at, issues)),
     drop: localIds(drop, fields.at("drop"), issues),
+    relate: entries(relate, fields.at("relate"), (e, at) =>
+      readRelate(e, at, grammar.delta, issues),
+    ),
   };
   return issues.count === before ? operations : undefined;
 }

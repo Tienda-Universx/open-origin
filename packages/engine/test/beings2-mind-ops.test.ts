@@ -7,7 +7,7 @@
  * operations are atomic; and brain output that is hostile is refused before anything is copied.
  */
 import { describe, expect, test } from "bun:test";
-import { applyOperations, forgetAtDecision } from "../src/beings/mental.ts";
+import { applyOperations, stepOne } from "../src/beings/mental.ts";
 import { NO_OPERATIONS } from "../src/beings/operations.ts";
 import { beings, type EngineEvent, mind, readView, worldgen } from "../src/index.ts";
 import {
@@ -123,16 +123,22 @@ describe("remember", () => {
     const placed = [being2(1, a), being2(2, b)];
     const world = beings2World({ controllers: { s1: brain }, chunks: chunksOf(placed) });
     runTo(world, 1);
+    // Step 1 gave each the id 1 for its relationship with the other, which it perceived.
     const expected = (cell: Cell, other: Cell, who: number): mind.Episode[] => [
-      { id: 1, kind: "food", t: 1, cell: [cell[0], cell[1]], v: baseBand(cell), w: 500, r: 1 },
-      { id: 2, kind: "being", t: 1, cell: [other[0], other[1]], who, v: IDLE, w: 600, r: 1 },
+      { id: 2, kind: "food", t: 1, cell: [cell[0], cell[1]], v: baseBand(cell), w: 500, r: 1 },
+      { id: 3, kind: "being", t: 1, cell: [other[0], other[1]], who, v: IDLE, w: 600, r: 1 },
     ];
     const first = beingOf(world, 1) as beings.Being2;
     const second = beingOf(world, 2) as beings.Being2;
     expect(first.mind.episodes).toEqual(expected(a, b, 2));
     expect(second.mind.episodes).toEqual(expected(b, a, 1));
     expect(first.mind.episodes).not.toEqual(second.mind.episodes);
-    expect([first.mind.next, second.mind.next]).toEqual([3, 3]);
+    expect(
+      [first.mind.relations, second.mind.relations].map((held) =>
+        held.map(({ id, who }) => [id, who]),
+      ),
+    ).toEqual([[[1, 2]], [[1, 1]]]);
+    expect([first.mind.next, second.mind.next]).toEqual([4, 4]);
     // Each episode is the percept the brain was given: the cue at the center, the being it saw.
     for (const [index, senses] of sensed.entries()) {
       const held = (index === 0 ? first : second).mind.episodes;
@@ -252,9 +258,10 @@ describe("remember", () => {
     const cue = window.foodCue[window.side - 1] as number;
     // Not vacuous: what the brain wrote over its copies differs from what the engine perceived.
     expect(cue).not.toBe(2);
+    // The id 1 is the relationship step 1 created with the being it perceived.
     expect((beingOf(world, 1) as beings.Being2).mind.episodes).toEqual([
-      { id: 1, kind: "being", t: 1, cell: [...b], who: 2, v: 1, w: 10, r: 1 },
-      { id: 2, kind: "food", t: 1, cell: [...edge], v: cue, w: 20, r: 1 },
+      { id: 2, kind: "being", t: 1, cell: [...b], who: 2, v: 1, w: 10, r: 1 },
+      { id: 3, kind: "food", t: 1, cell: [...edge], v: cue, w: 20, r: 1 },
     ]);
   });
 
@@ -490,7 +497,11 @@ const EXHAUSTED = { ...HELD, next: mind.INT31_MAX };
 
 /** Each case is preceded by a valid `remember`, which the failure undoes with everything else. */
 const CASES: readonly Case[] = [
-  { name: "relate, which arrives in T5-5b", ops: { relate: [] }, reason: "mind_malformed" },
+  {
+    name: "a relate citing nothing",
+    ops: { relate: [{ who: 2, because: [] }] },
+    reason: "mind_malformed",
+  },
   { name: "a member mind does not have", ops: { forget: [1] }, reason: "mind_malformed" },
   { name: "a mind that is not a record", ops: [], reason: "mind_malformed" },
   { name: "a kind that is not a list", ops: { recall: 1 }, reason: "mind_malformed" },
@@ -698,14 +709,14 @@ describe("the rejections of mental operations", () => {
     const both = decideOnce(() => ({
       ...idling(LONG),
       behavior: behavior("dance"),
-      mind: { relate: [] },
+      mind: { relate: [{ who: 2, because: [] }] },
     }));
     expect(both.being.outcome.reason).toBe("malformed");
     const blocked = decideOnce(() => ({
       steps: [{ kind: "walk", dirs: "0".repeat(64) }],
       wakeWhen: {},
       behavior: behavior("travel"),
-      mind: { relate: [] },
+      mind: { relate: [{ who: 2, because: [] }] },
     }));
     expect(blocked.being.outcome.reason).toBe("mind_malformed");
     const walk = decideOnce(() => ({
@@ -811,11 +822,12 @@ describe("the percepts the engine kept", () => {
       cell: CELL,
       outcome: { result: "none", tick: 0, reason: "" },
       beings: [{ id: 2, species: "s1", cell: [0, 0] as const, activity: "talk" }],
+      heard: [],
       window: windowAt(CELL),
       activities: ["eat", "idle", "sleep", "walk"],
     };
     const remember = [{ percept: { kind: "being" as const, index: 0 }, w: 1 }];
-    const step1 = forgetAtDecision(HELD, ctx);
+    const step1 = stepOne(HELD, [], ctx);
     const error = engineErrorOf(() =>
       applyOperations(step1, { ...NO_OPERATIONS, remember }, percepts, ctx),
     );

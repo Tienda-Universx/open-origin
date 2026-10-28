@@ -281,6 +281,7 @@ export const EVENT_CLASSES: readonly { readonly type: string; readonly class: Da
         ["being.spawned", "C0"],
         ["being.started", "C0"],
         ["mind.changed", "C1"],
+        ["mind.injected", "C3"],
         ["mind.provenance", "C3"],
       ] as const
     ).map(([type, cls]) => Object.freeze({ type, class: cls })),
@@ -288,7 +289,10 @@ export const EVENT_CLASSES: readonly { readonly type: string; readonly class: Da
 
 /** The class of every command the beings ruleset handles: the admin plane's are operations. */
 export const COMMAND_CLASSES: readonly { readonly type: string; readonly class: DataClass }[] =
-  Object.freeze([Object.freeze({ type: "beings.spawn", class: "C3" as const })]);
+  Object.freeze([
+    Object.freeze({ type: "beings.spawn", class: "C3" as const }),
+    Object.freeze({ type: "mind.inject", class: "C3" as const }),
+  ]);
 
 /** A record whose members are read by name: values the engine built, never a host's. */
 type Members = { readonly [name: string]: unknown };

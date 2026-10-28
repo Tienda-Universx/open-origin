@@ -176,6 +176,42 @@ function repeats(ids: readonly LocalId[]): boolean {
   return ids.some((id, index) => ids.indexOf(id) !== index);
 }
 
+/**
+ * The records `ids` cite in `mind`, in order, or why they cannot: an id given twice is
+ * `mind_malformed`, and one outside the manifest `unknown_record`.
+ */
+export function citedRecords(
+  mind: Mind,
+  ids: readonly LocalId[],
+  manifest: Manifest,
+): readonly MindRecord[] | MindReason {
+  if (repeats(ids)) return "mind_malformed";
+  const cited: MindRecord[] = [];
+  for (const id of ids) {
+    const record = manifest.kind === "live" ? recordOf(mind, id) : undefined;
+    if (record === undefined) return "unknown_record";
+    cited.push(record);
+  }
+  return cited;
+}
+
+/**
+ * `mind` with every record of `cited` refreshed at the context's moment, as citing it as evidence
+ * does: an episode as a recall does, and a belief's `u` becomes now.
+ */
+export function refreshCited(mind: Mind, cited: readonly MindRecord[], ctx: MindContext): Mind {
+  let { episodes, beliefs } = mind;
+  for (const { store, record } of cited) {
+    if (store === "episodes") {
+      const current = episodes;
+      episodes = current.map((e) => (e.id === record.id ? refreshEpisode(e, current, ctx) : e));
+    } else if (store === "beliefs") {
+      beliefs = beliefs.map((b) => (b.id === record.id ? { ...b, u: ctx.moment.tick } : b));
+    }
+  }
+  return { ...mind, episodes, beliefs };
+}
+
 /** The mind as the operations of one decision change it, and what changed. */
 class Draft {
   mind: Mind;
@@ -205,30 +241,12 @@ class Draft {
 
   /** The records `ids` cite, in order, or why they cannot: a repeat, or one outside the manifest. */
   #cite(ids: readonly LocalId[]): readonly MindRecord[] | MindReason {
-    if (repeats(ids)) return "mind_malformed";
-    const cited: MindRecord[] = [];
-    for (const id of ids) {
-      const record = this.#manifest.kind === "live" ? recordOf(this.mind, id) : undefined;
-      if (record === undefined) return "unknown_record";
-      cited.push(record);
-    }
-    return cited;
+    return citedRecords(this.mind, ids, this.#manifest);
   }
 
   /** Refreshes every record of `cited`: an episode as a recall does, a belief's `u` to now. */
   #refresh(cited: readonly MindRecord[]): void {
-    let { episodes, beliefs } = this.mind;
-    for (const { store, record } of cited) {
-      if (store === "episodes") {
-        const current = episodes;
-        episodes = current.map((e) =>
-          e.id === record.id ? refreshEpisode(e, current, this.#ctx) : e,
-        );
-      } else if (store === "beliefs") {
-        beliefs = beliefs.map((b) => (b.id === record.id ? { ...b, u: this.#ctx.moment.tick } : b));
-      }
-    }
-    this.mind = { ...this.mind, episodes, beliefs };
+    this.mind = refreshCited(this.mind, cited, this.#ctx);
   }
 
   /**

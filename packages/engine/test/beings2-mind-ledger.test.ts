@@ -46,6 +46,20 @@ const concept = (name: string, n: number): mind.Proposition => ({ p: `t1.${name}
 const lawsOf = (change: Partial<mind.MindLaws["mind"]>) =>
   life2With((species) => ({ ...species, mind: { ...species.mind, ...change } }));
 
+/**
+ * The laws of `lawsOf`, under which a being perceives no other (attention 0), so that two beings
+ * on one cell create no relationship and the ids of their records stay those the operations name.
+ */
+const unseeing = (change: Partial<mind.MindLaws["mind"]>) => {
+  const life = lawsOf(change);
+  const [species] = life.species as beings.Species2[];
+  if (species === undefined) throw new Error("the laws of life@2 have no species");
+  return {
+    ...life,
+    species: [{ ...species, perception: { ...species.perception, attention: 0 } }],
+  };
+};
+
 /** The mind events of `events`, as type and payload. */
 const mindEvents = (events: readonly EngineEvent[]) =>
   events.filter(({ type }) => type.startsWith("mind.")).map(({ type, payload }) => [type, payload]);
@@ -76,7 +90,7 @@ describe("the events of a decision that changed a mind", () => {
     ];
     const world = beings2World({
       controllers: { s1: brain2((senses) => (isFirst(senses) ? idling(LONG, ops) : idling(LONG))) },
-      life: lawsOf({ ops: 8 }),
+      life: unseeing({ ops: 8 }),
       chunks: chunksOf(placed),
     });
     return { world, events: runTo(world, 1) };

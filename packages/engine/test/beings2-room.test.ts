@@ -306,6 +306,8 @@ describe("the contest for room", () => {
       chunks: chunksOf(placed),
     });
     // The initial beings decide at tick 1, so their crossings arrive one tick earlier.
+    runTo(world, ARRIVAL - 2);
+    const held = [1, 2].map((id) => (beingOf(world, id) as beings.Being2).mind);
     runTo(world, ARRIVAL - 1);
     for (const id of [1, 2]) {
       const lost = beingOf(world, id) as beings.Being2;
@@ -316,7 +318,9 @@ describe("the contest for room", () => {
         cooldowns: [],
         plan: [],
       });
-      expect(lost.mind).toEqual(gateMind());
+      // Its familiarity with the other, which it perceived when it decided at the arrival, too.
+      expect(lost.mind).toEqual(held[id - 1] as mind.Mind);
+      expect(lost.mind.relations.find(({ who }) => who === 3 - id)?.seen).toBe(1);
     }
   });
 
@@ -333,11 +337,18 @@ describe("the contest for room", () => {
     const at = (tick: number) => ({ moment: { tick, secondsPerTick: 12 }, laws, retention: 1000 });
     expect(mind.forget(fadingMind(), at(1)).forgot).toEqual([]);
     expect(mind.forget(fadingMind(), at(arrival)).forgot).toEqual([{ id: 1, beliefs: [3] }]);
+    // At tick 1 each perceived the other, and step 1 created its relationship 4.
+    runTo(world, arrival - 1);
+    const held = [1, 2].map((id) => (beingOf(world, id) as beings.Being2).mind);
+    expect(held.map(({ relations }) => relations.map(({ id, who }) => [id, who]))).toEqual([
+      [[4, 2]],
+      [[4, 1]],
+    ]);
     const events = runTo(world, arrival);
     for (const id of [1, 2]) {
       const lost = beingOf(world, id) as beings.Being2;
       expect(lost.outcome).toEqual({ result: "failed", tick: arrival, reason: "crowded" });
-      expect(lost.mind).toEqual(fadingMind());
+      expect(lost.mind).toEqual(held[id - 1] as mind.Mind);
     }
     expect(events.filter(({ type }) => type.startsWith("mind."))).toEqual([]);
     // Not vacuous: at the next tick both decide where they stand, and the same changes apply.
@@ -352,15 +363,15 @@ describe("the contest for room", () => {
       ).toEqual([
         {
           id,
-          encoded: [4],
-          formed: [{ id: 5, rule: "here" }],
+          encoded: [5],
+          formed: [{ id: 6, rule: "here" }],
           revised: [],
           dropped: [],
           forgot: [{ id: 1, beliefs: [3] }],
           related: [],
         },
       ]);
-      expect((beingOf(world, id) as beings.Being2).mind.next).toBe(6);
+      expect((beingOf(world, id) as beings.Being2).mind.next).toBe(7);
     }
   });
 
@@ -370,17 +381,16 @@ describe("the contest for room", () => {
         controllers: { s1: mindful },
         life: life2With(undefined, capacity),
       });
-      const events = runTo(
-        world,
-        ARRIVAL,
-        spawnsAt(1, [
-          [EDGE + 2, row(0)],
-          [EDGE, row(1)],
-          [EDGE, row(2)],
-        ]),
-      );
-      const minds = [2, 3].map((id) => (beingOf(world, id) as beings.Being2).mind);
-      return { events: events.filter(({ tick }) => tick === ARRIVAL), minds };
+      const spawns = spawnsAt(1, [
+        [EDGE + 2, row(0)],
+        [EDGE, row(1)],
+        [EDGE, row(2)],
+      ]);
+      runTo(world, ARRIVAL - 1, spawns);
+      const mindsOf = () => [2, 3].map((id) => (beingOf(world, id) as beings.Being2).mind);
+      const held = mindsOf();
+      const events = runTo(world, ARRIVAL, spawns);
+      return { events: events.filter(({ tick }) => tick === ARRIVAL), minds: mindsOf(), held };
     };
     const roomy = at(3);
     const tight = at(2);
@@ -403,8 +413,9 @@ describe("the contest for room", () => {
     expect(ofBeing(tight.events, winner)).toEqual(ofBeing(roomy.events, winner));
     expect(tight.minds[winner - 2]).toEqual(roomy.minds[winner - 2]);
     expect(ofBeing(tight.events, loser)).toEqual([["being.finished", crowded(loser)]]);
-    expect(tight.minds[loser - 2]).toEqual(mind.newMind(0));
-    expect(roomy.minds[loser - 2]?.next).toBe(3);
+    expect(tight.minds[loser - 2]).toEqual(tight.held[loser - 2] as mind.Mind);
+    // Not vacuous: with room, the same decision encoded an episode and formed a belief.
+    expect(roomy.minds[loser - 2]?.next).toBe((roomy.held[loser - 2]?.next ?? 0) + 2);
   });
 
   test("emits a loser's crowded walk alone, after the second phase, and nothing of its decision", () => {

@@ -28,8 +28,10 @@ import {
 import { type Body, bodyAt } from "./body.ts";
 import { DIRECTIONS } from "./contracts.ts";
 import type { BeingsEnv } from "./env.ts";
+import { dayOf, type Hearing, hearingWakes } from "./hearing.ts";
 import { judge, judge2 } from "./judgment.ts";
 import type { Species } from "./laws.ts";
+import type { Species2 } from "./life2.ts";
 import { type MindLedger, mindChanged, mindProvenance } from "./mental.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
 
@@ -361,18 +363,41 @@ function emitMind(env: BeingsEnv, work: Work): void {
 }
 
 /**
- * Advances the activity, then asks the brain when the activity ended with nothing planned or when
- * a wake condition holds, even at the tick the activity ends; the brain's intention replaces the
- * plan. A condition that interrupts a meal drops the bite due at this tick.
+ * What decides, at this tick, whether messages that reached the inbox of the being of `work` at the
+ * tick `at` wake it (hearing.ts): the day of this tick and its species' `speech.wakesPerDay`.
+ */
+export function hearingOf(env: BeingsEnv, work: Work, at: number): Hearing {
+  // validateGlobal accepted laws of life@2 for a world whose beings hold minds.
+  const { speech } = work.species as Species2;
+  return { at, day: dayOf(env.now, env.dayLength), wakesPerDay: speech.wakesPerDay };
+}
+
+/**
+ * Whether hearing wakes the being of beings@2 at this tick: it is idle, and messages that reached
+ * its inbox at the previous tick wake it (hearing.ts). Under beings@1, never.
+ */
+function heardNow(env: BeingsEnv, work: Work): boolean {
+  if (!env.rules.minds || work.mind === undefined) return false;
+  return hearingWakes(work.mind, work.activity, hearingOf(env, work, env.tick - 1));
+}
+
+/**
+ * Advances the activity, then asks the brain when the activity ended with nothing planned, or when
+ * a wake condition holds or hearing woke the idle being, even at the tick the activity ends; the
+ * brain's intention replaces the plan. A condition that interrupts a meal drops the bite due at
+ * this tick.
  */
 function carryOn(env: BeingsEnv, work: Work): void {
+  // Read before the activity advances: hearing wakes only a being that was idle.
+  const heard = heardNow(env, work);
   const ended = progress(env, work);
   if (ended && work.activity.kind !== "idle") finish(env, work, "done");
   const woken = wakeConditionHolds(env, work);
-  if (woken && !ended) {
+  const wakes = woken || heard;
+  if (wakes && !ended) {
     work.claim = undefined;
-    finish(env, work, "interrupted", "wake_condition");
+    finish(env, work, "interrupted", woken ? "wake_condition" : "heard");
   }
-  if (woken) decide(env, work);
+  if (wakes) decide(env, work);
   else if (ended) next(env, work);
 }

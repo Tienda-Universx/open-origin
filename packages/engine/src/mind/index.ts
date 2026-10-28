@@ -32,6 +32,7 @@ export {
 } from "./laws.ts";
 export {
   checkProposition,
+  copyProposition,
   isConceptId,
   PROP_BOUNDS,
   PROP_VERSION,
@@ -62,6 +63,13 @@ export {
   recordOf,
   type TaintMask,
 } from "./records.ts";
+export {
+  applyRelate,
+  involves,
+  type RelateApplied,
+  type Related,
+  type RelateOperation,
+} from "./relate.ts";
 export { type Perceived, perceive, relationshipWith } from "./relations.ts";
 export {
   beliefSalience,
