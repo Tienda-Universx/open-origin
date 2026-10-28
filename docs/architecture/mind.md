@@ -70,7 +70,8 @@ the tick:
   nearest, by distance, then id. Recognition of individuals is perfect, and terrain hides nothing:
   two simplifications.
 - **What it hears.** The messages in its inbox ([Speech](#speech)), consumed at this decision.
-- **Its own experience.** The result of its last activity, and the units it ate if it ate.
+- **Its own experience.** The result of its last activity, and the units it ate if it ate: the
+  being's `outcome` in its senses, whose `units`, in `beings@2`, the meal that just ended ate.
   A deposit's exposure is "measurement" in the catalog ([0021](../decisions/0021-procedural-world.md)):
   the senses of T4 give its food only in bands across the window, and its exact amount is known
   only through the being's own action on its cell.
@@ -109,7 +110,7 @@ prompt, because they reveal the kernel's randomness.
 | `speech.range`, `.actMs` | Reach of speech in cells; duration of one act | 3, 4,000 | 1 to 8 and at most `perception.sight.dim`; 1–60,000 |
 | `speech.turns`, `.gap`, `.cooldown` | Acts one being addresses to another in one conversation; the longest pause between two delivered acts of a conversation, and the pause one pair keeps after a full one, in seconds | 3, 120, 18,900 | 1–8, 1 to 2^31 − 1 |
 | `speech.perDay`, `.wakesPerDay` | Acts a being may say, and times hearing may wake it, per simulated day | 10, 8 | 0 to 64; `perDay` is 0 when `mind.relations` is 0, because the quotas per pair live in relationships |
-| `capacity` | Beings per chunk | 64 | 1 to 1,024 |
+| `capacity` | Beings per chunk: a law of `life@2` itself, beside `deathEnabled`, not of a species | 64 | 1 to 1,024 |
 | `traits` | The trait bounds of T4, now for six traits: also `sociability`, `credulity`, and `retention` | [800, 1,200] each | the rule of T4 |
 
 The defaults are where calibration starts (T5-7); the values frozen after it replace them here.
@@ -118,12 +119,13 @@ its own day.
 
 ### The mind of a being
 
-A `beings@2` being adds `mind` and the three traits; `beings.spawn` accepts the traits but never
-mental content.
+A `beings@2` being adds `mind`, the three traits, and the units of a meal in its outcome;
+`beings.spawn` accepts the traits but never mental content.
 
 | Member | Class | Content |
 |---|---|---|
 | `traits.sociability`, `.credulity`, `.retention` | C1 | Permille; retention scales both half-lives |
+| `outcome.units` | C1 | Present only when the activity that ended was `eat`: the units it ate in total, 0 when it ate nothing |
 | `mind.next` | C1 | The next local id, from 1 to 2^31 − 1; local ids only grow and are never reused, each store keeps its records in increasing id, and a mind whose ids run out takes no new record |
 | `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | C1, their taints C3 | Below |
 | `mind.exposure` | C3 | The being's lifetime exposure: a taint mask that never shrinks |
@@ -324,7 +326,8 @@ no operation applies; what step 1 did stays, because it is a law, not a proposal
 A brain of `beings@2` declares, besides its version and its `decide`, `behaviors`, the 1 to 16
 identifiers its `behavior.kind` may take, and `concepts`, the namespace of its concepts; the capture
 refuses one without them. `utility@1` runs on `beings@2` as the mindless baseline through a test
-helper that adds its five behaviors and no concepts, under its own brain version.
+helper that adds its five behaviors and no concepts, under its own brain version: it declares the
+namespace `none`, which defines no concept.
 
 ## Relationships
 
@@ -395,9 +398,12 @@ what inhabitants think.
    by `random.permutation` on the stream `beings.crowd`, keyed by the lowest arriving id, and the
    first take the places. The rest end their walk at the cell they started the tick in, which their
    own chunk still counts, with the result `failed`, the reason `crowded`, an idle of 1 ms, and a
-   wake at t + 1. A loser whose walk ended at t has already decided at its new cell in phase 2: what
-   it started there is replaced too, and its `being.finished` names the walk. Then deliveries are
-   resolved.
+   wake at t + 1. A loser keeps nothing of its decision of that tick: a walk whose last step arrived
+   at t ended in phase 2, where the being decided at its new cell, and that intention is discarded,
+   with its plan, behavior, wake conditions, and cooldowns, and from T5-5a on the mental operations,
+   forgetting, and familiarity of that decision, so its mind is the one it had at the start of the
+   tick; its `being.finished` names the walk, and it decides again at t + 1 from its start cell.
+   Then deliveries are resolved.
 4. `applyWorks`: the final records, where an unchanged mind is the same value, not a copy; then the
    deliveries; then `due` and the occupancy.
 5. Events: those of phase 2 by being id, each being's in the order T4 emits them, then its
@@ -411,8 +417,8 @@ A being's mind is copied only when it decides. A spawn into a chunk at `capacity
 ## Versions and compatibility
 
 `createBeingsRuleset({ controllers })` stays `beings@1` with `life@1`, byte for byte.
-`createBeingsRuleset({ controllers, rules: "beings@2" })` requires `life@2`; any other `rules`
-value is refused with `invalid_ruleset`. Each version is one immutable object of rules with its own
+`createBeingsRuleset({ controllers, rules: "beings@2" })` requires `life@2`; `rules: "beings@1"` is
+the same as no `rules`, and any other value is refused with `invalid_ruleset`. Each version is one immutable object of rules with its own
 lists: the members of a being, the kinds of activity, the validators. They differ in `ruleset.ts`
 (`readTraits`, `newBeing`, `globalIssues`, the capture), `being.ts`, `chunk.ts`, `laws.ts`,
 `env.ts`, `advance.ts` (`workOf`, `carryOn`, `sensesOf`), `intention.ts`, `body.ts`,
@@ -675,11 +681,11 @@ decided the same beings at every tick. Under `beings@2`: 247.8 KB hashed at the 
 419.5 KB at p99, against 52.6 and 106.2 KB under `beings@1`; ticks of 50.0 ms at the median and
 113.3 ms at p99, against 26.7 and 68.9 ms; and a wake that does not decide cost 486 µs against 143 µs
 (152 such ticks), 320 µs more paired tick by tick. The p99 hashed is below 1 MB, so the entity
-section stays in T7. The tick and the wake that does not decide already sit at or beyond the targets
-above for `mind@1` (a median of 50 ms, a p99 of 100 ms, and 150 µs), unverified as to cause: every
-write of a being turns its whole chunk, mind included, into canonical text, hashes it, and validates
-it, and the term per component of T7 would spare the hashing of a mind that did not change. T5-9
-measures them again with `mind@1`.
+section stays in T7. The time targets of "dispersed 1,000" are missed with full minds: the median
+tick of 50.0 ms against at most 50, the p99 of 113.3 ms against at most 100, and 320 µs more per
+wake that does not decide against at most 150. The cause is not yet measured: every write of a being
+turns its whole chunk, mind included, into canonical text, hashes it, and validates it. T5-9
+profiles that cost before any optimization, and a miss that remains is recorded as it is.
 
 ## Verification plan
 
