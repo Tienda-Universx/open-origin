@@ -7,8 +7,11 @@
  * scan adds the cases it misses: paths that leave src through `../` and type-level `import("…")`.
  * It also keeps worldgen in its layer (ADR 0021): no kernel module but src/index.ts imports
  * src/worldgen, worldgen imports only an allowlist of kernel modules, and a worldgen module
- * declares no top-level `let` or `var`. Biome overrides cannot express these: an override replaces
- * a rule's options instead of merging them (ADR 0020).
+ * declares no top-level `let` or `var`. The beings layer and the mind layer keep to their own
+ * allowlists (ADR 0023, ADR 0024): the mind imports only int.ts, errors.ts, and the modules under
+ * canonical/ and digest/, so it can neither read the world nor reach the beings, which may import
+ * it. Biome overrides cannot express these: an override replaces a rule's options instead of
+ * merging them (ADR 0020).
  *
  * packages/agents/src keeps the same compiler gate under its own import rule (ADR 0023): it imports
  * only relative paths that stay inside its src and exactly the engine's public entry,
@@ -138,9 +141,22 @@ const BEINGS_MODULES = [
   "worldgen/index.ts",
 ];
 /** The directories under src whose modules the beings layer may import: its own among them. */
-const BEINGS_DIRECTORIES = ["canonical", "digest", "beings"];
+const BEINGS_DIRECTORIES = ["canonical", "digest", "mind", "beings"];
 /** What the beings layer may import, as its diagnostic lists it. */
 const BEINGS_ALLOWLIST = `${BEINGS_MODULES.join(", ")}, and the modules under ${BEINGS_DIRECTORIES.map((directory) => `${directory}/`).join(", ")}`;
+
+/**
+ * The mind of the beings, a pure layer below the beings layer that only it and the entry point
+ * import (ADR 0024). It reads no world, no time, and no randomness: it works on values the beings
+ * layer gives it.
+ */
+const MIND = `${ENGINE_SRC}/mind`;
+/** The kernel modules the mind layer may import, relative to src. */
+const MIND_MODULES = ["int.ts", "errors.ts"];
+/** The directories under src whose modules the mind layer may import: its own among them. */
+const MIND_DIRECTORIES = ["canonical", "digest", "mind"];
+/** What the mind layer may import, as its diagnostic lists it. */
+const MIND_ALLOWLIST = `${MIND_MODULES.join(", ")}, and the modules under ${MIND_DIRECTORIES.map((directory) => `${directory}/`).join(", ")}`;
 
 /** Whether `resolved` is one of `modules` or lies under one of `directories`, relative to src. */
 function inAllowlist(resolved: string, modules: string[], directories: string[]): boolean {
@@ -149,13 +165,10 @@ function inAllowlist(resolved: string, modules: string[], directories: string[])
 }
 
 /**
- * Why `file` may not import the module at `resolved` (`specifier`) under the engine's layering:
- * worldgen imports only its allowlist (ADR 0021), so it cannot reach the world's state or its
- * randomness; the beings layer imports only its own (ADR 0023), so randomness enters it only
- * through the tick context and it never touches the terrain seed; and the kernel imports neither,
- * except the entry point that re-exports both. Undefined when the import is allowed.
+ * Why `file`, a module of a layer with an allowlist, may not import the module at `resolved`
+ * (`specifier`); undefined when the import is allowed or `file` belongs to no such layer.
  */
-function layerProblem(file: string, specifier: string, resolved: string): string | undefined {
+function allowlistProblem(file: string, specifier: string, resolved: string): string | undefined {
   if (isUnder(file, WORLDGEN)) {
     if (inAllowlist(resolved, WORLDGEN_MODULES, WORLDGEN_DIRECTORIES)) return undefined;
     return `"${specifier}" is not a module worldgen may import: it may import ${WORLDGEN_ALLOWLIST} (ADR 0021)`;
@@ -164,12 +177,32 @@ function layerProblem(file: string, specifier: string, resolved: string): string
     if (inAllowlist(resolved, BEINGS_MODULES, BEINGS_DIRECTORIES)) return undefined;
     return `"${specifier}" is not a module the beings layer may import: it may import ${BEINGS_ALLOWLIST} (ADR 0023)`;
   }
+  if (!isUnder(file, MIND) || inAllowlist(resolved, MIND_MODULES, MIND_DIRECTORIES))
+    return undefined;
+  return `"${specifier}" is not a module the mind layer may import: it may import ${MIND_ALLOWLIST} (ADR 0024)`;
+}
+
+/**
+ * Why `file` may not import the module at `resolved` (`specifier`) under the engine's layering:
+ * worldgen imports only its allowlist (ADR 0021), so it cannot reach the world's state or its
+ * randomness; the beings layer imports only its own (ADR 0023), so randomness enters it only
+ * through the tick context and it never touches the terrain seed; the mind layer imports only its
+ * own (ADR 0024), so it cannot read the world, the time, or the beings; and the kernel imports none
+ * of them, except the entry point that re-exports them. Undefined when the import is allowed.
+ */
+function layerProblem(file: string, specifier: string, resolved: string): string | undefined {
+  if (isUnder(file, WORLDGEN) || isUnder(file, BEINGS) || isUnder(file, MIND)) {
+    return allowlistProblem(file, specifier, resolved);
+  }
   if (file === ENTRY_POINT) return undefined;
   if (isUnder(resolved, WORLDGEN)) {
     return `"${specifier}" imports worldgen: the kernel never depends on worldgen, which only ${ENTRY_POINT} re-exports (ADR 0021)`;
   }
   if (isUnder(resolved, BEINGS)) {
     return `"${specifier}" imports the beings layer: the kernel never depends on it, which only ${ENTRY_POINT} re-exports (ADR 0023)`;
+  }
+  if (isUnder(resolved, MIND)) {
+    return `"${specifier}" imports the mind layer: the kernel never depends on it, which only ${ENTRY_POINT} re-exports and the beings layer imports (ADR 0024)`;
   }
   return undefined;
 }
@@ -369,9 +402,9 @@ type StatelessLayer = { directory: string; reason: string; constants: boolean };
  * The layers whose modules keep no state between calls. Worldgen's rule covers `let` and `var`
  * (ADR 0021); its four constant tables are records and arrays that no code writes, reviewed rather
  * than scanned, because freezing an array slows every read of it (ADR 0020). The beings layer also
- * rejects mutable constants: a ruleset is shared by every world that uses it (ADR 0023). So does
- * the agents package: a brain is a pure function of its senses, shared by every being of its
- * species in every world (ADR 0023).
+ * rejects mutable constants: a ruleset is shared by every world that uses it (ADR 0023), and so is
+ * the mind layer below it (ADR 0024). So does the agents package: a brain is a pure function of its
+ * senses, shared by every being of its species in every world (ADR 0023).
  */
 const STATELESS_LAYERS: StatelessLayer[] = [
   {
@@ -383,6 +416,12 @@ const STATELESS_LAYERS: StatelessLayer[] = [
     directory: BEINGS,
     reason:
       "beings modules keep no state between calls, so the worlds that share a ruleset stay independent (ADR 0023)",
+    constants: true,
+  },
+  {
+    directory: MIND,
+    reason:
+      "mind modules keep no state between calls, so the worlds that share a ruleset stay independent (ADR 0024)",
     constants: true,
   },
   {
