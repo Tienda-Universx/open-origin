@@ -4,7 +4,9 @@ The beings of T4: a body whose laws the engine applies, and a brain that only pr
 ([0023](../decisions/0023-autonomous-beings.md), which refines
 [0020](../decisions/0020-deterministic-core-design.md) and
 [0021](../decisions/0021-procedural-world.md)). This page is the specification that T4's pull
-requests implement, and the preregistration of its scenarios.
+requests implement, and the preregistration of its scenarios. T5 adds the ruleset `beings@2`
+beside this one, with perception, memory, beliefs, relationships, and speech ([Mind](mind.md));
+`beings@1`, `life@1`, and `utility@1` stay as this page describes them.
 
 | Part | Code | Pull request |
 |---|---|---|

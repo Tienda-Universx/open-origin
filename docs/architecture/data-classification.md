@@ -17,7 +17,10 @@ C3 items detailed elsewhere in the plan:
 
 The fields of a being and their classes (C0 what an observer inside the world could see, C1 the
 rest of the being, C3 the laws of life) are listed in [Beings](beings.md#a-being)
-([0023](../decisions/0023-autonomous-beings.md)).
+([0023](../decisions/0023-autonomous-beings.md)). Those of its mind are in
+[Mind](mind.md#classification) ([0024](../decisions/0024-mind-memory-beliefs-and-speech.md)):
+episodes, beliefs, and relationships are C1, an act of speech is C0, and the taints and exposure
+of every record are C3, because C1 may reach the inhabitant itself and taints must not.
 
 ## Access by interface
 
