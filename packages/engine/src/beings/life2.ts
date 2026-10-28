@@ -56,7 +56,7 @@ export type LifeConfig2 = {
 };
 
 /** The bounds of the laws life@2 adds; those of `mind` and `relations` are the mind layer's. */
-export const LIFE2_BOUNDS = Object.freeze({
+const LIFE2_BOUNDS = Object.freeze({
   capacity: range(1, 1024),
   dimBelow: range(0, 0x10_0000),
   attention: range(0, 8),

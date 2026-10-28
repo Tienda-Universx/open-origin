@@ -56,7 +56,6 @@ export {
   checkLife,
   defaultLife,
   LIFE_BOUNDS,
-  LIFE_RULES,
   LIFE_VERSION,
   type LifeConfig,
   type LifeRules,
@@ -72,7 +71,6 @@ export {
 export {
   checkLife2,
   defaultLife2,
-  LIFE2_BOUNDS,
   LIFE2_RULES,
   LIFE2_VERSION,
   type LifeConfig2,
@@ -85,7 +83,7 @@ export {
 export { type LightClock, type LightWatch, nextLightTick } from "./light.ts";
 export { minimumSteps, type StepGeometry, stepDuration } from "./locomotion.ts";
 export { insertOccupied, OCCUPANCY_BOUNDS, occupancyIssues, pruneOccupancy } from "./occupancy.ts";
-export { type PerceivedBeing, perceiveBeings, sightOf } from "./perception.ts";
+export type { PerceivedBeing } from "./perception.ts";
 export {
   ceilDiv,
   levelAt,
@@ -101,7 +99,6 @@ export {
   BEINGS2_RULESET_VERSION,
   type BeingsVersion,
   CROWD_STREAM,
-  SPEECH_STREAM,
 } from "./rules.ts";
 export {
   type Beings2RulesetOptions,

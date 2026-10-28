@@ -21,6 +21,7 @@ import {
   type WakeConditions,
 } from "./being.ts";
 import { DIRECTIONS, MAX_INTENTION_STEPS, type SensedWindow } from "./contracts.ts";
+import { type ActivityKind, BEINGS_RULES } from "./rules.ts";
 import { range, readFields, readList } from "./schema.ts";
 
 /**
@@ -40,12 +41,14 @@ export type Accepted = {
 export type Refused = { readonly kind: "rejected"; readonly reason: string };
 
 /**
- * When an intention is judged, the window the brain sensed then, centered on the being, and, for a
- * brain of beings@2, the behaviors it declared, which `behavior.kind` must name.
+ * When an intention is judged, the window the brain sensed then, centered on the being; the kinds
+ * of activity the ruleset's version knows, those of T4 when it is not given; and, for a brain of
+ * beings@2, the behaviors it declared, which `behavior.kind` must name.
  */
 export type IntentionContext = {
   readonly tick: Tick;
   readonly window: SensedWindow;
+  readonly activities?: readonly ActivityKind[];
   readonly behaviors?: readonly string[] | undefined;
 };
 
@@ -74,8 +77,11 @@ function tooManySteps(raw: unknown): boolean {
   }
 }
 
-/** A canonical copy of `raw` that has the shape and bounds of an intention; undefined otherwise. */
-function readIntention(raw: unknown): Valid | undefined {
+/**
+ * A canonical copy of `raw` that has the shape and bounds of an intention whose steps are of the
+ * kinds `activities`; undefined otherwise.
+ */
+function readIntention(raw: unknown, activities: readonly ActivityKind[]): Valid | undefined {
   if (tooManySteps(raw)) return undefined;
   const issues = new IssueList();
   const copy = copyCanonicalReported(raw, issues);
@@ -85,7 +91,7 @@ function readIntention(raw: unknown): Valid | undefined {
   if (intention === undefined) return undefined;
   const steps = readList(intention.value("steps"), "/steps", range(1, MAX_INTENTION_STEPS), issues);
   steps?.forEach((step, index) => {
-    checkPlanStep(step, `/steps/${index}`, issues);
+    checkPlanStep(step, `/steps/${index}`, issues, activities);
   });
   checkWakeConditions(intention.value("wakeWhen"), "/wakeWhen", issues);
   checkBehavior(intention.value("behavior"), "/behavior", issues);
@@ -143,7 +149,7 @@ function activityOf(step: PlanStep, tick: Tick, arrivals: number[]): Activity {
  * is refused.
  */
 export function acceptIntention(raw: unknown, context: IntentionContext): Accepted | Refused {
-  const intention = readIntention(raw);
+  const intention = readIntention(raw, context.activities ?? BEINGS_RULES.activities);
   if (intention === undefined || !declared(intention.behavior, context))
     return { kind: "rejected", reason: "malformed" };
   const [first, ...rest] = intention.steps;

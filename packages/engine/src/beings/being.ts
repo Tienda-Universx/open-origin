@@ -258,7 +258,7 @@ export function checkPlanStep(
   value: unknown,
   path: string,
   sink: IssueSink,
-  kinds: readonly ActivityKind[] = BEINGS_RULES.activities,
+  kinds: readonly ActivityKind[],
 ): void {
   const kind = kindIn(value, path, kinds, sink);
   const step =

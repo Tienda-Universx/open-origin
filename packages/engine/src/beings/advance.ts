@@ -366,7 +366,12 @@ function decide(env: BeingsEnv, work: Work): void {
   const { window, senses } = env.rules.minds ? sensesOf2(env, work) : sensesOf(env, work);
   const brain = env.controller(work.species.id);
   const proposal = brain.decide(senses);
-  const judged = acceptIntention(proposal, { tick: env.tick, window, behaviors: brain.behaviors });
+  const judged = acceptIntention(proposal, {
+    tick: env.tick,
+    window,
+    activities: env.rules.activities,
+    behaviors: brain.behaviors,
+  });
   if (judged.kind === "rejected") {
     refuse(env, work, judged.reason);
     return;
