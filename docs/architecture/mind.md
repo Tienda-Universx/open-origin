@@ -1419,7 +1419,12 @@ Each of these planted defects, one at a time in a copy of the repository, failed
 for `heldout/1`; the resume 3.2 s); `mind-evaluation-harness.test.ts` 2.2 to 2.6 s; the tests of
 the benchmarks under 1 s together. Ten days of `calibration/2` under the evaluation took 37 s
 while each observer copied the world for itself, and 18.5 s once they shared one copy of the
-chunks, read again only where a step wrote, with the same output. The refactor of the window's edges shortened the files that run beings: of 13 such
-files, together 48.2 s before and 42.0 s after, `survival.test.ts` went from 20.1 to 17.7 s. CI
-ran `bun test` in 61.9 s in T5-8, against the budget of 70 s; the new file adds about 40 s of CPU
-on a runner of four, so the slower runner may come close to the budget, which only CI can tell.
+chunks, read again only where a step wrote, with the same output. The refactor of the window's
+edges shortened the files that run beings: of 13 such files, together 48.2 s before and 42.0 s
+after, `survival.test.ts` went from 20.1 to 17.7 s.
+
+On CI, with the evaluation among the other files under `--parallel`, `bun test` took 56.4 s on a
+fast runner and 76.1 s on a slow one (the evaluation file 31.3 and 43.9 s), past the budget of
+70 s (plan §11.4). So `bun run test` runs the parallel suite without that file, then the file
+alone in a step of its own, which plan §11.4 provides for; `tests/repo/package.test.ts` requires
+that the file the first step leaves out is the one the second runs.

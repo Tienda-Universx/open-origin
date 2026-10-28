@@ -25,7 +25,7 @@ Bun are allowed when they add value.
 | Typecheck | `bun run typecheck` |
 | Lint, format and complexity checks (Biome, oxlint) | `bun run lint` |
 | Apply formatting and safe fixes | `bun run format` |
-| Tests | `bun test`; `bun run test`, which `check` and CI run, adds `--parallel`: one worker per CPU core, each test file isolated, and `--timeout 30000`: a test that sets no time of its own gets 30 s instead of Bun's 5 s, since under `--parallel` a test's wall time grows with the runner's load |
+| Tests | `bun test`; `bun run test`, which `check` and CI run, adds `--parallel`: one worker per CPU core, each test file isolated, and `--timeout 30000`: a test that sets no time of its own gets 30 s instead of Bun's 5 s, since under `--parallel` a test's wall time grows with the runner's load; it then runs `packages/agents/test/mind-evaluation.test.ts` alone, in a step of its own, since that file's ten-day runs pushed the parallel suite past 70 s on a slow runner (plan §11.4) |
 | Engine benchmark (manual, not part of `check`) | `bun packages/engine/bench/step.ts` |
 | Worldgen benchmark (manual, not part of `check`) | `bun packages/engine/bench/worldgen.ts` |
 | Beings benchmark (manual, not part of `check`) | `bun packages/agents/bench/beings.ts` |
