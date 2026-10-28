@@ -82,7 +82,11 @@ function searching(laws: BrainLaws, senses: Senses2, base: Intention2, speaks: b
   return stands(instead(base, "seek", [{ kind: "walk", dirs }]));
 }
 
-/** A sated being: as it wills, a greet of a being it meets, else a walk toward one. */
+/**
+ * Any plan but a search, a rest or a wander, whether or not the being is hungry: a hungry being
+ * whose search finds no leg rests, and may then greet. As it wills, a greet of a being it meets,
+ * else a walk toward one.
+ */
 function sociable(laws: BrainLaws, senses: Senses2, base: Intention2, speaks: boolean): Act {
   if (!speaks || !willing(senses)) return stands(base);
   const greet = greeting(senses, laws);

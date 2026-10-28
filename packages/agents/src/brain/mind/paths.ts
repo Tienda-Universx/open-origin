@@ -107,7 +107,8 @@ export function seekLeg(senses: Senses2, cell: mind.Cell): string | undefined {
 /**
  * The walk toward the nearest being it would greet beyond reach of speech: met anew, awake, not
  * walking, and at most APPROACH_REACH cells away, felt through sociability; the walk ends at the
- * reachable cell within reach of speech of it that has the shortest route.
+ * reachable cell within reach of speech of it that has the shortest route. Only that nearest being
+ * is tried: when no cell near it is reachable, there is no walk, whatever farther beings it sees.
  */
 export function approachLeg(senses: Senses2, laws: BrainLaws): string | undefined {
   const reach = floorDiv(APPROACH_REACH * senses.self.traits.sociability, 1000);

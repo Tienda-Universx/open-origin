@@ -703,8 +703,11 @@ or sleep, a need wins: the plan stands and only mental operations are added. Oth
 order: a reply to what it heard; after its own act, `behavior.kind` `talk`, an idle of
 `min(60 s, speech.gap)` that waits for an answer, with the plan's wake conditions; when the plan is
 to explore and the being is hungry as `utility@1` feels it (a search), a walk to food it believes in
-beyond its window, else an ask, else the search; and when sated, as it wills, a greet, else a walk
-toward a being to greet it. Each of its walks and its wait keeps the plan's wake conditions and
+beyond its window, else an ask, else the search; and with any other plan, as it wills, a greet,
+else a walk toward a being to greet it. "Any other plan" is a rest or a wander, whatever the being's
+hunger: when a hungry being's search finds no leg with a route, `utility@1` rests instead, and
+`mind@1` then may greet or approach, and never walks to food it believes in, which only a search
+does. Each of its walks and its wait keeps the plan's wake conditions and
 cooldowns, and its heading; a talk has no wake condition, since none interrupts it. After any of its
 own behaviors, `utility@1` sees a behavior it does not know, so it holds no commitment then.
 
@@ -754,16 +757,19 @@ decisions generated from a fixed seed.
 `H` the half-life of a belief scaled by retention, in one pass; ties go to the lower id, and a score
 of 0 is never retrieved. Food to seek: beliefs of band 1 or 2 at 500 or more, beyond the window and
 not cooled, importance their confidence, relevance `⌊1000·R·band / (2·(R + d))⌋` for a window of
-radius R and a distance d. A belief to tell: the same beliefs but not told by the hearer, relevance
-`500·band`. A belief to check: importance `max(cr, 1000 − cr)`, relevance 1000 when contradicted
-and 500 when confirmed.
+radius R and a distance d. A belief to tell: a belief of band 1 or 2 at 500 or more, not told by
+the hearer, wherever its cell lies, cooled or not, but for one its window would check, its cell in
+the window with another band, or with its band at a confidence below 900; importance its
+confidence, relevance `500·band`. A belief to check: importance `max(cr, 1000 − cr)`, relevance
+1000 when contradicted and 500 when confirmed.
 
 **Walks** (`mind/paths.ts`) search the window once with Dijkstra. Seeking food walks to the
 reachable cell nearest the believed cell, by Chebyshev distance, then by the shortest route; when
 that is where the being stands, it forgets the belief and searches instead. Approaching walks to the
 reachable cell within `speech.range` of the being, not its cell, by the shortest route, toward the
 nearest perceived being it would greet, awake and not walking, beyond `speech.range` and within
-`⌊24 · sociability / 1000⌋` cells; never twice in a row.
+`⌊24 · sociability / 1000⌋` cells; never twice in a row. Only that nearest being is tried: when no
+cell near it is reachable, the being keeps its plan, whatever farther being it sees.
 
 **Speech** (`mind/social.ts`). The brain senses neither the tick nor its quota, so it keeps every
 quota by a budget it counts in its relationships. With the talk window `W = max(speech.gap + 1,
@@ -781,8 +787,8 @@ not asleep, and held in a relationship. The acts:
   has said at most one act of the conversation, with a `tell`, as it wills;
 - an **ask** for its species' food (`obs.deposit.<k>`), when searching with no food to seek, to the
   nearest being it may address;
-- a **greet**, when sated and as it wills, of the nearest being it meets or meets again: one it never
-  addressed, or not within `W`.
+- a **greet**, as it wills, with any plan but a search, of the nearest being it meets or meets
+  again: one it never addressed, or not within `W`.
 
 It wills an act when `draws[1] mod 1000` is below `min(1000, sociability)`. It tells a belief
 that no operation of the same decision changes or evicts, never one the window contradicts or

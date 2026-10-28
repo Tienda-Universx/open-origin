@@ -229,6 +229,23 @@ describe("telling and asking", () => {
     expect(decide(hungry).steps).toEqual([talk(5, "ask", `obs.deposit.${SPECIES2.diet.deposit}`)]);
   });
 
+  test("tells a belief its window shows as believed, and one of a cell it cools", () => {
+    // The verifier's case: food of band 2 at (5, 0), believed at 900 and seen so, asked by 7.
+    const asked = (cooldowns: readonly beings.Cooldown[], belief3: mind.BeliefView) =>
+      senses2Of(window([], [[5, 0, 2]]), {
+        seen: [seenBeing(7, [1, 0])],
+        heard: [{ who: 7, cell: [1, 0], act: "ask" }],
+        cooldowns,
+        mind: { next: 10, beliefs: [belief3], relations: [relationView(2, 7)] },
+      });
+    expect(decide(asked([], belief(3, [5, 0]))).steps).toEqual([talk(7, "tell", 3)]);
+    // A cell it cools, inside the window or beyond it, is still told: cooling is no belief.
+    const cooled = [{ cell: [5, 0] as const, until: 999 }];
+    expect(decide(asked(cooled, belief(3, [5, 0]))).steps).toEqual([talk(7, "tell", 3)]);
+    const far = [{ cell: [40, 0] as const, until: 999 }];
+    expect(decide(asked(far, belief(3, [40, 0]))).steps).toEqual([talk(7, "tell", 3)]);
+  });
+
   test("tells no belief its window contradicts or would confirm, which it checks instead", () => {
     const asked = (cues: readonly (readonly [number, number, number])[], cr: number) =>
       senses2Of(window([], cues), {
@@ -338,6 +355,48 @@ describe("waiting, seeking, and approaching", () => {
     expect(at(reach(800), 800)).toBe("approach");
     expect(at(reach(800) + 1, 800)).toBe("rest");
     expect(at(R, 1200)).toBe("approach");
+  });
+
+  test("approaches only the nearest being it would greet, and rests when it cannot reach it", () => {
+    // The verifier's case: being 5 at (6, 0) inside a ring of walls 4 cells around it, being 9 at
+    // (−8, 0) in the open. The nearer, out of reach, holds the being back from the farther.
+    const walls: Offset[] = [];
+    for (let d = -4; d <= 4; d += 1) walls.push([6 + d, -4], [6 + d, 4], [2, d], [10, d]);
+    const both = senses2Of(window(walls), {
+      draws: [0, 0],
+      seen: [seenBeing(5, [6, 0]), seenBeing(9, [-8, 0])],
+      mind: { next: 10, relations: [relationView(1, 5), relationView(2, 9)] },
+    });
+    expect(decide(both)).toEqual(utility.decide(both));
+    expect(decide(both).behavior.kind).toBe("rest");
+    const open = senses2Of(window(walls), {
+      draws: [0, 0],
+      seen: [seenBeing(9, [-8, 0])],
+      mind: { next: 10, relations: [relationView(2, 9)] },
+    });
+    expect(decide(open)).toEqual({
+      ...utility.decide(open),
+      steps: [{ kind: "walk", dirs: "44444" }],
+      behavior: behavior("approach"),
+    });
+  });
+
+  test("greets, never seeks, when hungry with a plan of rest because its search has no route", () => {
+    // A ring of walls 5 cells around it: no leg of a search reaches out, so utility@1 rests.
+    const ring: Offset[] = [];
+    for (let d = -5; d <= 5; d += 1) ring.push([d, -5], [d, 5], [-5, d], [5, d]);
+    const hungry = (seen: readonly beings.PerceivedBeing[]) =>
+      senses2Of(window(ring), {
+        nutrition: 500_000,
+        draws: [0, 0],
+        seen,
+        mind: { next: 10, beliefs: [belief(3, [40, 0])], relations: [relationView(2, 5)] },
+      });
+    const alone = hungry([]);
+    expect(utility.decide(alone).behavior.kind).toBe("rest");
+    // Food it believes in lies beyond the window, but only a search walks to it.
+    expect(decide(alone)).toEqual(utility.decide(alone));
+    expect(decide(hungry([seenBeing(5, [2, 0])])).steps).toEqual([talk(5, "greet")]);
   });
 
   test("approaches no being that walks or sleeps, and never twice in a row", () => {
