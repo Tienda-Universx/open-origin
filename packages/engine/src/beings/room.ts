@@ -65,8 +65,13 @@ function crowd(env: BeingsEnv, work: Work): void {
   work.cooldowns = restored.cooldowns;
 }
 
-/** Resolves the arrivals in one chunk, sorted by id, against its free places. */
-function contestRoom(env: BeingsEnv, arrivals: readonly Arrival[], capacity: number): void {
+/** Resolves the arrivals in one chunk, sorted by id, against its free places; adds its losers. */
+function contestRoom(
+  env: BeingsEnv,
+  arrivals: readonly Arrival[],
+  capacity: number,
+  losers: number[],
+): void {
   const [first] = arrivals;
   if (first === undefined) return;
   const held = env.view.readChunk(first.chunk)?.beings.length ?? 0;
@@ -74,22 +79,29 @@ function contestRoom(env: BeingsEnv, arrivals: readonly Arrival[], capacity: num
   if (arrivals.length <= free) return;
   // The arrivals are sorted by id, so the first has the lowest one.
   const order = env.ctx.random.permutation(CROWD_STREAM, first.work.old.id, arrivals.length);
-  for (const index of order.slice(free)) crowd(env, (arrivals[index] as Arrival).work);
+  for (const index of order.slice(free)) {
+    const { work } = arrivals[index] as Arrival;
+    crowd(env, work);
+    losers.push(work.old.id);
+  }
 }
 
 /**
  * The contest for room of every chunk that beings arrive in at this tick, in the order of chunk
- * keys; under beings@1, whose chunks have no capacity, nothing.
+ * keys; returns the ids of its losers, in increasing order. Under beings@1, whose chunks have no
+ * capacity, nothing.
  */
-export function resolveRoom(env: BeingsEnv, works: readonly Work[]): void {
-  if (!env.rules.minds) return;
+export function resolveRoom(env: BeingsEnv, works: readonly Work[]): number[] {
+  if (!env.rules.minds) return [];
   // validateGlobal accepted the laws of life@2, which hold the capacity.
   const { capacity } = env.ctx.readGlobal().life as LifeConfig2;
   const arrivals = arrivalsOf(env, works);
+  const losers: number[] = [];
   for (let start = 0; start < arrivals.length; ) {
     let end = start + 1;
     while (end < arrivals.length && arrivals[end]?.chunk === arrivals[start]?.chunk) end += 1;
-    contestRoom(env, arrivals.slice(start, end), capacity);
+    contestRoom(env, arrivals.slice(start, end), capacity, losers);
     start = end;
   }
+  return losers.sort((a, b) => a - b);
 }

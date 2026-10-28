@@ -328,7 +328,7 @@ function placedBeings(env: BeingsEnv, works: readonly Work[]): Placed[] {
 }
 
 /** Whether the ascending `ids` hold `id`, by binary search. */
-function hasId(ids: readonly number[], id: number): boolean {
+export function hasId(ids: readonly number[], id: number): boolean {
   let low = 0;
   let high = ids.length;
   while (low < high) {

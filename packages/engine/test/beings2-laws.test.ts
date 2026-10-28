@@ -141,15 +141,24 @@ describe("checkLife2", () => {
   });
 
   test("bounds sight by the radius of the window, which holds every being in sight", () => {
-    const narrow = withMember("/species/0/senses/radius", 8) as {
-      species: { perception: { sight: { day: number } } }[];
-    };
-    expect(issues2(narrow)).toEqual([
+    // A radius of 8 holds the day's sight of 12 no more; one of 3, neither sight.
+    expect(issues2(withMember("/species/0/senses/radius", 8))).toEqual([
       {
         path: "/species/0/perception/sight/day",
         message: "12 is out of bounds: it must be from 0 to 8",
       },
     ]);
+    expect(issues2(withMember("/species/0/senses/radius", 3))).toEqual([
+      {
+        path: "/species/0/perception/sight/day",
+        message: "12 is out of bounds: it must be from 0 to 3",
+      },
+      {
+        path: "/species/0/perception/sight/dim",
+        message: "4 is out of bounds: it must be from 0 to 3",
+      },
+    ]);
+    expect(issues2(withMember("/species/0/senses/radius", 12))).toEqual([]);
   });
 
   test("keeps speech within dim sight, and silent without relationships", () => {

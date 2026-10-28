@@ -166,9 +166,9 @@ describe("the contest for room", () => {
       ).permutation(2);
       const [winner, loser] = order.map((index) => [2, 3][index] as number) as [number, number];
       winners.add(winner);
+      // The loser's walk ended and it decided in the second phase; the ledger keeps none of it.
       expect(payloadsAt(events, ARRIVAL, "being.finished")).toEqual([
-        { id: 2, activity: "walk", result: "done", reason: "" },
-        { id: 3, activity: "walk", result: "done", reason: "" },
+        { id: winner, activity: "walk", result: "done", reason: "" },
         crowded(loser),
       ]);
       expect(chunkOf(beingOf(world, winner).cell)).toBe(TO);
@@ -278,7 +278,7 @@ describe("the contest for room", () => {
     }
   });
 
-  test("emits the contest for room after the events of the second phase", () => {
+  test("emits a loser's crowded walk alone, after the second phase, and nothing of its decision", () => {
     const world = roomWorld(1);
     const events = runTo(
       world,
@@ -288,19 +288,50 @@ describe("the contest for room", () => {
         [EDGE, row(0)],
       ]),
     );
-    const atArrival = events
-      .filter(({ tick }) => tick === ARRIVAL)
-      .map(({ type, payload }) => [type, payload]);
-    const firstCrowded = atArrival.findIndex(
-      ([type, payload]) =>
-        type === "being.finished" && (payload as { reason: string }).reason === "crowded",
-    );
-    expect(firstCrowded).toBeGreaterThan(0);
+    // Both walks ended done at ARRIVAL and both beings decided there; both lost, so the tick shows
+    // only their crowded walks, in the order of the contest for room, by chunk key.
     expect(
-      atArrival
-        .slice(firstCrowded)
-        .every(([, payload]) => (payload as { reason?: string }).reason === "crowded"),
-    ).toBe(true);
+      events.filter(({ tick }) => tick === ARRIVAL).map(({ type, payload }) => [type, payload]),
+    ).toEqual([
+      ["being.finished", crowded(1)],
+      ["being.finished", crowded(2)],
+    ]);
+  });
+
+  test("leaves the events of a being that wins its room as they were, in order", () => {
+    const at = (capacity: number) => {
+      const world = roomWorld(capacity);
+      const events = runTo(
+        world,
+        ARRIVAL,
+        spawnsAt(1, [
+          [EDGE + 2, row(0)],
+          [EDGE, row(1)],
+          [EDGE, row(2)],
+        ]),
+      );
+      return events
+        .filter(({ tick }) => tick === ARRIVAL)
+        .map(({ type, payload }) => [type, payload]);
+    };
+    // With room for everyone, both crossers end their walks and decide; with one free place, the
+    // winner's events are those, unchanged and in the same order, and the loser's are one event.
+    const roomy = at(3);
+    const tight = at(2);
+    const idOf = ([, payload]: unknown[]) => (payload as { id: number }).id;
+    const reasonOf = ([, payload]: unknown[]) => (payload as { reason?: string }).reason;
+    const loser = idOf(tight.find((event) => reasonOf(event) === "crowded") ?? []);
+    const winner = loser === 2 ? 3 : 2;
+    expect(tight.filter(([, payload]) => (payload as { id: number }).id === winner)).toEqual(
+      roomy.filter(([, payload]) => (payload as { id: number }).id === winner),
+    );
+    expect(
+      roomy.filter(([, payload]) => (payload as { id: number }).id === loser).length,
+    ).toBeGreaterThan(1);
+    expect(tight.filter(([, payload]) => (payload as { id: number }).id === loser)).toEqual([
+      ["being.finished", crowded(loser)],
+    ]);
+    expect(tight.at(-1)).toEqual(["being.finished", crowded(loser)]);
   });
 });
 

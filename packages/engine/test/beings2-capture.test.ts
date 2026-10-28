@@ -105,6 +105,24 @@ describe("the capture of a brain of beings@2", () => {
   });
 });
 
+describe("the capture of a brain of beings@1", () => {
+  test("reports every problem of a brain at once: a bad version and an async decide both", () => {
+    const error = engineErrorOf(() =>
+      beings.createBeingsRuleset({
+        controllers: { s1: { brain: "", decide: async () => idle() } },
+      } as never),
+    );
+    expect(error.issues.map(({ path, message }) => ({ path, message }))).toEqual([
+      { path: "/controllers/s1/brain", message: "a brain's version must be a non-empty string" },
+      {
+        path: "/controllers/s1/decide",
+        message:
+          "a brain's decide must be an ordinary function: an async function or a generator returns a promise or an iterator, never an intention",
+      },
+    ]);
+  });
+});
+
 describe("a decision of beings@2", () => {
   test("calls decide without this, where beings@1 calls it on its brain", () => {
     const seen: unknown[] = [];

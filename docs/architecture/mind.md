@@ -402,8 +402,10 @@ what inhabitants think.
    at t ended in phase 2, where the being decided at its new cell, and that intention is discarded,
    with its plan, behavior, wake conditions, and cooldowns, and from T5-5a on the mental operations,
    forgetting, and familiarity of that decision, so its mind is the one it had at the start of the
-   tick; its `being.finished` names the walk, and it decides again at t + 1 from its start cell.
-   Then deliveries are resolved.
+   tick; it decides again at t + 1 from its start cell. Its events of phase 2 are dropped too and
+   replaced by the single `being.finished` of its walk, with the result `failed` and the reason
+   `crowded`, which the contest for room emits: so `beings@2` holds each being's events of phase 2
+   until that contest, then emits them in the order below. Then deliveries are resolved.
 4. `applyWorks`: the final records, where an unchanged mind is the same value, not a copy; then the
    deliveries; then `due` and the occupancy.
 5. Events: those of phase 2 by being id, each being's in the order T4 emits them, then its
