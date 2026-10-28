@@ -287,10 +287,20 @@ export function checkPlanStep(
   if (kind === "idle") step.int("ms", BEING_BOUNDS.durationMs);
 }
 
+/** The members of wake conditions, each optional. */
+export const WAKE_MEMBERS = Object.freeze({
+  required: Object.freeze([] as string[]),
+  optional: Object.freeze(["lightAbove", "lightBelow", "nutritionBelow", "restBelow"]),
+});
+
+/** The members of a brain's stored behavior, of a cooldown, and of a being's needs. */
+export const BEHAVIOR_MEMBERS: readonly string[] = Object.freeze(["heading", "kind", "since"]);
+export const COOLDOWN_MEMBERS: readonly string[] = Object.freeze(["cell", "until"]);
+export const NEEDS_MEMBERS: readonly string[] = Object.freeze(["nutrition", "rest"]);
+
 /** Reports every problem of wake conditions at `value`: each member optional. */
 export function checkWakeConditions(value: unknown, path: string, sink: IssueSink): void {
-  const optional = ["lightAbove", "lightBelow", "nutritionBelow", "restBelow"];
-  const wake = readFields(value, path, { required: [], optional }, sink);
+  const wake = readFields(value, path, WAKE_MEMBERS, sink);
   wake?.int("nutritionBelow", BEING_BOUNDS.level);
   wake?.int("restBelow", BEING_BOUNDS.level);
   wake?.int("lightBelow", BEING_BOUNDS.light);
@@ -299,7 +309,7 @@ export function checkWakeConditions(value: unknown, path: string, sink: IssueSin
 
 /** Reports every problem of a brain's stored behavior at `value`. */
 export function checkBehavior(value: unknown, path: string, sink: IssueSink): void {
-  const behavior = readFields(value, path, { required: ["heading", "kind", "since"] }, sink);
+  const behavior = readFields(value, path, { required: BEHAVIOR_MEMBERS }, sink);
   if (behavior === undefined) return;
   readId(behavior.value("kind"), behavior.at("kind"), sink);
   behavior.int("since", TICKS);
@@ -348,7 +358,7 @@ function checkEach(value: unknown, path: string, spec: ListCheck, sink: IssueSin
 
 /** Reports every problem of a cooldown at `value`. */
 function checkCooldown(value: unknown, path: string, sink: IssueSink): void {
-  const cooldown = readFields(value, path, { required: ["cell", "until"] }, sink);
+  const cooldown = readFields(value, path, { required: COOLDOWN_MEMBERS }, sink);
   if (cooldown === undefined) return;
   checkCell(cooldown.value("cell"), cooldown.at("cell"), sink);
   cooldown.int("until", TICKS);
@@ -372,7 +382,7 @@ function checkBody(being: Fields, rules: BeingsRules, sink: IssueSink): void {
   const needs = readFields(
     being.value("needs"),
     being.at("needs"),
-    { required: ["nutrition", "rest"] },
+    { required: NEEDS_MEMBERS },
     sink,
   );
   needs?.int("nutrition", BEING_BOUNDS.level);

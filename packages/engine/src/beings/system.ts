@@ -71,8 +71,9 @@ function holding(env: BeingsEnv, sink: Held[]): BeingsEnv {
  * contest for room after those over food. Each being's events of the second phase are held until
  * the contest decides; a loser keeps nothing of its decision, so the events of that decision and of
  * its walk are dropped, and the crowded end of its walk, which the contest emits, stands for them;
- * the events of its body stay, the start of a forced sleep among them. Then the tick emits the second phase's events by being id, in their
- * order, then the third phase's: contests over food by place, and for room by chunk.
+ * the events of its body stay, the start of a forced sleep among them. Then the tick emits the
+ * second phase's events by being id, in their order, then the third phase's: contests over food by
+ * place, and for room by chunk.
  */
 function runBeings2(env: BeingsEnv): void {
   const held: Held[][] = [];

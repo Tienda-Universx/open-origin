@@ -7,7 +7,15 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { ACTIVITY_MEMBERS, OUTCOME_MEMBERS, STEP_MEMBERS } from "../src/beings/being.ts";
+import {
+  ACTIVITY_MEMBERS,
+  BEHAVIOR_MEMBERS,
+  COOLDOWN_MEMBERS,
+  NEEDS_MEMBERS,
+  OUTCOME_MEMBERS,
+  STEP_MEMBERS,
+  WAKE_MEMBERS,
+} from "../src/beings/being.ts";
 import { copyAllowed, copySensed } from "../src/beings/classes.ts";
 import { MIND_SHAPES } from "../src/beings/minds.ts";
 import { perceiveBeings } from "../src/beings/perception.ts";
@@ -254,6 +262,10 @@ describe("the classification registry", () => {
       [...OUTCOME_MEMBERS.required, ...OUTCOME_MEMBERS.optional],
       "/outcome",
     );
+    expectIn(node("wakeWhen"), [...WAKE_MEMBERS.required, ...WAKE_MEMBERS.optional], "/wakeWhen");
+    expectIn(node("behavior"), BEHAVIOR_MEMBERS, "/behavior");
+    expectIn(node("needs"), NEEDS_MEMBERS, "/needs");
+    expectIn(node("cooldowns").each, COOLDOWN_MEMBERS, "/cooldowns");
     const held = node("mind");
     const store = (name: string) => memberOf(held, name)?.each as ClassNode;
     const all = (shape: { required: readonly string[]; optional: readonly string[] }) => [
