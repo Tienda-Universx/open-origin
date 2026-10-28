@@ -390,4 +390,45 @@ describe("viewOf", () => {
     view.beliefs[0]?.p.a[0]?.c.push(9);
     expect(subject).toEqual(before);
   });
+
+  test("shares no object or array with the mind, for a record of every kind", () => {
+    const subject = mindOf({
+      episodes: [
+        own(1),
+        seen(2, 41),
+        own(3, { kind: "ate", v: 25 }),
+        own(4, { kind: "failed", v: 0 }),
+        heard(5, 41),
+        external(6),
+      ],
+      beliefs: [belief(7, { ev: [1, 5], who: 41, src: 3 })],
+      relations: [relationship(8, 41, { f: 60, seen: 1 })],
+    });
+    const held = new Set<object>();
+    const collect = (value: unknown) => {
+      if (typeof value !== "object" || value === null) return;
+      held.add(value);
+      for (const member of Object.values(value)) collect(member);
+    };
+    collect(subject);
+    const shared: string[] = [];
+    const walk = (value: unknown, path: string) => {
+      if (typeof value !== "object" || value === null) return;
+      if (held.has(value)) shared.push(path);
+      for (const [key, member] of Object.entries(value)) walk(member, `${path}/${key}`);
+    };
+    const view = viewOf(subject, contextAt(1));
+    walk(view, "");
+    expect(shared).toEqual([]);
+    // Not vacuous: the view holds a record of every kind, an injection shown as heard.
+    expect(view.episodes.map(({ kind }) => kind)).toEqual([
+      "food",
+      "being",
+      "ate",
+      "failed",
+      "heard",
+      "heard",
+    ]);
+    expect([view.beliefs.length, view.relations.length]).toEqual([1, 1]);
+  });
 });

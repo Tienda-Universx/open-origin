@@ -1097,3 +1097,66 @@ capacity checked only in phase 2; a mind copied at every wake; an observer that 
 citing a higher id; a belief without evidence and without `model-prior-suspect`; an injection
 without `human-external`; a belief operation that is not its rule; a speaker that never stops; many
 speakers to one hearer.
+
+**How T5-8 checks its rows** (tests in `packages/engine/test` and `packages/agents/test`; no
+default or held-out label runs):
+
+- **Taints.** `beings2-laundering.test.ts` takes each route of plan §6 end to end through the
+  engine, with brains that follow a script: a claim injected into the first of a chain of five
+  beings keeps `human-external` in every belief and message to the fifth, each link citing a clean
+  observation first, while the same chain from an observation stays reasoned; a belief keeps its
+  taints when its premise fades, or when a clean observation displaces it from a full store, and the
+  claim believed again from a clean observation, or varied in cell, band, or concept, keeps them in
+  `ex`; a belief that cites nothing is `model-prior-suspect` and grows the exposure; a `relate`
+  citing a tainted message taints the relationship and the beliefs that cite it, before and after;
+  corroboration lowers nothing; cycles are `premise_order`; a claim parked in a cooldown and
+  `behavior.kind` keeps its `ex`; an ask names only the food its species perceives; and an injection
+  that claims to be clean carries `human-external` or is `invalid_inject`. No sense of any being of
+  the chain holds a taint.
+- **A false claim.** `mind-false-claim.test.ts`, on a corner of the test genesis without food:
+  the world after the injection equals the world without it but for the being's mind; the being
+  believes the claim at 600, seeks it, sees the cell hold nothing, revises to 100, and drops it.
+- **Determinism and observers.** `mind-determinism.test.ts` runs the suite on three beings of
+  `mind@1` (`support/mind-subject.ts`) for 105 ticks of the test genesis, with episodes that fade
+  in 120 s and room for two beings in a chunk, cut at every landmark of the row, the middle, and
+  two seeded ticks. A fresh brain per decision gives every record of the shared one; observers that
+  read every mind and view, and check every invariant, the oracle, and every rule, change nothing;
+  a host that compacts what it saw fade diverges.
+- **Fuzz and `rule(cited)`.** `mind-fuzz.test.ts` runs `mind@1` among chaotic brains with
+  injections, and the first 300 ticks of `calibration/1`, under the invariants, whose oracle of food
+  reads the terrain it is given. Every belief operation equals its rule in the subject, the fuzz
+  among chaotic brains, the false claim, and a day of `calibration/1` (`mind-world.test.ts`); the
+  300 ticks of the scenario's fuzz hold beliefs formed and none revised, so there it pins `believe`.
+- **Ablations.** `mind-world.test.ts` replays (a) and (b) of [Evaluation](#evaluation) on every
+  decision of that day that proposed a belief operation: 30 operations, none missed. There the
+  records an operation cites are those the mind held and the inbox messages its heard episodes
+  copy; what the being sees is no record. For `mind@1`, (a) removes something only from the 7
+  operations that cite a relationship or a message, since every other cites only what it sees anew.
+
+Each planted defect failed these tests, planted one at a time in a copy of the repository:
+
+| Planted defect | Tests that failed |
+|---|---|
+| A union of the first premise only, in `citedTaints`, which the downstream pass shares (planted only where a belief forms, the pass restores the union and nothing changes) | `beings2-laundering`: the chain, trust, a clean-claiming injection |
+| A revision that clears taints | `beings2-laundering`: corroboration |
+| An exposure that does not grow with a belief of its own | `beings2-laundering`: a belief that cites nothing |
+| Forgetting without a ledger entry | `beings2-laundering`, `mind-determinism`, `mind-fuzz` |
+| Delivery out of reach, to the asleep; hearing that wakes a walker, an injection's too | `beings2-delivery`, `beings2-inject`, `mind-false-claim` |
+| Delivery in the same tick | not planted: `beings2-delivery`, "is never heard in t" |
+| Telling a belief not held | `mind-fuzz`, `beings2-speech` |
+| An observation with content from the brain | `mind-fuzz`, `mind-determinism`, `beings2-mind-ops` |
+| A relationship without an encounter | not planted: the invariants of the fuzzes, `beings2-relations` |
+| Familiarity by count of decisions | `beings2-relations`, `mind-familiarity` |
+| Taints in the senses | `beings2-laundering`: no sense holds a taint |
+| A view that shares values with the state | `mind-salience`, its test of every kind of record, added in T5-8: the older test missed a shared cell |
+| A brain with memory in a closure, or that passes senses between beings | `mind-determinism`: resume, `child-resume`, `interleave`, the fresh differential |
+| Salience that decays per decision | `beings2-mind-ledger`, `beings2-relations`, `mind-determinism` |
+| Perception after a write; an extra chunk read; a sweep of minds per tick | not planted: `beings2-perception`, `beings2-cost` |
+| Capacity checked only in phase 2 | `beings2-room`, `mind-determinism` |
+| A mind copied at every wake | `beings2-cost` |
+| An observer that compacts a mind | `mind-determinism`: the coupled host diverges at tick 27 |
+| Citing a higher id | `beings2-laundering`: cycles |
+| A belief without evidence and without `model-prior-suspect` | `beings2-laundering`: a belief that cites nothing |
+| An injection without `human-external` | `beings2-laundering`, `mind-false-claim`, `mind-determinism` |
+| A belief operation that is not its rule | `mind-determinism`, `mind-fuzz`, `mind-false-claim`, `mind-world` |
+| A speaker that never stops; many speakers to one hearer | `beings2-speech`; `beings2-delivery`, `beings2-fuzz` |

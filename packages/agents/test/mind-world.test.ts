@@ -5,27 +5,71 @@
  * condition and its operations cite only records the stores keep; every belief operation is its
  * rule applied to what it cites, the episodes it created read from the engine's state; no belief
  * has model-prior-suspect; and the ledger oracle rebuilds every taint and link from the events
- * alone, compared with the state ten times a day. The invariants of the minds at every tick belong
- * to the fuzz and the determinism subject (T5-8), on the engine's test world, whose terrain their
- * oracle of food reads.
+ * alone, compared with the state ten times a day. The whole-decision ablation of "Evaluation",
+ * items (a) and (b), replays every decision that proposed a belief operation (T5-8). The invariants
+ * of the minds at every tick, whose oracle of food reads a scenario's terrain too, run on the first
+ * ticks of this label in mind-fuzz.test.ts, since at every tick of a day they would cost seconds.
  */
 import { describe, expect, test } from "bun:test";
-import { step } from "@open-origin/engine";
+import { type beings, step } from "@open-origin/engine";
 import { beingsById, LedgerOracle } from "../../engine/test/support/beings2-fuzz.ts";
 import { mindController } from "../src/index.ts";
+import { ablationA, ablationB, formationsOf } from "./support/mind-ablation.ts";
 import { MindObserver } from "./support/mind-metrics.ts";
 import { LABELS2, scenario2Of } from "./support/mind-scenario.ts";
+import type { Senses2 } from "./support/mind-senses.ts";
 
 /** One simulated day of the scenario. */
 const TICKS = 6_300;
 
+/** A decision that proposed a belief operation: what it sensed and what it proposed. */
+type Recorded = { readonly senses: Senses2; readonly intention: beings.Intention2 };
+
+/** `inner`, which also keeps in `decisions` each decision that proposed a belief operation. */
+function recording(inner: beings.Controller2, decisions: Recorded[]): beings.Controller2 {
+  return {
+    ...inner,
+    decide: (senses) => {
+      const intention = inner.decide(senses);
+      if (formationsOf(senses, intention).length > 0) decisions.push({ senses, intention });
+      return intention;
+    },
+  };
+}
+
+/** Every miss of the ablations (a) and (b) on `decisions`, and how many operations they replayed. */
+function ablations(decisions: readonly Recorded[], brain: beings.Controller2) {
+  const decide = (senses: Senses2) => brain.decide(senses);
+  const misses: string[] = [];
+  let operations = 0;
+  let removable = 0;
+  for (const { senses, intention } of decisions) {
+    operations += formationsOf(senses, intention).length;
+    const a = ablationA(senses, intention, decide);
+    removable += a.removable;
+    const b = ablationB(senses, intention, decide);
+    const name = `being ${senses.self.id}`;
+    for (const miss of a.misses) misses.push(`${name} (a): ${JSON.stringify(miss)}`);
+    for (const miss of b) misses.push(`${name} (b): ${JSON.stringify(miss)}`);
+  }
+  return { misses, operations, removable };
+}
+
 describe("mind@1 over one day of calibration/1", () => {
-  test("is never refused, keeps its rules and the laws of the mind, and leaves an exact ledger", () => {
+  test("is never refused, keeps its rules, the laws of the mind, and its ablations, and leaves an exact ledger", () => {
     const observer = new MindObserver();
+    const decisions: Recorded[] = [];
+    let brain: beings.Controller2 | undefined;
+    let built = 0;
     const scenario = scenario2Of(LABELS2.calibration[0] as string, {
-      controller: (species, dayLength) =>
-        observer.controller(mindController({ species, dayLength })),
+      controller: (species, dayLength) => {
+        built += 1;
+        brain = mindController({ species, dayLength });
+        return observer.controller(recording(brain, decisions));
+      },
     });
+    // One brain makes every decision the ablations replay below.
+    expect(built).toBe(1);
     const { world } = scenario;
     observer.start(
       world,
@@ -57,5 +101,14 @@ describe("mind@1 over one day of calibration/1", () => {
     expect(counts.get("speech.delivered") ?? 0).toBeGreaterThan(0);
     expect(counts.get("mind.changed") ?? 0).toBeGreaterThan(0);
     expect(run.decisions).toBeGreaterThan(8 * 10);
+    // The ablations of whole decisions, on every decision that proposed a belief operation.
+    const replayed = ablations(decisions, brain as beings.Controller2);
+    expect(replayed.misses.slice(0, 3)).toEqual([]);
+    // Not vacuous: the day's operations, pinned, and those citing a record that (a) removes: a
+    // relationship, or the message a heard episode copies, not only what the being sees.
+    expect({ operations: replayed.operations, removable: replayed.removable }).toEqual({
+      operations: 30,
+      removable: 7,
+    });
   }, 30_000);
 });

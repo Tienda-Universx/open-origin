@@ -9,9 +9,9 @@ import {
   readView,
   worldgen,
 } from "../../src/index.ts";
-import { type BeingsWorld, baseFood, behavior, windowAt } from "./beings-world.ts";
-import { bandOf, standable } from "./beings2-mind.ts";
-import { BEHAVIORS, brain2, type Senses2, SPECIES2 } from "./beings2-world.ts";
+import { type BeingsWorld, behavior, PREPARED } from "./beings-world.ts";
+import { standable } from "./beings2-mind.ts";
+import { BEHAVIORS, brain2, type Senses2 } from "./beings2-world.ts";
 import { Sfc32 } from "./sfc32.ts";
 
 /**
@@ -33,9 +33,6 @@ export const MIND_BYTES = 6000;
 
 /** The kinds of activity of beings@2, whose index a `being` episode holds. */
 const ACTIVITIES = ["eat", "idle", "sleep", "walk", "talk"] as const;
-
-/** The window's radius around a being. */
-const RADIUS = (windowAt([0, 0]).side - 1) / 2;
 
 /** The Chebyshev distance between two cells. */
 const distance = (a: Cell, b: Cell) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]));
@@ -373,13 +370,13 @@ type Accepted = {
   readonly tn: number;
 };
 
-/** The injections of `record` that no rejection of its tick names. */
+/** The injections of `record` that no rejection of its tick names; its other commands are not. */
 function acceptedOf(record: TickRecord): Accepted[] {
   const refused = record.events
     .filter(({ type }) => type === "engine.command_rejected")
     .map(({ payload }) => (payload as { seq: number }).seq);
   return record.commands
-    .filter(({ seq }) => !refused.includes(seq))
+    .filter(({ type, seq }) => type === "mind.inject" && !refused.includes(seq))
     .map(({ payload }) => {
       const { being, cell, p, taints } = payload as {
         being: number;
@@ -452,14 +449,51 @@ function checkCapacity(record: TickRecord, capacity: number, problems: string[])
 /** Reports a problem of one being at one tick. */
 type Report = (problem: string) => void;
 
+/**
+ * The terrain whose food the invariants read: a world's prepared genesis and the simulated seconds
+ * of its tick. The fuzz runs on the engine's test genesis; a run of a scenario passes its own.
+ */
+export type FoodTerrain = {
+  readonly prepared: worldgen.PreparedGenesis;
+  readonly simSecondsPerTick: number;
+};
+
+/** The engine's test genesis at 12 seconds per tick: the terrain of beings2World. */
+export const TEST_TERRAIN: FoodTerrain = Object.freeze({
+  prepared: PREPARED,
+  simSecondsPerTick: 12,
+});
+
+/** What the checks of a new record read of the world: the laws of the species and the terrain. */
+type Ground = { readonly species: beings.Species2; readonly terrain: FoodTerrain };
+
+/** The food of the species' deposit at `cell` on the terrain, before any being ate. */
+function baseFoodOf({ species, terrain }: Ground, cell: Cell): number {
+  const rect = { x: cell[0], y: cell[1], width: 1, height: 1 };
+  return worldgen.sampleSurface(terrain.prepared, rect, species.diet.deposit).deposit[0] ?? 0;
+}
+
 /** The effective food of `cell` at `tick` from the chunks before it: the deposit less what was taken. */
-function foodAt(chunks: ReadonlyMap<string, beings.BeingsChunk>, cell: Cell, tick: number): number {
+function foodAt(
+  ground: Ground,
+  chunks: ReadonlyMap<string, beings.BeingsChunk>,
+  cell: Cell,
+  tick: number,
+): number {
   const key = `${worldgen.chunkOfCell(cell[0])},${worldgen.chunkOfCell(cell[1])}`;
   const index = worldgen.cellOffset(cell[1]) * worldgen.CHUNK_CELLS + worldgen.cellOffset(cell[0]);
   const entry = chunks.get(key)?.depletion.find((candidate) => candidate.cell === index);
-  if (entry === undefined) return baseFood(cell);
-  const missing = beings.takenAt(entry, SPECIES2.regrowth, (tick - entry.since) * 12);
-  return Math.max(baseFood(cell) - missing, 0);
+  const base = baseFoodOf(ground, cell);
+  if (entry === undefined) return base;
+  const seconds = (tick - entry.since) * ground.terrain.simSecondsPerTick;
+  return Math.max(base - beings.takenAt(entry, ground.species.regrowth, seconds), 0);
+}
+
+/** The band of `units` of food by the cue of the species' diet: 0, 1 from `some`, 2 from `plenty`. */
+function bandOf(species: beings.Species2, units: number): number {
+  const { some, plenty } = species.diet.cue;
+  if (units >= plenty) return 2;
+  return units >= some ? 1 : 0;
 }
 
 /** The chunk key of `cell`. */
@@ -502,6 +536,7 @@ function beingProblem(
   self: Being2,
   episode: mind.BeingEpisode,
   record: TickRecord,
+  species: beings.Species2,
 ): string | undefined {
   const other = record.before.get(episode.who);
   if (other === undefined) return `perceived ${episode.who}, who is not in the world`;
@@ -509,7 +544,7 @@ function beingProblem(
     other.cell[0] === episode.cell[0] &&
     other.cell[1] === episode.cell[1] &&
     ACTIVITIES[episode.v] === other.activity.kind &&
-    distance(other.cell, self.cell) <= SPECIES2.perception.sight.day;
+    distance(other.cell, self.cell) <= species.perception.sight.day;
   return same ? undefined : `perceived ${episode.who} unlike the state of the tick`;
 }
 
@@ -518,11 +553,13 @@ function observationProblem(
   self: Being2,
   episode: mind.OwnEpisode | mind.BeingEpisode,
   record: TickRecord,
+  ground: Ground,
 ): string | undefined {
   if (episode.t !== record.tick) return `happened at ${episode.t}, not at the decision`;
-  if (distance(episode.cell, self.cell) > RADIUS) return "lies outside the window";
-  if (episode.kind === "being") return beingProblem(self, episode, record);
-  const band = bandOf(foodAt(record.chunks, episode.cell, record.tick));
+  const { species } = ground;
+  if (distance(episode.cell, self.cell) > species.senses.radius) return "lies outside the window";
+  if (episode.kind === "being") return beingProblem(self, episode, record, species);
+  const band = bandOf(species, foodAt(ground, record.chunks, episode.cell, record.tick));
   return band === episode.v ? undefined : `has the band ${episode.v}, not ${band}`;
 }
 
@@ -535,6 +572,7 @@ function newRelationshipProblem(
   being: Being2,
   relationship: mind.Relationship,
   record: TickRecord,
+  species: beings.Species2,
 ): string | undefined {
   if (relationship.seen === 0) {
     const inbox = record.before.get(being.id)?.mind.inbox ?? [];
@@ -542,7 +580,7 @@ function newRelationshipProblem(
     return relationship.f === 0 ? undefined : `familiar (${relationship.f}) though never seen`;
   }
   const other = record.before.get(relationship.who);
-  if (other === undefined || distance(other.cell, being.cell) > SPECIES2.perception.sight.day)
+  if (other === undefined || distance(other.cell, being.cell) > species.perception.sight.day)
     return "never perceived";
   return undefined;
 }
@@ -615,9 +653,13 @@ function checkQuotas(held: Mind, speech: beings.SpeechLaws, report: Report): voi
       report(`addressed ${relationship.who} ${relationship.turns} times in a conversation`);
 }
 
-/** What the invariants remember across ticks. */
+/**
+ * What the invariants remember across ticks. They read the food of a cell from the terrain they
+ * are given, the engine's test genesis by default, with the laws of the one species of `laws`.
+ */
 export class MindInvariants {
   readonly #laws: beings.LifeConfig2;
+  readonly #ground: Ground;
   readonly #injections: Accepted[] = [];
   /** The units each being's current meal ate, and those of the meals that ended, by being/tick. */
   readonly #meal = new Map<number, number>();
@@ -652,8 +694,9 @@ export class MindInvariants {
     spoken: 0,
   };
 
-  constructor(laws: beings.LifeConfig2) {
+  constructor(laws: beings.LifeConfig2, terrain: FoodTerrain = TEST_TERRAIN) {
     this.#laws = laws;
+    this.#ground = { species: laws.species[0] as beings.Species2, terrain };
   }
 
   /** Every problem of `record`, after the tick, each naming its tick and being. */
@@ -786,7 +829,7 @@ export class MindInvariants {
     }
     for (const relationship of being.mind.relations.filter(({ id }) => id >= from)) {
       this.seen.relations += 1;
-      const problem = newRelationshipProblem(being, relationship, record);
+      const problem = newRelationshipProblem(being, relationship, record, this.#ground.species);
       if (relationship.seen === 0) this.seen.spoken += 1;
       if (problem !== undefined)
         report(`relationship ${relationship.id} with ${relationship.who}, ${problem}`);
@@ -806,7 +849,7 @@ export class MindInvariants {
       case "failed":
         return this.#failedProblem(self, episode, record);
       default:
-        return observationProblem(self, episode, record);
+        return observationProblem(self, episode, record, this.#ground);
     }
   }
 
