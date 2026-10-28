@@ -485,7 +485,7 @@ describe("checkEngineSource: beings", () => {
   const intoBeings = (specifier: string) =>
     `"${specifier}" imports the beings layer: the kernel never depends on it, which only ${ENGINE_SRC}/index.ts re-exports (ADR 0023)`;
   const outOfAllowlist = (specifier: string) =>
-    `"${specifier}" is not a module the beings layer may import: it may import int.ts, errors.ts, time/tick.ts, world/chunk.ts, world/members.ts, world/contracts.ts, worldgen/index.ts, and the modules under canonical/, digest/, beings/ (ADR 0023)`;
+    `"${specifier}" is not a module the beings layer may import: it may import int.ts, errors.ts, time/tick.ts, world/chunk.ts, world/members.ts, world/contracts.ts, worldgen/index.ts, and the modules under canonical/, digest/, mind/, beings/ (ADR 0023)`;
   const outOfWorldgen = (specifier: string) =>
     `"${specifier}" is not a module worldgen may import: it may import int.ts, errors.ts, rng/chacha.ts, time/tick.ts, world/chunk.ts, world/members.ts, world/contracts.ts, and the modules under canonical/, digest/, worldgen/ (ADR 0021)`;
   const TYPES_ONLY =
@@ -552,6 +552,8 @@ describe("checkEngineSource: beings", () => {
       'import { sampleRegion } from "../worldgen/index.ts";',
       'import { copyCanonical } from "../canonical/copy.ts";',
       'import { digest } from "../digest/digest.ts";',
+      'import { forget } from "../mind/forget.ts";',
+      'import type { Mind } from "../mind/index.ts";',
       'import { needAt } from "./needs.ts";',
       'export { senses } from "./senses/window.ts";',
       "",
@@ -677,6 +679,183 @@ describe("checkEngineSource: beings", () => {
     expect(issues("const TABLE = [1, 2];\nexport const read = () => TABLE;\n", TERRAIN)).toEqual(
       [],
     );
+  });
+});
+
+/**
+ * The mind layer (ADR 0024): it imports only int.ts, errors.ts, and the modules under canonical/,
+ * digest/, and its own directory; the kernel and worldgen never import it, the beings layer and
+ * the entry point do; and its modules keep no state.
+ */
+describe("checkEngineSource: mind", () => {
+  const MIND = `${ENGINE_SRC}/mind`;
+  const TAINTS = `${MIND}/taints.ts`;
+  const TERRAIN = `${ENGINE_SRC}/worldgen/terrain.ts`;
+
+  const intoMind = (specifier: string) =>
+    `"${specifier}" imports the mind layer: the kernel never depends on it, which only ${ENGINE_SRC}/index.ts re-exports and the beings layer imports (ADR 0024)`;
+  const outOfAllowlist = (specifier: string) =>
+    `"${specifier}" is not a module the mind layer may import: it may import int.ts, errors.ts, and the modules under canonical/, digest/, mind/ (ADR 0024)`;
+  const outOfWorldgen = (specifier: string) =>
+    `"${specifier}" is not a module worldgen may import: it may import int.ts, errors.ts, rng/chacha.ts, time/tick.ts, world/chunk.ts, world/members.ts, world/contracts.ts, and the modules under canonical/, digest/, worldgen/ (ADR 0021)`;
+  const reason =
+    "mind modules keep no state between calls, so the worlds that share a ruleset stay independent (ADR 0024)";
+  const moduleState = (keyword: string) =>
+    `a top-level \`${keyword}\` declares module state: ${reason}`;
+  const mutableConst = (start: string) =>
+    `a top-level \`const\` bound to \`${start}…\` holds a value that can change: ${reason}; freeze it with Object.freeze, or build it inside a function`;
+
+  test.each([
+    ["an import", 'import { forget } from "../mind/forget.ts";', "../mind/forget.ts"],
+    ["a type-only import", 'import type { Mind } from "../mind/records.ts";', "../mind/records.ts"],
+    ["a re-export", 'export * from "../mind/index.ts";', "../mind/index.ts"],
+    ["a side-effect import", 'import "../mind/register.ts";', "../mind/register.ts"],
+    [
+      "a type-level import",
+      'export type Taints = typeof import("../mind/taints.ts");',
+      "../mind/taints.ts",
+    ],
+    ["a dynamic import", 'export const load = () => import("../mind/x.ts");', "../mind/x.ts"],
+    ["a path that enters the layer late", 'import "../step/../mind/a.ts";', "../step/../mind/a.ts"],
+  ])(
+    "reports a kernel module that imports the mind layer through %s",
+    (_name, content, specifier) => {
+      expect(issues(`export const before = 1;\n${content}\n`)).toEqual([
+        { file: FILE, line: 2, message: intoMind(specifier) },
+      ]);
+    },
+  );
+
+  test("reports worldgen importing the mind layer with worldgen's own rule", () => {
+    expect(messages('import { forget } from "../mind/forget.ts";\n', TERRAIN)).toEqual([
+      outOfWorldgen("../mind/forget.ts"),
+    ]);
+  });
+
+  test("lets src/index.ts re-export the layer, and a kernel module import a lookalike directory", () => {
+    expect(issues('export * as mind from "./mind/index.ts";\n', `${ENGINE_SRC}/index.ts`)).toEqual(
+      [],
+    );
+    const lookalikes = [
+      'import { a } from "../minds/a.ts";',
+      'import { b } from "../mind.ts";',
+      'import { c } from "./mind/c.ts";',
+      "",
+    ].join("\n");
+    // `./mind/c.ts` from world/state.ts is world/mind/c.ts, not src/mind.
+    expect(issues(lookalikes)).toEqual([]);
+  });
+
+  test("lets the layer import its allowlist and its own modules, at any depth", () => {
+    const content = [
+      'import { floorDiv } from "../int.ts";',
+      'import { IssueList } from "../errors.ts";',
+      'import { canonicalize } from "../canonical/encode.ts";',
+      'import type { IssueSink } from "../canonical/value.ts";',
+      'import { digest } from "../digest/digest.ts";',
+      'import { decay } from "./salience.ts";',
+      'export { forget } from "./forget/at.ts";',
+      "",
+    ].join("\n");
+    expect(issues(content, TAINTS)).toEqual([]);
+    const nested =
+      'import { floorMod } from "../../int.ts";\nimport { decay } from "../salience.ts";\n';
+    expect(issues(nested, `${MIND}/forget/at.ts`)).toEqual([]);
+  });
+
+  test.each([
+    ["the ticks", 'import { simSeconds } from "../time/tick.ts";', "../time/tick.ts"],
+    [
+      "the chunks of the world",
+      'import { chunkKey } from "../world/chunk.ts";',
+      "../world/chunk.ts",
+    ],
+    [
+      "the readers of the world",
+      'import { readMember } from "../world/members.ts";',
+      "../world/members.ts",
+    ],
+    [
+      "the kernel's contracts, even as types",
+      'import type { TickContext } from "../world/contracts.ts";',
+      "../world/contracts.ts",
+    ],
+    [
+      "worldgen through its index",
+      'import { MIN_CELL } from "../worldgen/index.ts";',
+      "../worldgen/index.ts",
+    ],
+    ["the beings layer", 'import { scaledFloor } from "../beings/rates.ts";', "../beings/rates.ts"],
+    ["the kernel's random streams", 'import { mix32 } from "../rng/mix32.ts";', "../rng/mix32.ts"],
+    [
+      "the terrain's cipher",
+      'import { chacha20Block } from "../rng/chacha.ts";',
+      "../rng/chacha.ts",
+    ],
+    ["the tick context", 'import { openTick } from "../step/context.ts";', "../step/context.ts"],
+    [
+      "the snapshots",
+      'export { encodeSnapshot } from "../snapshot/snapshot.ts";',
+      "../snapshot/snapshot.ts",
+    ],
+    ["the entry point", 'import "../index.ts";', "../index.ts"],
+    ["a module without its extension", 'import { floorDiv } from "../int";', "../int"],
+    [
+      "a lookalike of an allowed directory",
+      'import { b } from "../digests/b.ts";',
+      "../digests/b.ts",
+    ],
+    [
+      "a type-level import of the world",
+      'export type View = typeof import("../world/view.ts");',
+      "../world/view.ts",
+    ],
+  ])("reports a mind module that imports %s", (_name, content, specifier) => {
+    expect(issues(`export const before = 1;\n${content}\n`, TAINTS)).toEqual([
+      { file: TAINTS, line: 2, message: outOfAllowlist(specifier) },
+    ]);
+  });
+
+  test("reports a mind import that leaves src with the engine's own rule, once", () => {
+    expect(messages('import { file } from "bun";\nimport "../../../x.ts";\n', TAINTS)).toEqual([
+      '"bun" is not a relative import: the engine depends on nothing',
+      '"../../../x.ts" resolves outside packages/engine/src',
+    ]);
+  });
+
+  test("reports every top-level let, var, and constant bound to a mutable value", () => {
+    const content = [
+      "let counter = 0;",
+      "export var legacy = 1;",
+      "const cache = {};",
+      'export const KINDS = ["food"];',
+      "const scratch = new Int32Array(8);",
+      "const pattern = /a+/;",
+      "",
+    ].join("\n");
+    expect(issues(content, TAINTS)).toEqual([
+      { file: TAINTS, line: 1, message: moduleState("let") },
+      { file: TAINTS, line: 2, message: moduleState("var") },
+      { file: TAINTS, line: 3, message: mutableConst("{") },
+      { file: TAINTS, line: 4, message: mutableConst("[") },
+      { file: TAINTS, line: 5, message: mutableConst("new") },
+      { file: TAINTS, line: 6, message: mutableConst("/") },
+    ]);
+  });
+
+  test("accepts frozen, primitive, and function constants, and mutable values inside functions", () => {
+    const content = [
+      'export const PROP_VERSION = "prop@1";',
+      "export const TAINTS = Object.freeze({ modelPriorSuspect: 1 });",
+      'export const ACTS = Object.freeze(["greet", "tell"]);',
+      "export const union = (a: number, b: number) => a | b;",
+      "export function concept(id: string): boolean {",
+      "  const seen: string[] = [];",
+      "  return /^[a-z]+$/.test(id) && seen.length === 0;",
+      "}",
+      "",
+    ].join("\n");
+    expect(issues(content, TAINTS)).toEqual([]);
   });
 });
 

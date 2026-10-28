@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { floorDiv, floorMod, imul, int64Words, isU32, rotl32 } from "../src/int.ts";
+import {
+  ceilDiv,
+  floorDiv,
+  floorMod,
+  greatest,
+  imul,
+  int64Words,
+  isU32,
+  least,
+  rotl32,
+} from "../src/int.ts";
 import { engineErrorOf } from "./support/engine-error.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 
@@ -172,6 +182,29 @@ describe("floorDiv and floorMod", () => {
     ] as const) {
       expect(Object.is(floorDiv(a, b), -0)).toBe(false);
       expect(Object.is(floorMod(a, b), -0)).toBe(false);
+    }
+  });
+});
+
+describe("least, greatest, and ceilDiv", () => {
+  test("pick the smaller and the larger of two numbers", () => {
+    expect([least(2, 3), least(3, 2), least(-1, -1)]).toEqual([2, 2, -1]);
+    expect([greatest(2, 3), greatest(3, 2), greatest(-MAX_SAFE, MAX_SAFE)]).toEqual([
+      3,
+      3,
+      MAX_SAFE,
+    ]);
+  });
+
+  test("ceilDiv rounds a non-negative quotient up, as BigInt does, up to the safe integers", () => {
+    expect([ceilDiv(0, 7), ceilDiv(1, 7), ceilDiv(7, 7), ceilDiv(8, 7)]).toEqual([0, 1, 1, 2]);
+    expect(ceilDiv(MAX_SAFE, 1)).toBe(MAX_SAFE);
+    const random = new Sfc32(5308);
+    for (let round = 0; round < 2000; round += 1) {
+      const a = random.between(0, 0xffff_ffff) * random.between(1, 0x1f_ffff);
+      const b = random.between(1, 0xffff_ffff);
+      const expected = (BigInt(a) + BigInt(b) - 1n) / BigInt(b);
+      expect(ceilDiv(a, b)).toBe(Number(expected));
     }
   });
 });
