@@ -16,11 +16,12 @@ import { Sfc32 } from "./sfc32.ts";
 
 /**
  * The fuzz of the minds of beings@2 with the ledger oracle (ADR 0024, docs/architecture/mind.md
- * "Verification plan"): a chaotic brain that proposes valid and invalid mental operations, the
- * invariants a mind must hold after every tick, checked against the state of the tick before and
- * the commands and events of the tick, and an oracle that rebuilds the taints, the citations, and
- * the exposure of every live record from the events of the ledger alone. Every helper here reads
- * the world through readView, which copies, and keeps its own records apart from the state.
+ * "Verification plan"): a chaotic brain that proposes valid and invalid mental operations and
+ * acts of speech, the invariants a mind must hold after every tick, checked against the state of
+ * the tick before and the commands and events of the tick, and an oracle that rebuilds the taints,
+ * the citations, and the exposure of every live record from the events of the ledger alone. Every
+ * helper here reads the world through readView, which copies, and keeps its own records apart from
+ * the state.
  */
 
 type Cell = readonly [number, number];
@@ -31,7 +32,7 @@ type Mind = mind.Mind;
 export const MIND_BYTES = 6000;
 
 /** The kinds of activity of beings@2, whose index a `being` episode holds. */
-const ACTIVITIES = ["eat", "idle", "sleep", "walk"] as const;
+const ACTIVITIES = ["eat", "idle", "sleep", "walk", "talk"] as const;
 
 /** The window's radius around a being. */
 const RADIUS = (windowAt([0, 0]).side - 1) / 2;
@@ -52,16 +53,21 @@ function toward(from: Cell, to: Cell, random: Sfc32): number {
   return index < 0 ? random.below(8) : index;
 }
 
-/** The steps of a chaotic decision: a step that drifts toward `home`, an idle, or a meal. */
+/**
+ * The steps of a chaotic decision: a step that drifts toward `home`, an idle, a meal, or a short
+ * sleep, during which a being may be spoken to.
+ */
 function stepsOf(senses: Senses2, random: Sfc32, home: Cell): beings.PlanStep[] {
-  const roll = random.below(10);
-  if (roll < 5) {
+  const roll = random.below(20);
+  if (roll < 10) {
     const [x = 0, y = 0] = senses.self.cell;
     const d = random.below(3) === 0 ? random.below(8) : toward([x, y], home, random);
     return [{ kind: "walk", dirs: String(d).repeat(1 + random.below(2)) }];
   }
-  if (roll < 8) return [{ kind: "idle", ms: 1 + random.below(36_000) }];
-  return [{ kind: "eat", untilNutrition: beings.NEED_MAX }];
+  if (roll < 16) return [{ kind: "idle", ms: 1 + random.below(36_000) }];
+  if (roll < 18) return [{ kind: "eat", untilNutrition: beings.NEED_MAX }];
+  const rest = senses.self.needs.rest;
+  return [{ kind: "sleep", untilRest: Math.min(beings.NEED_MAX, rest + 1 + random.below(5_000)) }];
 }
 
 /** A local id the brain may cite: one of `ids`, the predicted `next` ones, or a bogus one. */
@@ -247,22 +253,53 @@ function operationsOf(senses: Senses2, random: Sfc32): beings.MindIntention {
   return ops.mind;
 }
 
+/** The acts of speech. */
+const ACTS = ["greet", "ask", "tell", "unknown"] as const;
+
+/**
+ * A talk to a perceived being it knows, most of the time, which a small store of relationships
+ * may not hold, or to a being it may not reach: a greet, an ask about its food or another concept,
+ * a tell of one of its beliefs, the one it forms in the same decision, or none it holds, or an
+ * unknown.
+ */
+function talkOf(senses: Senses2, random: Sfc32, next: number): beings.TalkStep {
+  const seen = senses.perceived.beings;
+  const known = seen.filter(({ id }) => senses.mind.relations.some(({ who }) => who === id));
+  const near = known.length > 0 ? known : seen;
+  const to =
+    near.length > 0 && random.below(8) > 0
+      ? (near[random.below(near.length)] as beings.PerceivedBeing).id
+      : 1 + random.below(14);
+  const act = ACTS[random.below(ACTS.length)] as (typeof ACTS)[number];
+  if (act === "ask")
+    return { kind: "talk", to, act, about: random.below(6) === 0 ? "obs.light" : "obs.deposit.0" };
+  if (act !== "tell") return { kind: "talk", to, act };
+  const beliefs = senses.mind.beliefs.map(({ id }) => id);
+  return { kind: "talk", to, act, about: anyId(beliefs, next, random) };
+}
+
 /**
  * A brain of beings@2 that decides at random from its own draws, so it is a pure function of its
- * senses: steps that drift toward `home`, where beings crowd, and mental operations of every kind,
- * valid and invalid, which relate perceived beings and remember and believe what they hear.
+ * senses: steps that drift toward `home`, where beings crowd, or a talk, and mental operations of
+ * every kind, valid and invalid, which relate perceived beings and remember and believe what they
+ * hear.
  */
 export function chaosBrain(home: Cell): beings.Controller2 {
   return brain2((senses) => {
     const [a = 0, b = 0] = senses.draws;
     const random = new Sfc32((a ^ Math.imul(b, 0x9e37_79b9)) >>> 0);
-    const steps = stepsOf(senses, random, home);
+    const talks = random.below(2) === 0;
+    const steps = talks
+      ? [talkOf(senses, random, senses.mind.next)]
+      : stepsOf(senses, random, home);
     const kind = BEHAVIORS[random.below(BEHAVIORS.length - 1)] as string;
+    // Half the talks carry no operation, so that more acts start than the operations' failures let.
+    const silent = talks && random.below(2) === 0;
     return {
       steps,
       wakeWhen: {},
       behavior: behavior(kind),
-      mind: operationsOf(senses, random),
+      ...(silent ? {} : { mind: operationsOf(senses, random) }),
     };
   });
 }
@@ -489,6 +526,95 @@ function observationProblem(
   return band === episode.v ? undefined : `has the band ${episode.v}, not ${band}`;
 }
 
+/**
+ * Why a relationship `being` created at this tick has no encounter behind it: a perception, within
+ * sight at the start of the tick, or a message of its being in the inbox the decision heard, which
+ * leaves it never seen and unfamiliar.
+ */
+function newRelationshipProblem(
+  being: Being2,
+  relationship: mind.Relationship,
+  record: TickRecord,
+): string | undefined {
+  if (relationship.seen === 0) {
+    const inbox = record.before.get(being.id)?.mind.inbox ?? [];
+    if (!inbox.some(({ who }) => who === relationship.who)) return "never seen nor heard";
+    return relationship.f === 0 ? undefined : `familiar (${relationship.f}) though never seen`;
+  }
+  const other = record.before.get(relationship.who);
+  if (other === undefined || distance(other.cell, being.cell) > SPECIES2.perception.sight.day)
+    return "never perceived";
+  return undefined;
+}
+
+/** A talk as it started: its speaker's cell and what it captured, to rebuild its message. */
+type Started = {
+  readonly to: number;
+  readonly act: mind.Act;
+  readonly captured: beings.Captured;
+  readonly cell: Cell;
+};
+
+/** A message delivered to `to` at `tick`, rebuilt from the talk that said it. */
+type Delivery = { readonly to: number; readonly tick: number; readonly message: mind.InboxMessage };
+
+/** The band of a confidence, written apart from the engine: 2 from 800, 1 from 500, else 0. */
+function confidenceBand(cr: number): number {
+  if (cr >= 800) return 2;
+  return cr >= 500 ? 1 : 0;
+}
+
+/**
+ * Why what the talk of `speaker` captured when it started is not what speech captures: a tell's
+ * proposition, band, and lineage are its belief's, and its exposure that belief's with the
+ * speaker's; any other act carries nothing.
+ */
+function capturedProblem(speaker: Being2, talk: Started): string | undefined {
+  const { p, band, tn, ex } = talk.captured;
+  if (talk.act !== "tell")
+    return canonicalize(talk.captured as never) === canonicalize({ tn: 0, ex: 0 })
+      ? undefined
+      : `captured content for a ${talk.act}`;
+  const told = speaker.mind.beliefs.find(
+    (belief) => p !== undefined && mind.sameProposition(belief.p, p),
+  );
+  if (told === undefined) return "told a belief it does not hold";
+  const exposed = covers(ex, told.ex) && covers(speaker.mind.exposure | told.ex, ex);
+  if (told.tn === tn && exposed && band === confidenceBand(told.cr)) return undefined;
+  return `captured ${tn}/${ex} band ${band} of a belief ${told.tn}/${told.ex} at ${told.cr}`;
+}
+
+/** The message a delivery at `tick` leaves of the talk `talk` of `speaker`. */
+function messageOf(speaker: number, talk: Started, tick: number): mind.InboxMessage {
+  const { p, band, tn, ex } = talk.captured;
+  return {
+    who: speaker,
+    t: tick,
+    cell: [talk.cell[0], talk.cell[1]],
+    act: talk.act,
+    ...(p === undefined ? {} : { p }),
+    ...(band === undefined ? {} : { band }),
+    tn,
+    ex,
+  };
+}
+
+/** Whether the heard episode `episode` holds the content and taints of `message`. */
+function hears(episode: mind.HeardEpisode, message: mind.InboxMessage): boolean {
+  const { id: _id, kind: _kind, t: _t, w: _w, r: _r, ...content } = episode;
+  const { t: _sent, ...said } = message;
+  return canonicalize(content as never) === canonicalize(said as never);
+}
+
+/** Reports a quota of speech that `held` exceeds under the laws `speech`. */
+function checkQuotas(held: Mind, speech: beings.SpeechLaws, report: Report): void {
+  if (held.quota.said > speech.perDay) report(`said ${held.quota.said} acts in a day`);
+  if (held.quota.woken > speech.wakesPerDay) report(`woke by hearing ${held.quota.woken} times`);
+  for (const relationship of held.relations)
+    if (relationship.turns > speech.turns)
+      report(`addressed ${relationship.who} ${relationship.turns} times in a conversation`);
+}
+
 /** What the invariants remember across ticks. */
 export class MindInvariants {
   readonly #laws: beings.LifeConfig2;
@@ -498,6 +624,9 @@ export class MindInvariants {
   readonly #meals = new Map<string, number>();
   /** The outcomes every being held at the end of each tick, by being/tick of the outcome. */
   readonly #outcomes = new Map<string, beings.Outcome>();
+  /** The last talk each being started, and every message delivered. */
+  readonly #talks = new Map<number, Started>();
+  readonly #deliveries: Delivery[] = [];
   /** Counts of what the fuzz exercised, so that a pass is not vacuous. */
   readonly seen = {
     external: 0,
@@ -511,6 +640,16 @@ export class MindInvariants {
     beliefs: 0,
     crowded: 0,
     injected: 0,
+    /** Talks of a tell that started, each checked against the belief it told. */
+    told: 0,
+    /** Messages delivered, and those not heard: for a full inbox, or in phase 2. */
+    delivered: 0,
+    full: 0,
+    away: 0,
+    /** Heard episodes, each equal to a message delivered to its being. */
+    heard: 0,
+    /** Relationships created by a heard act alone. */
+    spoken: 0,
   };
 
   constructor(laws: beings.LifeConfig2) {
@@ -526,11 +665,15 @@ export class MindInvariants {
     checkAddressed(accepted, record, problems);
     checkRelated(record, problems);
     checkCapacity(record, this.#laws.capacity, problems);
-    const laws = (this.#laws.species[0] as beings.Species2).mind;
+    const species = this.#laws.species[0] as beings.Species2;
+    const laws = species.mind;
     for (const [id, being] of record.after) {
       const report: Report = (problem) =>
         problems.push(`tick ${record.tick}, being ${id}: ${problem}`);
       const before = record.before.get(id);
+      this.#readTalk(being, record.tick, report);
+      this.#checkInbox(being, report);
+      checkQuotas(being.mind, species.speech, report);
       checkBounds(being.mind, laws, report);
       if (before !== undefined) checkGrowth(being.mind, before.mind, report);
       this.#checkExposure(being, report);
@@ -545,6 +688,61 @@ export class MindInvariants {
     for (const { being: to, tn, tick } of this.#injections)
       if (to === being.id && !covers(being.mind.exposure, tn))
         report(`the exposure lacks the injection of tick ${tick}`);
+    for (const { to, tick, message } of this.#deliveries)
+      if (to === being.id && !covers(being.mind.exposure, message.tn | message.ex))
+        report(`the exposure lacks the message of tick ${tick}`);
+  }
+
+  /** Keeps the talk `being` started at `tick`, after checking what it captured. */
+  #readTalk(being: Being2, tick: number, report: Report): void {
+    const { activity } = being;
+    if (activity.kind !== "talk" || activity.start !== tick) return;
+    const started = {
+      to: activity.to,
+      act: activity.act,
+      captured: activity.captured,
+      cell: being.cell,
+    };
+    const problem = capturedProblem(being, started);
+    if (problem !== undefined) report(problem);
+    if (activity.act === "tell") this.seen.told += 1;
+    this.#talks.set(being.id, started);
+  }
+
+  /** Every message of a speaker in the inbox of `being` is one delivered to it. */
+  #checkInbox(being: Being2, report: Report): void {
+    for (const message of being.mind.inbox) {
+      if (message.who === undefined) continue;
+      const text = canonicalize(message as never);
+      const sent = this.#deliveries.some(
+        (it) => it.to === being.id && canonicalize(it.message as never) === text,
+      );
+      if (!sent) report(`holds a message of ${message.who} that no delivery left`);
+    }
+  }
+
+  /** Keeps the message of a delivery of the tick, rebuilt from the talk that said it. */
+  #readDelivery(event: { id: number; to: number }, tick: number): void {
+    const talk = this.#talks.get(event.id);
+    if (talk === undefined || talk.to !== event.to)
+      throw new Error(`tick ${tick}: ${event.id} delivered to ${event.to} what it never said`);
+    this.#deliveries.push({ to: event.to, tick, message: messageOf(event.id, talk, tick) });
+    this.seen.delivered += 1;
+  }
+
+  /** Counts a crowded walk and an injection. */
+  #count(type: string, reason: string | undefined): void {
+    if (type === "being.finished" && reason === "crowded") this.seen.crowded += 1;
+    if (type === "mind.injected") this.seen.injected += 1;
+  }
+
+  /** Keeps the delivery of a speech event of the tick, or counts why an act was not heard. */
+  #readSpeech(type: string, payload: unknown, tick: number): void {
+    const event = payload as { id: number; to: number; reason?: string };
+    if (type === "speech.delivered") this.#readDelivery(event, tick);
+    if (type !== "speech.unheard") return;
+    if (event.reason === "full") this.seen.full += 1;
+    else this.seen.away += 1;
   }
 
   /** Keeps the meals and counts of an event of the tick. */
@@ -553,8 +751,8 @@ export class MindInvariants {
     if (event.activity === "eat") this.#readMeal(type, event.id, record.tick);
     if (type === "being.ate")
       this.#meal.set(event.id, (this.#meal.get(event.id) ?? 0) + (event.units ?? 0));
-    if (type === "being.finished" && event.reason === "crowded") this.seen.crowded += 1;
-    if (type === "mind.injected") this.seen.injected += 1;
+    this.#count(type, event.reason);
+    if (type.startsWith("speech.")) this.#readSpeech(type, payload, record.tick);
     if (type === "mind.provenance")
       for (const entry of (payload as Provenance).records)
         this.#countRelate(event.id, entry, record);
@@ -588,9 +786,10 @@ export class MindInvariants {
     }
     for (const relationship of being.mind.relations.filter(({ id }) => id >= from)) {
       this.seen.relations += 1;
-      const other = record.before.get(relationship.who);
-      if (other === undefined || distance(other.cell, being.cell) > SPECIES2.perception.sight.day)
-        report(`relationship ${relationship.id} with ${relationship.who}, never perceived`);
+      const problem = newRelationshipProblem(being, relationship, record);
+      if (relationship.seen === 0) this.seen.spoken += 1;
+      if (problem !== undefined)
+        report(`relationship ${relationship.id} with ${relationship.who}, ${problem}`);
     }
     this.seen.beliefs += being.mind.beliefs.filter(({ id }) => id >= from).length;
   }
@@ -599,7 +798,7 @@ export class MindInvariants {
   #episodeProblem(self: Being2, episode: mind.Episode, record: TickRecord): string | undefined {
     switch (episode.kind) {
       case "heard":
-        return "is heard, with no speech";
+        return this.#heardProblem(self, episode, record.tick);
       case "external":
         return this.#externalProblem(self, episode, record.tick);
       case "ate":
@@ -609,6 +808,17 @@ export class MindInvariants {
       default:
         return observationProblem(self, episode, record);
     }
+  }
+
+  /** Why a heard episode made at `tick` is no message delivered to `self` before it. */
+  #heardProblem(self: Being2, episode: mind.HeardEpisode, tick: number): string | undefined {
+    if (episode.t !== tick) return `was heard at ${episode.t}, not at the decision`;
+    const delivered = this.#deliveries.some(
+      (it) => it.to === self.id && it.tick < tick && hears(episode, it.message),
+    );
+    if (!delivered) return "matches no message delivered to it";
+    this.seen.heard += 1;
+    return undefined;
   }
 
   #externalProblem(self: Being2, episode: mind.ExternalEpisode, tick: number): string | undefined {
