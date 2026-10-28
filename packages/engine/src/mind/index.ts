@@ -29,6 +29,7 @@ export {
 export { ageAt, type MindContext, type Moment, secondsSince } from "./context.ts";
 export { familiarity, familiarSeconds, perceivedAgain } from "./familiarity.ts";
 export { forget } from "./forget.ts";
+export { checkMind } from "./invariants.ts";
 export {
   checkMindLaws,
   defaultMindLaws,
