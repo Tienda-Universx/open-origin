@@ -7,7 +7,8 @@
  * values the specification does not name take the widest value of their domain, as in the
  * measurement: importance, confidence, trust, and affinity at ±1000, taints at 7, sources at 15,
  * familiarity at 2^22 seconds, `turns` at 8, and the daily counts at 64; `lost` takes the width of
- * a local id, and the day of the quota the width of a tick.
+ * a local id, and the day of the quota the width of a tick. The gate's mind, the record mix a
+ * `mind@1` being holds, takes the values mind.md gives it.
  */
 import { describe, expect, test } from "bun:test";
 import { utf8Length } from "../src/canonical/utf8.ts";
@@ -151,5 +152,78 @@ describe("the largest mind", () => {
     expect(largest.next).toBe(mind.INT31_MAX);
     expect(bytesOf(largest)).toBe(5711);
     expect(bytesOf(largest)).toBeLessThanOrEqual(6000);
+  });
+});
+
+/** The gate's mind of "Cost", with the values mind.md gives it. */
+function gateMind(): mind.Mind {
+  const tick = 99_999_999;
+  const cell = (): mind.Cell => [-99_999, -99_999];
+  const proposition = (): mind.Proposition => ({ p: "m1.food-at", a: [{ c: cell() }], v: 2 });
+  const common = { t: tick, w: 600, r: tick };
+  const episodes: mind.Episode[] = [
+    ...[977, 978, 979, 980, 981].map(
+      (id): mind.Episode => ({ id, kind: "food", ...common, cell: cell(), v: 2 }),
+    ),
+    { id: 982, kind: "being", ...common, cell: cell(), who: 99_999, v: 1 },
+    { id: 983, kind: "ate", ...common, cell: cell(), v: 25 },
+    {
+      id: 984,
+      kind: "heard",
+      ...common,
+      cell: cell(),
+      who: 99_999,
+      p: proposition(),
+      act: "tell",
+      band: 2,
+      tn: 0,
+      ex: 0,
+    },
+  ];
+  const beliefs = Array.from(
+    { length: 8 },
+    (_, index): mind.Belief => ({
+      id: 985 + index,
+      p: proposition(),
+      cr: 800,
+      src: 1,
+      ev: [977 + (index % 5), 982 + (index % 3)],
+      lost: 0,
+      tn: 0,
+      ex: 0,
+      dp: 1,
+      u: tick,
+    }),
+  );
+  const relations = Array.from(
+    { length: 6 },
+    (_, index): mind.Relationship => ({
+      id: 993 + index,
+      who: 99_999 - index,
+      f: 3600,
+      seen: tick,
+      aff: 100,
+      tr: 600,
+      tn: 0,
+      talk: tick,
+      turns: 1,
+    }),
+  );
+  return {
+    next: 999,
+    episodes,
+    beliefs,
+    relations,
+    inbox: [],
+    exposure: 0,
+    quota: { day: tick, said: 5, woken: 2 },
+  };
+}
+
+describe("the gate's mind", () => {
+  test("takes 2,680 bytes, the size the estimate of the gate starts from", () => {
+    const gate = gateMind();
+    expect(isValid(gate)).toBe(true);
+    expect(bytesOf(gate)).toBe(2680);
   });
 });
