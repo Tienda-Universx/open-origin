@@ -1029,9 +1029,11 @@ computes, without judging:
   band or a `failed` one of `no_food` or `food_gone`; and "trust checked", a related relationship
   whose trust changed, citing a belief its being told, with told among its evidence, and a `food`,
   `ate`, or `failed` episode at that belief's cell. Two kinds of record leave the state in the
-  decision that makes them, and none did in any run: an episode a full store evicts at once, whose
-  kind its percept gives, and a belief evicted at once, which the ledger gives no citations for and
-  which is classed by its rule.
+  decision that makes them: an episode a full store evicts at once, whose kind its percept gives,
+  and a belief evicted at once, which the ledger gives no citations for and which is classed by its
+  rule. None did in the two runs of CI; in the soak, 6 beliefs did on `heldout/2` under `mind@1`
+  (4 in its run with the false claim), classed by their rule. A belief with `model-prior-suspect`
+  counts once for its being, however many decisions the ledger shows it in.
 - **Speech**: greetings and conversations from `speech.uttered` and `speech.delivered`.
 - **Integrity**: every belief operation against its rule (`mind-rules-check.ts`); no belief with
   `model-prior-suspect`; and the invariants of the minds (`MindInvariants`: the flows of taints, the
@@ -1083,9 +1085,10 @@ was evaluated.
 
 ### The soak
 
-`bun packages/agents/bench/mind-soak.ts` ran once, the 18 runs one at a time in 218 s: on each
-held-out label, `mind@1` for ten days with the soak's measures, the amnesic ablation for ten days,
-and the false claim for 18,900 ticks. Every run kept every rule and invariant, the ledger oracle
+`bun packages/agents/bench/mind-soak.ts` ran the 18 runs one at a time in 218 s, at `5c59a0e`, and
+again in 206 s at `a5c7259`, after its summary of the memory hypothesis was corrected, with every
+run the same: on each held-out label, `mind@1` for ten days with the soak's measures, the amnesic
+ablation for ten days, and the false claim for 18,900 ticks. Every run kept every rule and invariant, the ledger oracle
 found nothing, and no belief had `model-prior-suspect`. The acceptance of the evaluation on each
 label, informative only, since only the default label and `heldout/1` are preregistered for it:
 
@@ -1098,13 +1101,23 @@ label, informative only, since only the default label and `heldout/1` are prereg
 | `heldout/5` | every being: meals ≥ 300,000; 1 also beliefs seen; 6 also outside the birth window | every item |
 | `heldout/6` | none | every item |
 
+The items of T4 among these misses come from the terrain and the laws, not from `mind@1`: the
+amnesic ablation, which keeps no record and says nothing, misses the same ones, the regrowth on
+`heldout/2`, beings 5 and 8 of `heldout/4` outside their birth window, and on `heldout/5` every
+being without a meal of 300,000 and being 6 outside its birth window, and one more there, being 3
+outside its birth window.
+
 The informative hypotheses, recorded as they came out:
 
-- **Memory: not supported, and nearly untestable here.** Under `mind@1` the beings were hungry with
-  no food in sight in three spells in all, on `heldout/2`, `/3`, and `/6`, which ended in a bite
-  after 356, 1,688, and 505 ticks; under the amnesic ablation, after 354, 1,591, and 505, with one
-  more spell still open at the end on `heldout/4`. The median was shorter under `mind@1` on no
-  label of six. As calibration found, a being is seldom hungry with no food in sight.
+- **Memory: not measurable in this soak.** A label compares the brains only where each closed a
+  hungry spell, from a decision hungry with no food in sight to the next bite. Three labels did, one
+  spell under each brain: `heldout/2`, 356 ticks under `mind@1` against 354 under the amnesic
+  ablation; `/3`, 1,688 against 1,591; and `/6`, 505 against 505. On `heldout/1`, `/4`, and `/5`
+  neither brain closed one, and the amnesic one left a spell open at the end on `/4`. The median
+  was shorter under `mind@1` on none of the three. The behavior the hypothesis is about hardly ran:
+  no being decided to walk to food it believed in on the default label or `heldout/1`, and two did
+  in the whole soak, both on `heldout/2`. As calibration found, a being is seldom hungry with no
+  food in sight.
 - **A false claim: holds, on five labels of six.** The being of lowest id believed the claim at
   the tick it woke for it, 6,301, or at its next decision (6,451 and 6,367 on `heldout/2` and
   `/6`), at 540 to 700, its credulity times 0.6; it revised it below 500 99 to 935 ticks after the
@@ -1185,8 +1198,9 @@ tick. The p99 hashed is below 1 MB, so the entity section stays in T7. With full
 targets of "dispersed 1,000" are missed: the median tick of 50.01 ms misses at most 50 by 0.01 ms;
 the p99 of 113.28 ms misses at most 100; and 320 µs more per wake that does not decide misses at
 most 150. The cause is not yet measured: every write of a being turns its whole
-chunk, mind included, into canonical text, hashes it, and validates it. T5-9 profiles that cost
-before any optimization, and a miss that remains is recorded as it is.
+chunk, mind included, into canonical text, hashes it, and validates it. T5-9 profiled that cost
+after its refactor of the window's edges, which leaves it as it was ("The misses that remain",
+below), and records the miss as it is.
 
 **Measured: the cost of `mind@1`** (T5-9, 2026-10-28; indicative). `bun
 packages/agents/bench/mind-cost.ts [dispersed concentrated sleeping speech] [--ticks N]` runs T4's
@@ -1228,17 +1242,29 @@ EPYC 7763 core, with Bun 1.4.4; "before" is `main` at `7a26777`, "after" the ref
   `bench/mind-calibration.ts 1`, which printed the same, are unchanged; ten days of
   `calibration/1` took 14.8 s instead of 16.2 s.
 - **The misses that remain.** The p99 of the gate, whose every being holds a full mind from the
-  start, and the cost of a wake that does not decide. That wake writes its being, so the commit
-  turns its whole chunk, mind included, into canonical text, validates, and hashes it: about
-  350 µs more for the gate's mind of 2,680 B, which the window's edges do not touch. Under `mind@1`
-  itself the minds of dispersed beings stay small, 367 B a write on average, and a wake costs 478
-  µs against T4's 531 (all wakes, those that decide included). Both misses are recorded as they
-  are; the hash per component of the entity section (T7) is what removes the second.
+  start, and the cost of a wake that does not decide, about 350 µs more with the gate's mind of
+  2,680 B, which the window's edges do not touch. A wake that does not decide writes its being, so
+  the commit of its chunk turns the chunk, mind included, into canonical text, hashes it, and
+  validates it. A run profiled where that cost lies (`bun --cpu-prof-md`, after the refactor): ten
+  beings of `beings@2` on the engine's test terrain, each alone in its chunk, walking back and forth
+  64 steps at each decision, so that their 13,971 writes in 6,000 ticks came with only 224
+  decisions; once with the gate's mind and once with a newborn's, which live the same writes and
+  decisions. Unprofiled, a write cost 561 µs against 279, 282 µs more. In the profile, the commit
+  took 6.96 s against 1.77 s: validating the chunk 3.49 s against 0.80 (2.48 s of it checking the
+  stores of the gate's minds), its canonical text 3.06 s against 0.84, and the rest, hashing
+  included, 0.41 s against 0.13; the beings system itself, 1.84 s against 1.85, since a wake
+  copies no mind. So about
+  half of the extra cost is validating the mind and about two fifths turning it into text: a hash
+  per component of the entity section (T7) removes the second only with a commit that also stops
+  encoding and validating a component that did not change. Under `mind@1` itself the minds of
+  dispersed beings stay small, 367 B a write on average, and a wake costs 478 µs against T4's 531
+  (all wakes, those that decide included). Both misses are recorded as they are.
 - **The writes that change only the body** (plan §10.4, evidence for T7). Of the beings a timed
-  tick wrote, the share whose `mind` stayed the same text: 96.7%, 97.5%, and 97.2% in "dispersed
-  10", "100", and "1,000" over a day (2,334, 38,012, and 403,293 writes), and 81.9% in
-  "concentrated 10, 3 × 3" (59 of 72), where beings see each other. A write in "dispersed 1,000"
-  held 643 B of body and 367 B of mind on average. Most writes are wakes that do not decide, the
+  tick wrote, each being's first included, the share whose `mind` stayed the same text: 96.7%,
+  97.5%, and 97.2% in "dispersed 10", "100", and "1,000" over a day (2,267 of 2,344, 37,147 of
+  38,112, and 392,905 of 404,289 writes), and 80.3% in "concentrated 10, 3 × 3" (61 of 76), where
+  beings see each other; counted again with `a5c7259`, after the benchmark had skipped each being's
+  first timed write. A write in "dispersed 1,000" held 643 B of body and 367 B of mind on average. Most writes are wakes that do not decide, the
   steps of a walk, which never touch a mind, so a hash per component would rehash the body alone
   in about 97 writes of 100.
 - **The ceiling of "dispersed 10,000"**, measured after the refactor with `bench/gate.ts --beings
@@ -1355,12 +1381,15 @@ Each planted defect failed these tests, planted one at a time in a copy of the r
   it runs anything; a child that returns JSON of another shape is reported with what it wrote; the
   first 1,500 ticks in a child are the same run in process; they keep every invariant, rule, and
   link of the ledger; the ledger counts the episodes the applied decisions proposed, being by
-  being; and the acceptance names each item a run misses, where it belongs.
+  being, and each belief with `model-prior-suspect` once, fed beliefs with and without it; and the
+  acceptance names each item a run misses, where it belongs.
 - **The benchmarks.** `mind-soak-bench.test.ts`: the soak's arguments, which refuse the reserve in
-  any spelling; the Spearman correlation, ties included; the summary of the hypotheses; and the
-  false claim's target, against a scan of every nearer cell. `mind-cost-bench.test.ts`: the cost
-  benchmark's arguments, and that a write counts as one of the body alone only when the mind is
-  the same text. `beings2-gate.test.ts`: the gate's `--beings`.
+  any spelling; the Spearman correlation, ties included; the summary of the hypotheses, memory
+  compared only on labels where both brains closed a spell; and the false claim's target, against
+  a scan of every nearer cell. `mind-cost-bench.test.ts`: the cost benchmark's arguments, which
+  refuse more than 1,223 ticks for the sleeping group; that each being's first timed write counts;
+  and that a write counts as one of the body alone only when the mind is the same text.
+  `beings2-gate.test.ts`: the gate's `--beings`, given once, and its verdict, on 1,000 beings only.
 
 Each of these planted defects, one at a time in a copy of the repository, failed the tests named:
 
@@ -1378,6 +1407,11 @@ Each of these planted defects, one at a time in a copy of the repository, failed
 | The false claim's hypothesis held on four labels of six | `mind-soak-bench`: four labels of six |
 | The false claim's target ordered by x before y | `mind-soak-bench`, once it had a case where the order matters; its first three did not tell the orders apart |
 | Every write counted as one of the body alone | `mind-cost-bench`: a write whose mind changed |
+| A label without a closed spell scored as a median of 0, the summary of `0f6b3db` | `mind-soak-bench`: labels where both brains closed one |
+| No being known before the first timed tick, the counter of `0f6b3db` | `mind-cost-bench`: each being's first timed write |
+| No belief counted as `model-prior-suspect` (`&& false`); a belief counted at every decision, the ledger of `0f6b3db` | `mind-evaluation-harness`: the count of model-prior-suspect, both |
+| The sleeping group's limit one tick too high | `mind-cost-bench`: more than 1,223 ticks |
+| `--beings` accepted twice; a verdict for any count | `beings2-gate`: the gate's statistics; its verdict on another count |
 
 **CI time.** Measured on the Codespace, one file at a time (Bun 1.4.4, 2026-10-28; indicative):
 `mind-evaluation.test.ts` takes 36 to 37 s, its two runs side by side on the machine's two threads
