@@ -76,6 +76,12 @@ function looselyPinned(dependencies: Record<string, string> = {}): string[] {
 /** One step of the typecheck script: tsc, forced onto Bun, on one project. */
 const TSC_STEP = /^bunx --no-install --bun tsc --noEmit -p (\S+)$/;
 
+/**
+ * The least time CI's test script gives a test that sets none of its own, about five times the
+ * slowest such test on CI (5.7 s, 2026-10-28), where Bun's default of 5 s failed two of them.
+ */
+const TEST_BUDGET_MS = 30_000;
+
 describe("script checks", () => {
   const scripts = new Set(["lint", "typecheck"]);
 
@@ -153,9 +159,13 @@ describe("package.json", () => {
     expect(manifest.scripts.typecheck).toMatch(
       /^bunx --no-install --bun tsc (?=.*--noEmit)(?=.*-p tsconfig\.json)/,
     );
-    // Only --parallel, which runs every file on one worker per core: any other argument, a path or
-    // an option such as --test-name-pattern, can narrow the suite CI runs.
-    expect(manifest.scripts.test).toBe("bun test --parallel");
+    // Only --parallel, which runs every file on one worker per core, and --timeout: any other
+    // argument, a path or an option such as --test-name-pattern, can narrow the suite CI runs.
+    const [, timeout] =
+      /^bun test --parallel --timeout (\d+)$/.exec(manifest.scripts.test ?? "") ?? [];
+    // Under --parallel a test's wall time grows with the runner's load, about twice its time
+    // alone; the slowest tests on Bun's default of 5 s took up to 5.7 s on CI and failed it.
+    expect(Number(timeout)).toBeGreaterThanOrEqual(TEST_BUDGET_MS);
   });
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {

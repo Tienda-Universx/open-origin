@@ -18,7 +18,7 @@
     "typecheck": "bunx --no-install --bun tsc --noEmit -p tsconfig.json && bunx --no-install --bun tsc --noEmit -p packages/engine/tsconfig.json && bunx --no-install --bun tsc --noEmit -p packages/agents/tsconfig.json",
     "lint": "bunx --no-install --bun biome check . && bunx --no-install --bun oxlint -c .oxlintrc.json --deny-warnings",
     "format": "bunx --no-install --bun biome check --write .",
-    "test": "bun test --parallel"
+    "test": "bun test --parallel --timeout 30000"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2",
