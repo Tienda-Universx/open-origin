@@ -80,7 +80,8 @@ the tick:
 - **Its mind.** A view of its episodes, beliefs, and relationships, with ages in simulated seconds
   (saturating at 2^31 − 1) instead of ticks, familiarity as it stands at that moment, from 0 to
   1000, and `next`, so that a brain can cite a record it creates in the same decision. A
-  relationship's `talk` is left out of the view until the being first addresses that being. A
+  relationship's `seen` is left out of the view until the being first perceives that being, and
+  its `talk` until the being first addresses it. A
   research injection appears in it as a message whose speaker is not visible: the kind `external`
   and the evidence bit 8 are C3, and the view shows them as `heard` and as told. That a message came
   with no visible speaker is the one thing the being can tell, a declared limit.
@@ -160,7 +161,8 @@ how many cited records it has lost, up to 2^31 − 1; its taints `tn` and `ex`; 
 
 A **relationship** is `{ id, who, f, seen, aff, tr, tn, talk, turns }`: its local id; the other
 being; `f`, its familiarity as seconds of co-presence, decayed by absences, as of the tick `seen` it
-was last perceived, saturating where it gives 1000; affinity from −1000 to 1000, starting at 0;
+was last perceived, saturating where it gives 1000; `seen` is 0, and `f` with it, while the being
+was only heard, never perceived; affinity from −1000 to 1000, starting at 0;
 trust in its claims from 0 to 1000, starting at 500; its taints; the tick the being last addressed
 it, 0 before it ever did, which no act can be, since the first tick a world computes is 1; and the
 acts addressed to it in the current conversation. A mind holds one relationship per being.
@@ -284,7 +286,9 @@ At a decision, in this order:
 1. the engine forgets what has faded by now, and updates familiarity, creating a relationship for
    each perceived being and each speaker heard that has none (affinity 0, trust 500): first the
    perceived beings in the order attention keeps them, then the speakers of the inbox by increasing
-   id, each evicting by the rule above when the store is full;
+   id, each evicting by the rule above when the store is full. Hearing is no co-presence: a
+   speaker's relationship records that no perception happened, `seen` 0, and hearing a speaker
+   the mind already knows changes nothing;
 2. the brain decides on the view of that mind;
 3. the operations apply in this order of kinds: `remember`, `recall`, `believe`, `revise`, `drop`,
    `relate`, each kind in the order given. New records take the ids `next`, `next + 1`, and so on in
@@ -371,12 +375,15 @@ namespace `none`, which defines no concept.
 Familiarity is a law. At each perception of `who`, if the seconds since `seen` are at most
 `relations.gap`, they are added to `f`, exactly, with no rounding; after a longer absence `f`
 decays over the whole absence and nothing is added; then `seen` becomes now. The first perception
-adds nothing. So a brain that decides every tick earns no more than one that decides every minute
-while the other stays in view, and familiarity lost to an absence stays lost. A relationship exists
-only after a percept or a message of that being. Affinity and trust change only by `relate`, by at most
-`relations.delta`, and the relationship takes the `tn` of what it cites. Knowing someone is
-familiarity; trusting its claims is a judgment the brain makes by checking its testimony against
-what it later sees.
+adds nothing, the first after a message included: a relationship a message created holds `seen` 0,
+and its first perception only sets `seen`, since the time since the message was never co-presence.
+A chunk is invalid if a relationship with `seen` 0 holds an `f` other than 0. A full store ranks
+such a relationship as seen longest ago. So a brain that decides every tick earns no more than one
+that decides every minute while the other stays in view, and familiarity lost to an absence stays
+lost. A relationship exists only after a percept or a message of that being. Affinity and trust
+change only by `relate`, by at most `relations.delta`, and the relationship takes the `tn` of what
+it cites. Knowing someone is familiarity; trusting its claims is a judgment the brain makes by
+checking its testimony against what it later sees.
 
 How the engine applies them (T5-5b): `relate`'s `aff` and `tr` are signed changes, absent meaning
 0, and each result saturates at its bounds, −1000 to 1000 and 0 to 1000. The relationship's `tn`

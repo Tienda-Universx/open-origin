@@ -20,6 +20,7 @@ import {
   type Episode,
   EVIDENCE,
   type LocalId,
+  NEVER_SEEN,
   type Relationship,
 } from "./records.ts";
 
@@ -42,10 +43,14 @@ export type EpisodeView = {
 export type BeliefView = Omit<Belief, "tn" | "ex">;
 
 /**
- * A relationship as a brain sees it: `f` is its familiarity now, from 0 to 1000, and `talk` the age
- * of the last act the being addressed to it, absent when it never did.
+ * A relationship as a brain sees it: `f` is its familiarity now, from 0 to 1000; `seen` the age of
+ * its last perception, absent when its being was only heard; and `talk` the age of the last act the
+ * being addressed to it, absent when it never did.
  */
-export type RelationshipView = Omit<Relationship, "tn" | "talk"> & { readonly talk?: number };
+export type RelationshipView = Omit<Relationship, "tn" | "seen" | "talk"> & {
+  readonly seen?: number;
+  readonly talk?: number;
+};
 
 export type MindView = {
   readonly next: LocalId;
@@ -114,7 +119,7 @@ function relationshipView(relationship: Relationship, ctx: MindContext): Relatio
     id: relationship.id,
     who: relationship.who,
     f: familiarity(relationship, ctx),
-    seen: ageAt(relationship.seen, ctx.moment),
+    ...(relationship.seen === NEVER_SEEN ? {} : { seen: ageAt(relationship.seen, ctx.moment) }),
     aff: relationship.aff,
     tr: relationship.tr,
     ...(relationship.talk === 0 ? {} : { talk: ageAt(relationship.talk, ctx.moment) }),

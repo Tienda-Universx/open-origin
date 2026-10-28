@@ -334,6 +334,15 @@ describe("viewOf", () => {
     expect(silent !== undefined && "talk" in silent).toBe(false);
   });
 
+  test("shows no age for a being only heard, never perceived, whose seen is 0", () => {
+    const subject = mindOf({
+      relations: [relationship(1, 41, { f: 60, seen: 40 }), relationship(2, 42, { seen: 0 })],
+    });
+    const [met, heard] = viewOf(subject, contextAt(100)).relations;
+    expect(met).toMatchObject({ seen: 60 });
+    expect(heard).toEqual({ id: 2, who: 42, f: 0, aff: 0, tr: 500, turns: 0 });
+  });
+
   test("shows an injection as a tell heard from no visible speaker, and external evidence as told", () => {
     const subject = mindOf({
       episodes: [external(1, { t: 5, r: 5, tn: 6 })],
