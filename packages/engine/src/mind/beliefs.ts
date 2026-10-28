@@ -44,7 +44,7 @@ export type BelieveOperation = {
 export type ReviseOperation = {
   readonly id: LocalId;
   readonly cr: number;
-  readonly ev?: readonly LocalId[];
+  readonly ev: readonly LocalId[];
 };
 
 export type BeliefOperations = {
@@ -152,7 +152,7 @@ function revisedBelief(
   cited: readonly MindRecord[],
   context: { readonly exposure: TaintMask; readonly now: number },
 ): { readonly belief: Belief; readonly uncited: readonly LocalId[] } {
-  const added = op.ev ?? [];
+  const added = op.ev;
   const merged = [...target.ev.filter((id) => !added.includes(id)), ...added];
   const cut = greatest(0, merged.length - MIND_BOUNDS.citations.max);
   const { tn, ex } = revisedTaints(target, cited, context.exposure);
@@ -264,7 +264,7 @@ class Draft {
   }
 
   revise(op: ReviseOperation): MindReason | undefined {
-    const added = op.ev ?? [];
+    const added = op.ev;
     const cited = this.#cite(added);
     if (typeof cited === "string") return cited;
     const target = this.mind.beliefs.find((belief) => belief.id === op.id);

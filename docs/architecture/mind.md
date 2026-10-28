@@ -128,10 +128,11 @@ mental content.
 | `mind.exposure` | C3 | The being's lifetime exposure: a taint mask that never shrinks |
 | `mind.quota` | C1 | `{ day, said, woken }`: acts said and wakes by hearing in that simulated day, counted as the daily prune of T4 counts it, `⌊seconds / day length⌋` |
 
-An **episode** is `{ id, kind, t, cell, who?, v?, p?, act?, band?, tn?, ex?, w, r }`: its local id;
-its kind; the tick it happened; the cell; the being it concerns or who spoke; a value; for a
-message, its proposition, act, and the speaker's confidence band; for a message, its taints; its
-importance `w` from 0 to 1000; and the tick `r` its salience is anchored at.
+An **episode** is `{ id, kind, t, cell?, who?, v?, p?, act?, band?, tn?, ex?, w, r }`: its local id;
+its kind; the tick it happened; the cell, which an `external` episode does not have; the being it
+concerns or who spoke; a value; for a message, its proposition, act, and the speaker's confidence
+band; for a message, its taints; its importance `w` from 0 to 1000; and the tick `r` its salience
+is anchored at.
 
 | Kind | Made from | Content |
 |---|---|---|
@@ -269,7 +270,7 @@ An intention of `beings@2` may carry `mind`, with at most `mind.ops` operations 
 | `remember: [{ percept, w }]` | An episode from a percept of this decision, copied by the engine: `{ being: index }`, `{ heard: index }`, `{ food: cell }` within the window, or `{ outcome: true }` |
 | `recall: [id]` | Refreshes an episode |
 | `believe: [{ p, cr, ev, rule }]` | A belief citing live records; adopting a proposition already held revises it |
-| `revise: [{ id, cr, ev? }]` | New confidence, and new evidence added |
+| `revise: [{ id, cr, ev }]` | New confidence, and new evidence added |
 | `drop: [id]` | Removes a belief |
 | `relate: [{ who, aff?, tr?, because }]` | Changes a relationship, citing in `because` one to three live records, at least one of which involves `who` |
 
@@ -635,7 +636,15 @@ Targets, measured with the named scenarios of [T4's benchmark](beings.md#the-sca
 being of "dispersed 1,000" **the gate's mind**, the record mix a `mind@1` being holds, decided
 here: 5 `food`, 1 `being`, 1 `ate`, and 1 `heard` episode of a `tell`; 8 beliefs of `m1.food-at`,
 each citing 2 records; 6 relationships; an empty inbox, which every decision consumes; typical
-values and propositions without `neg`. It measured 2,680 B while planning, so a being is about
+values and propositions without `neg`. Its values, which tests build exactly: distinct local ids of
+three digits (the records take 977 to 998, and `next` is 999); every tick 99,999,999 (`t`, `r`,
+`u`, `seen`, `talk`, and `quota.day`); every cell [−99,999, −99,999]; entity ids of five digits,
+99,999 and below, one per relationship; each proposition `{ p: "m1.food-at", a: [{ c: cell }],
+v: 2 }`. The `food` episodes have `v` 2, the `being` episode `v` 1, the `ate` episode `v` 25, and
+the `heard` episode `act` "tell", `band` 2, `tn` and `ex` 0, and no `v`; every episode has `w` 600.
+Each belief has `cr` 800, `src` 1, two episodes in `ev`, `lost` 0, `tn` and `ex` 0, `dp` 1, and no
+`who`. Each relationship has `f` 3,600, `aff` 100, `tr` 600, `tn` 0, and `turns` 1. The exposure is
+0, and the quota `{ said: 5, woken: 2 }`. It measures 2,680 B, so a being is about
 3.2 KB, and the estimate from T4's 112.4 KB at p99 is about 0.7 MB, below the trigger. If the
 measured p99 hashed is below 1 MB, the entity section stays in T7. If not, the capacities come down
 first (the largest mind at 6 episodes, 6 beliefs, and 4 relationships measured 3,096 B with

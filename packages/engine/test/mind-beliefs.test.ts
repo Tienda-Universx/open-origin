@@ -307,7 +307,7 @@ describe("revise", () => {
     ["a citation of a record the mind does not hold", { id: 5, cr: 1, ev: [99] }, "unknown_record"],
     ["a citation repeated", { id: 5, cr: 1, ev: [3, 3] }, "mind_malformed"],
     ["nothing new", { id: 5, cr: 1, ev: [1, 2] }, "premise_order"],
-    ["no evidence at all", { id: 5, cr: 1 }, "premise_order"],
+    ["no evidence at all", { id: 5, cr: 1, ev: [] }, "premise_order"],
     ["a citation of a belief of a higher id", { id: 5, cr: 1, ev: [6] }, "premise_order"],
     ["a citation of itself", { id: 5, cr: 1, ev: [5] }, "premise_order"],
   ] as const)("refuses %s", (_name, op, reason) => {
