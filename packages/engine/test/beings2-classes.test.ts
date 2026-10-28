@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { copySensed } from "../src/beings/classes.ts";
+import { copyAllowed, copySensed } from "../src/beings/classes.ts";
 import { beings, mind } from "../src/index.ts";
 import { being2, gateMind, idler2 } from "./support/beings2-world.ts";
 import {
@@ -200,6 +200,33 @@ describe("the classification registry", () => {
       outcome: { result: "none", tick: 0, reason: "" },
     });
     expect(copy.cell).not.toBe(self.cell);
+  });
+
+  test("lets an allowlist copy of a mind hold no taint, exposure, or C3 kind, and all the rest", () => {
+    const node = memberOf(BEING_CLASSES, "mind") as ClassNode;
+    const copy = copyAllowed(node, FULL_MIND) as mind.Mind;
+    expect(secretPaths(node, FULL_MIND).length).toBeGreaterThan(5);
+    expect(secretPaths(node, copy)).toEqual([]);
+    // Everything else is there: only the C3 members are missing, the kind external among them.
+    const { tn: _tn, ex: _ex, ...untainted } = FULL_MIND.beliefs[0] as mind.Belief;
+    expect(copy.beliefs[0] as unknown).toEqual(untainted);
+    expect(Object.keys(copy).sort()).toEqual([
+      "beliefs",
+      "episodes",
+      "inbox",
+      "next",
+      "quota",
+      "relations",
+    ]);
+    expect(copy.episodes[5]).not.toHaveProperty("kind");
+    expect(copy.inbox[0] as unknown).toEqual({
+      who: 41,
+      t: 3,
+      cell: [1, 1],
+      act: "tell",
+      p: foodAt(1, 1),
+      band: 1,
+    });
   });
 
   test("classifies every event the beings layer emits, and no event it does not", () => {

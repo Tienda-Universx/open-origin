@@ -295,8 +295,11 @@ function copyLeaf(value: unknown): unknown {
   return Array.isArray(value) ? value.map((entry: unknown) => entry) : value;
 }
 
-/** A copy of what `node` allows of `value`: never a member classified C3, nor one it does not name. */
-function copyAllowed(node: ClassNode, value: unknown): unknown {
+/**
+ * A copy of what `node` allows of `value`, a value the engine built: never a member classified C3,
+ * nor one it does not name.
+ */
+export function copyAllowed(node: ClassNode, value: unknown): unknown {
   if (node.kinds !== undefined) {
     const kind = (value as Members).kind;
     const of = node.kinds.find((entry) => entry.kind === kind);

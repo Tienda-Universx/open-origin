@@ -7,14 +7,16 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
-  type beings,
+  beings,
   type EngineEvent,
+  mind,
   readView,
   type Seed,
   step,
   type World,
 } from "@open-origin/engine";
 import { BEHAVIORS } from "../src/brain/parameters.ts";
+import { utilityController } from "../src/index.ts";
 import { MINDLESS_BRAIN, mindlessRuleset, mindlessUtility } from "./support/mindless.ts";
 import {
   beingsIn,
@@ -83,6 +85,58 @@ function run(world: World, strip: (being: beings.Being) => beings.Being): Shown[
   return shown;
 }
 
+/** What a brain sensed at a decision of T4's kind: the senses of beings@1, the arrays as lists. */
+type Sensed = {
+  readonly self: unknown;
+  readonly light: number;
+  readonly window: unknown;
+  readonly draws: readonly number[];
+};
+
+/** The members of T4's senses of `senses`, with the three traits of T4 and plain lists. */
+function sensedOf(senses: Parameters<beings.Controller["decide"]>[0]): Sensed {
+  const { appetite, sleepiness, curiosity } = senses.self.traits;
+  const { origin, side, edgeMs, foodCue } = senses.window;
+  return {
+    self: { ...senses.self, traits: { appetite, sleepiness, curiosity } },
+    light: senses.light,
+    window: { origin, side, edgeMs: [...edgeMs], foodCue: [...foodCue] },
+    draws: [...senses.draws],
+  };
+}
+
+/** `inner`, which records in `sink` what it senses at every decision, deciding unchanged. */
+function recording<C extends beings.Controller | beings.Controller2>(inner: C, sink: Sensed[]): C {
+  return {
+    ...inner,
+    decide: (senses: Parameters<beings.Controller2["decide"]>[0]) => {
+      sink.push(sensedOf(senses));
+      return inner.decide(senses);
+    },
+  };
+}
+
+/** Runs the subject under beings@2 and the baseline, or beings@1 and utility@1; what it sensed. */
+function sensedRun(two: boolean): Sensed[] {
+  const sink: Sensed[] = [];
+  const world = two
+    ? patchWorld2(
+        SEED,
+        beings.createBeingsRuleset({
+          controllers: { s1: recording(mindlessUtility(), sink) },
+          rules: "beings@2",
+        }),
+        false,
+      )
+    : patchWorld(
+        SEED,
+        beings.createBeingsRuleset({ controllers: { s1: recording(utilityController(), sink) } }),
+        false,
+      );
+  for (let tick = 1; tick <= TICKS; tick += 1) step(world, tick === 1 ? spawnsAt(1, SUBJECT) : []);
+  return sink;
+}
+
 describe("the mindless baseline", () => {
   test("is utility@1 under its own brain version, with its five behaviors", () => {
     const brain = mindlessUtility();
@@ -110,14 +164,17 @@ describe("the mindless baseline", () => {
     // Only what beings@2 adds differs: neutral traits, and minds as empty as at their spawn.
     for (const being of beingsIn(two) as beings.Being2[]) {
       expect(being.traits).toMatchObject({ sociability: 1000, credulity: 1000, retention: 1000 });
-      expect(being.mind).toEqual({
-        ...being.mind,
-        episodes: [],
-        beliefs: [],
-        relations: [],
-        inbox: [],
-      });
+      expect(being.mind).toEqual(mind.newMind(0));
     }
     expect(readView(two).tick).toBe(TICKS);
+  });
+
+  test("senses at every decision on beings@2 what it senses on beings@1, but the new traits", () => {
+    const one = sensedRun(false);
+    const twice = sensedRun(true);
+    expect(one.length).toBeGreaterThan(20);
+    expect(twice.length).toBe(one.length);
+    for (const [index, sensed] of one.entries())
+      expect([index, twice[index]]).toEqual([index, sensed]);
   });
 });
