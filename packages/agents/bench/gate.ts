@@ -350,14 +350,20 @@ function main(measured: number, count: number): void {
     0.99,
   );
   const below = p99 < TRIGGER_BYTES;
-  const verdict = below
+  console.log(
+    `\nThe gate: p99 hashed under beings@2 is ${kb(p99)} KB, ${below ? "below" : "at or above"} 1 MB (${kb(TRIGGER_BYTES)} KB): ${gateVerdict(p99, cells.length)}.`,
+  );
+}
+
+/**
+ * What the gate decides from the p99 of the bytes hashed per tick, `p99`, of `count` dispersed
+ * beings: it decides on "dispersed 1,000" alone; any other count measures a ceiling.
+ */
+export function gateVerdict(p99: number, count: number): string {
+  if (count !== BEINGS) return `a ceiling of ${count} beings, which decides nothing`;
+  return p99 < TRIGGER_BYTES
     ? "the entity section stays in T7"
     : "stop: the capacities come down first, by the maintainer's decision";
-  // The gate decides on "dispersed 1,000"; any other count measures a ceiling, which decides nothing.
-  const decision = cells.length === BEINGS ? verdict : `a ceiling of ${cells.length} beings`;
-  console.log(
-    `\nThe gate: p99 hashed under beings@2 is ${kb(p99)} KB, ${below ? "below" : "at or above"} 1 MB (${kb(TRIGGER_BYTES)} KB): ${decision}.`,
-  );
 }
 
 if (import.meta.main) {
