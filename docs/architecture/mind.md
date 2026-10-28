@@ -20,7 +20,7 @@ whose `beings@1` stays as it is.
 | Speech and its templates | `packages/engine/src/beings`, `packages/agents/src/speech` | T5-6 |
 | The brain `mind@1` and the calibration | `packages/agents/src/brain` | T5-7 |
 | Determinism, observers, and adversarial tests | `packages/agents/test`, `packages/engine/test/support` | T5-8 |
-| The evaluation, the cost, and the close | `packages/agents/{test,bench}` | T5-9 |
+| The evaluation, the cost, and the close | `packages/agents/{test,bench}`, `src/beings/{senses,locomotion}.ts` | T5-9 |
 
 ## Layers
 
@@ -1001,6 +1001,127 @@ of every other being, searched 1,550 cells away, reached nutrition 0, and never 
 only its window can greet a being it never sees. The evaluation's item "every being greeted and was
 greeted" fails on a label that places a being so.
 
+## Evaluation results
+
+The evaluation ran once, at `5c59a0e` (2026-10-28), after the adversarial work of T5-8, with the
+laws and the brain frozen in T5-7, which `mind-freeze.test.ts` still pins; the refactor of T5-9
+(`926b20e`, [Cost](#cost)) changed no output. Each run is the preregistered T5 scenario of its
+label, 63,000 ticks (10 days), audit off.
+
+### The harness
+
+`packages/agents/test/support/mind-evaluation.ts` is the one entry point that runs the default and
+held-out labels of T5. It starts a child process (`mind-evaluation-child.ts`) that runs
+`mind-evaluation-run.ts`, and refuses the reserve, `heldout/7` to `/12`, and every label outside the
+preregistration; `bench/mind-calibration.ts` still refuses the default and held-out labels. A run
+computes, without judging:
+
+- **T4's items**, with T4's runner (`support/metrics.ts`); a rejected mental operation rejects its
+  whole intention, so it counts as a rejected intention.
+- **The items of the mind, from the ledger** (`support/mind-ledger.ts`). `mind.changed` names the
+  records each decision encoded, formed, revised, and related, and `mind.provenance` what each live
+  one cites; what a cited record is (kind, cell, value, speaker, act, proposition, confidence,
+  evidence, trust), the ledger does not carry, so it is read from the state after the tick that
+  created or changed it. "Formed from its own observations" counts new beliefs, `formed`, that cite
+  a `food`, `being`, `ate`, or `failed` episode; "from testimony", believes and revises that cite a
+  `heard` episode of a `tell`, a revise by the citations it adds; "revised down", a revise of an
+  `m1.food-at` belief that lowers its confidence and adds, at its cell, a `food` episode of another
+  band or a `failed` one of `no_food` or `food_gone`; and "trust checked", a related relationship
+  whose trust changed, citing a belief its being told, with told among its evidence, and a `food`,
+  `ate`, or `failed` episode at that belief's cell. Two kinds of record leave the state in the
+  decision that makes them, and none did in any run: an episode a full store evicts at once, whose
+  kind its percept gives, and a belief evicted at once, which the ledger gives no citations for and
+  which is classed by its rule.
+- **Speech**: greetings and conversations from `speech.uttered` and `speech.delivered`.
+- **Integrity**: every belief operation against its rule (`mind-rules-check.ts`); no belief with
+  `model-prior-suspect`; and the invariants of the minds (`MindInvariants`: the flows of taints, the
+  bounds, the quotas, each new record against its percept) and the ledger oracle at every tick that
+  wrote a chunk or emitted an event, on the beings of the chunks it wrote: any other being holds the
+  record it held at its last check, since every message, delivery, and change of a mind writes the
+  being's chunk.
+- **Diversity**, from the state at the last tick.
+
+Before the evaluation ran, the whole harness ran on `calibration/1` and `/2` in place of the two
+labels of CI, in a copy of the repository: every item held, every count the ledger gives equaled,
+being by being, the one the proposed operations give, the population's counts were those of
+calibration run 13 (conversations 48 and 60; revised down 25 and 26; from testimony 54 and 60;
+trust checked 43 and 24), and the resume of the snapshot kept at tick 31,500 passed.
+
+### The default label and `heldout/1`
+
+`packages/agents/test/mind-evaluation.test.ts` runs both in CI and pins what they gave: the
+acceptance, each being's counts, the conversations, the decisions, the ticks checked, and the
+checksum of every tick (`cc98bd81…` and `26aa8e46…`). Over the eight beings, the least of each
+item:
+
+| Label | Incapacitated, rest 0, rejected | Meal cells; outside the birth window | Meals ≥ 300,000 | Sleeps; rested wakes | Walked | Lowest nutrition | Food, being episodes | Beliefs seen | Relationships at the end | Greeted; was greeted | Acceptance |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `default` | 0, 0, 0 | 13; 8 of 8 | 9 | 30; 30 | 744 | 495,601 | 17, 16 | 13 | 6 | 10; 8 | pass |
+| `heldout/1` | 0, 0, 0 | 12; 8 of 8 | 11 | 30; 30 | 596 | 532,705 | 34, 0 | 29 | 1 | 0; 0 | fail: being 5, being episode, greeted, was greeted |
+
+| Label | Conversations | Revised down | From testimony | Trust checked | Regrown and eaten | Integrity: rules, oracle, invariants, prior-suspect | Ticks checked | Decisions | Diverse |
+|---|---|---|---|---|---|---|---|---|---|
+| `default` | 66 | 26 | 71 | 36 | yes | 0, 0, 0, 0 | 6,899 | 1,644 | yes |
+| `heldout/1` | 15 | 23 | 25 | 10 | yes | 0, 0, 0, 0 | 5,170 | 1,058 | yes |
+
+Health never fell on either label: it was full at every event of every being and at the last tick.
+The run of the default label kept its snapshot at tick 31,500, and the determinism suite's resume
+child, a fresh process under audit, gave the same 1,500 records and the same final snapshot.
+
+**`heldout/1` fails one preregistered item, for one being: the calibration's declared limit, met
+on a registered label.** Being 5 decided 114 times in ten days and perceived another being at two
+of those decisions: being 8, idle 19 cells away, toward which it walked to greet it, and at the
+next, the same being walking 10 cells away, which `mind@1` never approaches. It never stood within
+`speech.range` of a being awake, so it never spoke and was never spoken to: it encoded no `being`
+episode, since `mind@1` remembers the being it meets as the hearer of its act, and neither greeted
+nor was greeted. It holds one relationship, with being 8, from those perceptions. A rerun of
+`heldout/1` with being 5's senses recorded, which reproduced the run's checksum trail, found this.
+Every other item holds for every being, and every item of the population, integrity, and diversity
+holds. The failure is recorded as it is: changing laws or brain now would be tuning to the
+evaluation and would burn both labels, so they stay frozen, and the test pins the failure as it
+was evaluated.
+
+### The soak
+
+`bun packages/agents/bench/mind-soak.ts` ran once, the 18 runs one at a time in 218 s: on each
+held-out label, `mind@1` for ten days with the soak's measures, the amnesic ablation for ten days,
+and the false claim for 18,900 ticks. Every run kept every rule and invariant, the ledger oracle
+found nothing, and no belief had `model-prior-suspect`. The acceptance of the evaluation on each
+label, informative only, since only the default label and `heldout/1` are preregistered for it:
+
+| Label | Beings missing an item | Population |
+|---|---|---|
+| `heldout/1` | 5: being episode, greeted, was greeted | every item |
+| `heldout/2` | none | no cell regrew to half its deposit and was eaten again |
+| `heldout/3` | none | every item |
+| `heldout/4` | 2: being episode, relationship at the end, greeted, was greeted; 3: beliefs seen; 5: outside the birth window, beliefs seen; 8: outside the birth window | every item |
+| `heldout/5` | every being: meals ≥ 300,000; 1 also beliefs seen; 6 also outside the birth window | every item |
+| `heldout/6` | none | every item |
+
+The informative hypotheses, recorded as they came out:
+
+- **Memory: not supported, and nearly untestable here.** Under `mind@1` the beings were hungry with
+  no food in sight in three spells in all, on `heldout/2`, `/3`, and `/6`, which ended in a bite
+  after 356, 1,688, and 505 ticks; under the amnesic ablation, after 354, 1,591, and 505, with one
+  more spell still open at the end on `heldout/4`. The median was shorter under `mind@1` on no
+  label of six. As calibration found, a being is seldom hungry with no food in sight.
+- **A false claim: holds, on five labels of six.** The being of lowest id believed the claim at
+  the tick it woke for it, 6,301, or at its next decision (6,451 and 6,367 on `heldout/2` and
+  `/6`), at 540 to 700, its credulity times 0.6; it revised it below 500 99 to 935 ticks after the
+  injection and dropped it 360 to 1,362 ticks after it, all within 2 L. On `heldout/5` it never
+  believed it:
+  a claim with no band weighs as band 1, and with credulity 832 it gives ⌊600 · 1000 · 832 /
+  10^6⌋ = 499, below the 500 that `mind@1` asks of a testimony.
+- **Credulity: not supported.** Of 213 beliefs from testimony judged one day after they formed,
+  14 were false by the reference truth; across the 46 beings with at least one, the Spearman
+  correlation of credulity with the share of them that were false is −0.055, where the hypothesis
+  expected a positive one.
+
+**The ablation of whole decisions**, on every decision of being 1 that proposed a belief operation:
+39, 37, 13, 12, 21, and 20 decisions, one operation each, 142 in all, of which 20 cite a record
+that ablation (a) can remove, a relationship or the message a heard episode copies; (a) and (b)
+missed none.
+
 ## Cost
 
 Targets, measured with the named scenarios of [T4's benchmark](beings.md#the-scale-benchmark):
@@ -1221,3 +1342,50 @@ Each planted defect failed these tests, planted one at a time in a copy of the r
 | An injection without `human-external` | `beings2-laundering`, `mind-false-claim`, `mind-determinism` |
 | A belief operation that is not its rule | `mind-determinism`, `mind-fuzz`, `mind-false-claim`, `mind-world` |
 | A speaker that never stops; many speakers to one hearer | `beings2-speech`; `beings2-delivery`, `beings2-fuzz` |
+
+**How T5-9 checks its rows** (tests in `packages/agents/test`):
+
+- **The evaluation.** `mind-evaluation.test.ts` runs the default label and `heldout/1` in two child
+  processes started before its first test, pins what each gave ([Evaluation
+  results](#evaluation-results)), and resumes the default run's snapshot of tick 31,500 in a fresh
+  process under audit.
+- **The harness.** `mind-evaluation-harness.test.ts`, on `calibration/1` only: the run refuses the
+  reserve, every label outside the preregistration, an unknown brain, a count of ticks that is not
+  positive, and a false claim under the amnesic ablation, and the child refuses the reserve before
+  it runs anything; a child that returns JSON of another shape is reported with what it wrote; the
+  first 1,500 ticks in a child are the same run in process; they keep every invariant, rule, and
+  link of the ledger; the ledger counts the episodes the applied decisions proposed, being by
+  being; and the acceptance names each item a run misses, where it belongs.
+- **The benchmarks.** `mind-soak-bench.test.ts`: the soak's arguments, which refuse the reserve in
+  any spelling; the Spearman correlation, ties included; the summary of the hypotheses; and the
+  false claim's target, against a scan of every nearer cell. `mind-cost-bench.test.ts`: the cost
+  benchmark's arguments, and that a write counts as one of the body alone only when the mind is
+  the same text. `beings2-gate.test.ts`: the gate's `--beings`.
+
+Each of these planted defects, one at a time in a copy of the repository, failed the tests named:
+
+| Planted defect | Tests that failed |
+|---|---|
+| The run accepts any label | `mind-evaluation-harness`: five refusals and the child's refusal of the reserve |
+| The ledger counts a `being` episode as `food`, and the reverse | `mind-evaluation-harness`: the counts of the proposed operations |
+| The invariants and the oracle never run | `mind-evaluation-harness`: every invariant at every tick that changed the world |
+| The mirror of the chunks never reads what a step wrote | `mind-evaluation-harness`: 21 tests, the child against the process among them |
+| The acceptance drops "regrown and eaten" | `mind-evaluation-harness`: that item |
+| A `heard` episode counts as an observation of its own | `mind-evaluation`: default, `heldout/1` |
+| No revision counts as down | `mind-evaluation`: default, `heldout/1` |
+| The run keeps the records from the snapshot's own tick | `mind-evaluation`: the resume |
+| Ranks that ignore ties | `mind-soak-bench`: the ranks, and the correlation with ties |
+| The false claim's hypothesis held on four labels of six | `mind-soak-bench`: four labels of six |
+| The false claim's target ordered by x before y | `mind-soak-bench`, once it had a case where the order matters; its first three did not tell the orders apart |
+| Every write counted as one of the body alone | `mind-cost-bench`: a write whose mind changed |
+
+**CI time.** Measured on the Codespace, one file at a time (Bun 1.4.4, 2026-10-28; indicative):
+`mind-evaluation.test.ts` takes 36 to 37 s, its two runs side by side on the machine's two threads
+(alone, 21.1 s for the default label, whose run keeps the snapshot and 1,500 records, and 12.1 s
+for `heldout/1`; the resume 3.2 s); `mind-evaluation-harness.test.ts` 2.2 to 2.6 s; the tests of
+the benchmarks under 1 s together. Ten days of `calibration/2` under the evaluation took 37 s
+while each observer copied the world for itself, and 18.5 s once they shared one copy of the
+chunks, read again only where a step wrote, with the same output. The refactor of the window's edges shortened the files that run beings: of 13 such
+files, together 48.2 s before and 42.0 s after, `survival.test.ts` went from 20.1 to 17.7 s. CI
+ran `bun test` in 61.9 s in T5-8, against the budget of 70 s; the new file adds about 40 s of CPU
+on a runner of four, so the slower runner may come close to the budget, which only CI can tell.
