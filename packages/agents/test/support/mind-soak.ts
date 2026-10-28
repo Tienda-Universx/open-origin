@@ -8,7 +8,6 @@ import {
   type StepResult,
   worldgen,
 } from "@open-origin/engine";
-import { mindController } from "../../src/index.ts";
 import { ablationA, ablationB, formationsOf } from "./mind-ablation.ts";
 import type { Senses2 } from "./mind-senses.ts";
 import type { ScenarioWorld } from "./scenario.ts";
@@ -341,7 +340,3 @@ export function amnesicLife(): beings.LifeConfig2 {
   const speech = { ...species.speech, perDay: 0 };
   return { ...life, species: [{ ...species, mind: mindLaws, speech }] };
 }
-
-/** `mind@1` for `species`, the soak's brain. */
-export const mindOf = (species: beings.Species2, dayLength: number) =>
-  mindController({ species, dayLength });
