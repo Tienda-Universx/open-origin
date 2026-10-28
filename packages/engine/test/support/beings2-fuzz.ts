@@ -160,7 +160,10 @@ class Operations {
   }
 }
 
-/** Relates, half the time, a perceived being, citing the episode it remembers of it. */
+/**
+ * Relates, half the time, a perceived being, citing the episode it remembers of it and, half of
+ * those times, one of its beliefs too, which may carry taints into the relationship.
+ */
 function relateSeen(ops: Operations, senses: Senses2, random: Sfc32): void {
   const seen = senses.perceived.beings;
   if (seen.length === 0 || random.below(2) === 0) return;
@@ -168,7 +171,10 @@ function relateSeen(ops: Operations, senses: Senses2, random: Sfc32): void {
   const id = ops.keep({ being: index }, random.below(1001));
   const who = (seen[index] as beings.PerceivedBeing).id;
   const change = () => random.below(501) - 250;
-  ops.add("relate", { who, aff: change(), tr: change(), because: [id] });
+  const { beliefs } = senses.mind;
+  const also =
+    beliefs.length > 0 && random.below(2) === 0 ? [beliefs[random.below(beliefs.length)]?.id] : [];
+  ops.add("relate", { who, aff: change(), tr: change(), because: [id, ...also] });
 }
 
 /** Believes what it hears, citing the message it remembers. */
@@ -289,6 +295,7 @@ export function injectionsAt(
 /** An injection the engine accepted: the being, the tick, and its message's proposition and lineage. */
 type Accepted = {
   readonly being: number;
+  readonly cell: Cell;
   readonly tick: number;
   readonly p: unknown;
   readonly tn: number;
@@ -302,9 +309,70 @@ function acceptedOf(record: TickRecord): Accepted[] {
   return record.commands
     .filter(({ seq }) => !refused.includes(seq))
     .map(({ payload }) => {
-      const { being, p, taints } = payload as { being: number; p: unknown; taints: number };
-      return { being, tick: record.tick, p, tn: taints | mind.TAINTS.humanExternal };
+      const { being, cell, p, taints } = payload as {
+        being: number;
+        cell: Cell;
+        p: unknown;
+        taints: number;
+      };
+      return { being, cell, tick: record.tick, p, tn: taints | mind.TAINTS.humanExternal };
     });
+}
+
+/**
+ * Reports an accepted injection that was not addressed to a being standing at its cell when the
+ * tick began, the only being it may reach.
+ */
+function checkAddressed(
+  accepted: readonly Accepted[],
+  record: TickRecord,
+  problems: string[],
+): void {
+  for (const it of accepted) {
+    const target = record.before.get(it.being);
+    if (target === undefined || target.cell[0] !== it.cell[0] || target.cell[1] !== it.cell[1])
+      problems.push(`tick ${record.tick}: an injection reached ${it.being}, not at ${it.cell}`);
+  }
+}
+
+/**
+ * Why the relationship of `held` that a provenance `entry` lists was related against the rules:
+ * cited records no longer live, none of which involves its being, or a lineage without theirs.
+ */
+function relatedProblems(held: Mind, entry: Provenance["records"][number]): string[] {
+  const relationship = held.relations.find((r) => r.id === entry.id);
+  if (relationship === undefined || entry.ev.length === 0) return [];
+  const cited = entry.ev.map((local) => mind.recordOf(held, local));
+  const live = cited.filter((it): it is mind.MindRecord => it !== undefined);
+  const problems: string[] = [];
+  if (live.length < cited.length) problems.push("cites a record no longer live");
+  if (!live.some((it) => mind.involves(it, relationship.who)))
+    problems.push(`was related citing no record of ${relationship.who}`);
+  if (!live.every((it) => covers(relationship.tn, mind.taintsOf(it).tn)))
+    problems.push("lacks the lineage of what it cites");
+  return problems;
+}
+
+/** Reports each relationship a `relate` of the tick changed against the rules, by its evidence. */
+function checkRelated(record: TickRecord, problems: string[]): void {
+  for (const { type, payload } of record.events) {
+    if (type !== "mind.provenance") continue;
+    const { id, records } = payload as Provenance;
+    const held = record.after.get(id)?.mind;
+    if (held === undefined) continue;
+    for (const entry of records)
+      for (const problem of relatedProblems(held, entry))
+        problems.push(`tick ${record.tick}, being ${id}: relationship ${entry.id} ${problem}`);
+  }
+}
+
+/** Reports a chunk holding more beings than its capacity after the tick. */
+function checkCapacity(record: TickRecord, capacity: number, problems: string[]): void {
+  const counts = new Map<string, number>();
+  for (const being of record.after.values())
+    counts.set(chunkOf(being.cell), (counts.get(chunkOf(being.cell)) ?? 0) + 1);
+  for (const [key, count] of counts)
+    if (count > capacity) problems.push(`tick ${record.tick}: chunk ${key} holds ${count}`);
 }
 
 // The invariants.
@@ -404,15 +472,13 @@ export class MindInvariants {
 
   /** Every problem of `record`, after the tick, each naming its tick and being. */
   check(record: TickRecord): string[] {
-    this.#injections.push(...acceptedOf(record));
+    const accepted = acceptedOf(record);
+    this.#injections.push(...accepted);
     for (const event of record.events) this.#readEvent(event, record.tick);
     const problems: string[] = [];
-    const counts = new Map<string, number>();
-    for (const being of record.after.values())
-      counts.set(chunkOf(being.cell), (counts.get(chunkOf(being.cell)) ?? 0) + 1);
-    for (const [key, count] of counts)
-      if (count > this.#laws.capacity)
-        problems.push(`tick ${record.tick}: chunk ${key} holds ${count}`);
+    checkAddressed(accepted, record, problems);
+    checkRelated(record, problems);
+    checkCapacity(record, this.#laws.capacity, problems);
     const laws = (this.#laws.species[0] as beings.Species2).mind;
     for (const [id, being] of record.after) {
       const report: Report = (problem) =>
@@ -420,10 +486,18 @@ export class MindInvariants {
       const before = record.before.get(id);
       checkBounds(being.mind, laws, report);
       if (before !== undefined) checkGrowth(being.mind, before.mind, report);
+      this.#checkExposure(being, report);
       this.#checkNew(being, record, report);
       this.#outcomes.set(`${id}/${being.outcome.tick}`, being.outcome);
     }
     return problems;
+  }
+
+  /** The exposure holds the lineage of every message delivered to the being, from its delivery on. */
+  #checkExposure(being: Being2, report: Report): void {
+    for (const { being: to, tn, tick } of this.#injections)
+      if (to === being.id && !covers(being.mind.exposure, tn))
+        report(`the exposure lacks the injection of tick ${tick}`);
   }
 
   /** Keeps the meals and counts of an event of the tick. */
