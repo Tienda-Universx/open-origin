@@ -24,7 +24,7 @@ import type { BeingsChunk } from "./chunk.ts";
 import { DIRECTIONS, type SensedWindow } from "./contracts.ts";
 import { takenAt } from "./food.ts";
 import type { Species } from "./laws.ts";
-import { stepDuration } from "./locomotion.ts";
+import { stepMilliseconds } from "./locomotion.ts";
 import { greatest, least } from "./rates.ts";
 
 /** What sensing needs: the tick's terrain, the species, where the being is, and the world's chunks. */
@@ -130,32 +130,49 @@ function subtractTaken(
   }
 }
 
-/** What computes the edges of a window: its side, ground, liquid level, and species. */
+/**
+ * What computes the edges of a window: its side, ground, liquid level, and species, and `steps`,
+ * the (dx, dy) of each direction of DIRECTIONS at 2·d and 2·d + 1.
+ */
 type EdgeInput = {
   readonly side: number;
   readonly ground: Ground;
   readonly level: number;
   readonly species: Species;
+  readonly steps: Int32Array;
 };
+
+/**
+ * DIRECTIONS as a typed array of (dx, dy) pairs, read once per window: on Bun, reading the frozen
+ * pairs at every edge took about three quarters of the time of a window's edges.
+ */
+function directionSteps(): Int32Array {
+  const steps = new Int32Array(16);
+  for (let d = 0; d < 8; d += 1) {
+    const direction = DIRECTIONS[d] as readonly [number, number];
+    steps[2 * d] = direction[0];
+    steps[2 * d + 1] = direction[1];
+  }
+  return steps;
+}
 
 /** The duration of the step from window cell `from` to the cell `to`, both inside the world. */
 function stepBetween(window: EdgeInput, from: number, to: number, diagonal: boolean): number {
   const a = window.ground.elevation[from] as number;
   const b = window.ground.elevation[to] as number;
-  return stepDuration(window.species.locomotion, {
-    rise: greatest(a, b) - least(a, b),
-    depth: greatest(window.level - b, 0),
+  return stepMilliseconds(
+    window.species.locomotion,
+    greatest(a, b) - least(a, b),
+    greatest(window.level - b, 0),
     diagonal,
-  });
+  );
 }
 
 /** The duration of the orthogonal step from window cell `index` by `d` (0, 2, 4, or 6), or −1. */
 function orthogonalEdge(window: EdgeInput, index: number, d: number): number {
-  const { side, ground } = window;
-  // Indexed reads: destructuring the frozen pair costs about half of the window's time on Bun.
-  const direction = DIRECTIONS[d] as readonly [number, number];
-  const column = (index % side) + direction[0];
-  const row = (index - (index % side)) / side + direction[1];
+  const { side, ground, steps } = window;
+  const column = (index % side) + (steps[2 * d] as number);
+  const row = (index - (index % side)) / side + (steps[2 * d + 1] as number);
   if (column < 0 || column >= side || row < 0 || row >= side) return -1;
   const target = row * side + column;
   if (ground.inside[index] === 0 || ground.inside[target] === 0) return -1;
@@ -191,7 +208,7 @@ export function senseWindowAndChunks(input: SenseInput): {
   const origin: Cell = [input.center[0] - radius, input.center[1] - radius];
   const { ground, chunks } = readGround(input, origin, side);
   const level = liquidLevel(genesisOf(input.prepared));
-  const edges = { side, ground, level, species: input.species };
+  const edges = { side, ground, level, species: input.species, steps: directionSteps() };
   const edgeMs = new Int32Array(side * side * 8);
   const foodCue = new Uint8Array(side * side);
   for (let index = 0; index < side * side; index += 1) {
@@ -221,9 +238,8 @@ export function copyWindow(window: SensedWindow): SensedWindow {
  * (dx, 0) and by (0, dy), is impassable, or when the step itself is.
  */
 function diagonalEdge(window: EdgeInput, edgeMs: Int32Array, index: number, d: number): number {
-  const direction = DIRECTIONS[d] as readonly [number, number];
-  const dx = direction[0];
-  const dy = direction[1];
+  const dx = window.steps[2 * d] as number;
+  const dy = window.steps[2 * d + 1] as number;
   const horizontal = edgeMs[index * 8 + (dx > 0 ? 0 : 4)] as number;
   const vertical = edgeMs[index * 8 + (dy > 0 ? 2 : 6)] as number;
   if (horizontal < 0 || vertical < 0) return -1;

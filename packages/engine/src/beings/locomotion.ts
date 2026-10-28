@@ -25,11 +25,23 @@ const DIAGONAL = 1414;
  * and depth.
  */
 export function stepDuration(law: Species["locomotion"], geometry: StepGeometry): number {
-  if (geometry.rise > law.maxRise || geometry.depth > law.maxWade) return -1;
+  return stepMilliseconds(law, geometry.rise, geometry.depth, geometry.diagonal);
+}
+
+/**
+ * stepDuration with the step's geometry as arguments, so that the senses, which compute some
+ * twenty thousand steps a window, build no record for each.
+ */
+export function stepMilliseconds(
+  law: Species["locomotion"],
+  rise: number,
+  depth: number,
+  diagonal: boolean,
+): number {
+  if (rise > law.maxRise || depth > law.maxWade) return -1;
   const cap = Number.MAX_SAFE_INTEGER;
-  const extra =
-    scaledFloor(law.rise, geometry.rise, cap) + scaledFloor(law.wade, geometry.depth, cap);
-  const factor = geometry.diagonal ? DIAGONAL : ORTHOGONAL;
+  const extra = scaledFloor(law.rise, rise, cap) + scaledFloor(law.wade, depth, cap);
+  const factor = diagonal ? DIAGONAL : ORTHOGONAL;
   return ceilDiv(factor * (law.stepMs + extra), 1000);
 }
 
