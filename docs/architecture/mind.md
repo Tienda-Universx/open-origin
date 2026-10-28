@@ -99,7 +99,7 @@ prompt, because they reveal the kernel's randomness.
 
 | Law | Meaning | Default | Validated |
 |---|---|---|---|
-| `perception.sight.day`, `.dim` | Cells seen in light and in dim light | 12, 4 | 0 to the window radius R |
+| `perception.sight.day`, `.dim` | Cells seen in light and in dim light | 24, 4 | 0 to the window radius R |
 | `perception.dimBelow` | The radiance below which sight is dim; the default genesis goes from 40 at night to 1,000 at its peak | 150 | 0 to 2^20 |
 | `perception.attention` | Beings perceived per decision | 6 | 0 to 8 |
 | `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | Capacities | 8, 8, 6, 2 | 0–16, 0–16, 0–12, 0–4 |
@@ -116,7 +116,8 @@ prompt, because they reveal the kernel's randomness.
 | `capacity` | Beings per chunk: a law of `life@2` itself, beside `deathEnabled`, not of a species | 64 | 1 to 1,024 |
 | `traits` | The trait bounds of T4, now for six traits: also `sociability`, `credulity`, and `retention` | [800, 1,200] each | the rule of T4 |
 
-The defaults are where calibration starts (T5-7); the values frozen after it replace them here.
+The defaults were where calibration started (T5-7); the table holds the values it froze, which
+[Calibration](#calibration) records: it raised `perception.sight.day` from 12 to 24.
 Durations of 75,600 s are one day of the default genesis, written as data, because each world has
 its own day.
 
@@ -687,6 +688,117 @@ in one pass. Traits modulate it: sociability its will to speak, credulity the co
 to testimony, retention its memory. A message whose speaker is not visible is weighed as one from a
 being it does not know, with the trust of a new relationship.
 
+### How `mind@1` decides (T5-7)
+
+`mindController({ species, dayLength })` builds the brain for a species of `life@2` in a world whose
+day lasts `dayLength` seconds; it copies the laws it reads when it is built, and refuses a day that
+is not a positive whole number of seconds. Its version is `mind@1`, its namespace `m1`, and its
+behaviors the five of `utility@1` and `seek`, `approach`, `talk`, and `wait`: `behavior.kind` holds
+one of them, cooldowns hold what `utility@1` puts there, and no other channel carries anything
+between decisions. Its code is in `packages/agents/src/brain/mind.ts` and `mind/`; its parameters
+are in `mind/parameters.ts`.
+
+**Composition.** At every decision it asks `utility@1` for its plan. When the plan is to forage, eat,
+or sleep, a need wins: the plan stands and only mental operations are added. Otherwise, in this
+order: a reply to what it heard; after its own act, `behavior.kind` `talk`, an idle of
+`min(60 s, speech.gap)` that waits for an answer, with the plan's wake conditions; when the plan is
+to explore and the being is hungry as `utility@1` feels it (a search), a walk to food it believes in
+beyond its window, else an ask, else the search; and with any other plan, as it wills, a greet,
+else a walk toward a being to greet it. "Any other plan" is a rest or a wander, whatever the being's
+hunger: when a hungry being's search finds no leg with a route, `utility@1` rests instead, and
+`mind@1` then may greet or approach, and never walks to food it believes in, which only a search
+does. Each of its walks and its wait keeps the plan's wake conditions and
+cooldowns, and its heading; a talk has no wake condition, since none interrupts it. After any of its
+own behaviors, `utility@1` sees a behavior it does not know, so it holds no commitment then.
+
+**The concept and its rules** (`mind/rules.ts`). `mind@1` forms only `m1.food-at`: one cell as its
+term, a band 0 to 2 as its value, never a negation. Each belief operation is its rule applied to the
+records it cites, reading only their content (an episode's kind, cell, speaker, value, act,
+proposition, and band, a relationship's being and trust), never an age or an importance:
+
+| Rule | Cites | Forms |
+|---|---|---|
+| `seen-food` | one `food` episode | its cell at its band, confidence 900 |
+| `told-food` | a `heard` episode of a `tell` of `m1.food-at`, then, when the being holds one, the relationship with its speaker | the claim told, confidence `min(1000, ⌊[300, 600, 800][band] · (500 + trust) · credulity / 10^6⌋)`, the trust 500 of a new relationship when no relationship is cited, and band 1 for a message with none |
+| revision | one `food` episode of the belief's cell | confidence 900 when it shows the believed band, 100 when it shows another; the belief's own confidence is not read |
+
+A message whose speaker is not visible, an injection, is a `heard` episode with no speaker, so it
+cites no relationship and weighs as a stranger's at band 1. A checked testimony changes the trust in
+its speaker by `min(100, relations.delta)` up when the cue shows the claimed band, down otherwise.
+
+**Memory** (`mind/memory.ts`, `mind/operations.ts`). Each decision proposes, by priority and each
+only whole: a **check**, by retrieval, of a belief whose cell the window shows with another band, or
+with its band when the belief's confidence is below 900, remembered (importance 500) and revised,
+and, for a belief told by a being it holds a relationship with, `relate` with the trust change,
+citing the belief and the cue; a belief contradicted again at confidence 100 or less is dropped
+instead; a **testimony**, the first `tell` of a food claim it hears, unless the mind holds that
+claim or its `told-food` confidence is below 500, remembered (importance 600) and believed; a
+**forgotten** food, the one it could walk no nearer to; a **landmark**, the window's best cue
+(highest band, then nearest, then first by index) that it does not cool, unless the mind holds that
+claim or holds food at 500 or more within 12 cells of it, remembered (importance 500) and believed
+by `seen-food`; and the **being it meets**, the hearer of its act, remembered (importance 400).
+"Holds" means held before the decision: what a testimony of the same decision believes holds back
+no landmark. The whole stays within `mind.ops` and the ids left, and cites, revises, or tells
+nothing a full store would evict first: the brain predicts each store with the engine's law of
+salience, as the engine fills it. Its believes apply in order: one whose claim the store still
+holds at that point adopts that belief, which the engine applies as a revision, taking no id and no
+room; any other forms a belief with the next id, which a full store admits by evicting the belief of
+lowest salience, then the oldest, then the lowest id, itself included. So a landmark of the claim a
+testimony of the same decision believes adopts the testimony's belief only while the store holds
+it: when a full store evicts the testimony at once, the landmark forms a belief of its own, and is
+not proposed if that belief would evict one the decision relies on.
+
+Which claim an operation forms and what it cites depend on no other operation of the decision and
+on no record it does not cite; such records only hold an operation back, and the operations before
+it hold it back only through `mind.ops` and the room of a store. Under the frozen laws, `mind.ops`
+4 and stores of 8, the decision made again with only the records an operation cites, the belief it
+revises, and every input that is no record, therefore proposes that operation again: the check,
+which its records choose, comes first, and a testimony and a landmark take four operations
+together. This is the ablation (b) of [Evaluation](#evaluation); `mind-memory.test.ts` checks it on
+decisions built by hand, the verifier's case among them, and `mind-ablation.test.ts` on 250
+decisions generated from a fixed seed.
+
+**Retrieval** (`mind/retrieval.ts`) scores a record `⌊1000·H / (H + age)⌋ · importance · relevance`,
+`H` the half-life of a belief scaled by retention, in one pass; ties go to the lower id, and a score
+of 0 is never retrieved. Food to seek: beliefs of band 1 or 2 at 500 or more, beyond the window and
+not cooled, importance their confidence, relevance `⌊1000·R·band / (2·(R + d))⌋` for a window of
+radius R and a distance d. A belief to tell: a belief of band 1 or 2 at 500 or more, not told by
+the hearer, wherever its cell lies, cooled or not, but for one its window would check, its cell in
+the window with another band, or with its band at a confidence below 900; importance its
+confidence, relevance `500·band`. A belief to check: importance `max(cr, 1000 − cr)`, relevance
+1000 when contradicted and 500 when confirmed.
+
+**Walks** (`mind/paths.ts`) search the window once with Dijkstra. Seeking food walks to the
+reachable cell nearest the believed cell, by Chebyshev distance, then by the shortest route; when
+that is where the being stands, it forgets the belief and searches instead. Approaching walks to the
+reachable cell within `speech.range` of the being, not its cell, by the shortest route, toward the
+nearest perceived being it would greet, awake and not walking, beyond `speech.range` and within
+`⌊24 · sociability / 1000⌋` cells; never twice in a row. Only that nearest being is tried: when no
+cell near it is reachable, the being keeps its plan, whatever farther being it sees.
+
+**Speech** (`mind/social.ts`). The brain senses neither the tick nor its quota, so it keeps every
+quota by a budget it counts in its relationships. With the talk window `W = max(speech.gap + 1,
+speech.cooldown)`, it addresses a being only when it never did, within its conversation (a pause of
+at most `speech.gap` and fewer than `speech.turns` acts), or once `W` has passed, so all its acts
+to a being in the last `W` seconds are the `turns` of one conversation, and the engine never evicts
+that relationship within `W`. It speaks only while those turns sum to less than
+`⌊speech.perDay / ⌈dayLength / W⌉⌋`, 2 with the defaults, so no day holds more than
+`speech.perDay` acts and no act is ever `talk_quota`. A hearer is perceived, within `speech.range`,
+not asleep, and held in a relationship. The acts:
+
+- a **reply**, to the first message it answers, in the order heard: an `ask`, with a `tell` of the
+  food it believes most, by retrieval, among the beliefs its window would not check, or `unknown`;
+  a `greet` that opens a conversation, with a `greet`; its own greet answered, or a `tell` while it
+  has said at most one act of the conversation, with a `tell`, as it wills;
+- an **ask** for its species' food (`obs.deposit.<k>`), when searching with no food to seek, to the
+  nearest being it may address;
+- a **greet**, as it wills, with any plan but a search, of the nearest being it meets or meets
+  again: one it never addressed, or not within `W`.
+
+It wills an act when `draws[1] mod 1000` is below `min(1000, sociability)`. It tells a belief
+that no operation of the same decision changes or evicts, never one the window contradicts or
+would confirm, which it checks instead.
+
 ## Preregistration
 
 Registered before any calibration. Every choice below is fixed: none is left to the pull request
@@ -796,6 +908,98 @@ Expressed in the world's day L, with neutral traits:
   live records; (b) `decide` again with only the records it cites, and every input that is not a
   record: an operation with the same proposition and the same citations is among the result.
   Confidence, and believe against revise, are not compared.
+
+## Calibration
+
+The laws of `life@2` and the parameters of `mind@1` were calibrated together on the four T5
+calibration labels only, as the preregistration requires, and frozen together; no simulation ran
+on the default label or any held-out label. `bun packages/agents/bench/mind-calibration.ts
+[1 2 3 4] [--ticks N] [--spawn K] [--mindless]` reruns it: 63,000 ticks (10 days) of the T5
+scenario of each label, audit off, with T4's acceptance items for every being, the items of the
+mind, the share of awake time each being spent talking, the targets the laws decide alone, and,
+with `--mindless`, the mindless baseline instead of `mind@1`. It reads its arguments with T4's
+bench, so it refuses the default and held-out labels in any spelling, every argument it does not
+know, and a variant of the laws, with exit code 2. `packages/agents/test/mind-freeze.test.ts` pins
+the freeze: the seal of the default `life@2`, `e69ab5b7506e43a3e1f2680b91707f43`, and the digest
+of every parameter of `mind@1` by name, `9d94ca01b278b56f5285a086a93fda9c`.
+
+**The targets the laws decide alone** (`mind-targets.test.ts`, with the engine's laws and neutral
+traits): an episode of importance 500, never recalled, is forgotten 3 L + 31,704 s, 3.42 L, after
+it happened; one day of continuous co-presence gives familiarity 1000; ten days of absence leave
+500, a half. None of these laws changed.
+
+**What changed.** With the defaults, a day's sight of 12 cells, and `mind@1` willing an unprompted
+act at `⌊800 · sociability / 1000⌋` and walking at most `⌊8 · sociability / 1000⌋` cells to greet,
+five beings of `calibration/2` and `/4` missed greeting or being greeted (run 02). One sociable
+being of `calibration/4` had another in sight at only five of its decisions in ten days, 6 to 12
+cells away, beyond its reach of 7 or with a draw above its will; with a will of all its sociability
+and a reach of 12, one of `calibration/3` never perceived another being, its nearest 13 to 74
+cells away whenever it was sampled, while the others moved west in pairs. That run left three
+beings out (run 05). A day's sight of 24 cells, the
+window's radius, the largest the law allows, with a reach of `⌊24 · sociability / 1000⌋`, met
+every item on every label (run 06):
+
+| Law or parameter | Default | Frozen |
+|---|---|---|
+| `perception.sight.day` | 12 | 24 |
+| `SPEAK_WILL` of `mind@1` | 800 | 1000 |
+| `APPROACH_REACH` of `mind@1` | 8 | 24 |
+
+Every other law of `life@2` and parameter of `mind@1` kept its value.
+
+**Runs.** Each run is 10 days of the four labels unless noted, on the Codespace with Bun 1.4.4 at
+`nice -n 19`, one at a time. A row gives, over its labels, the least of T4's items over the eight
+beings, the beings that missed an item of the mind, and the population's counts.
+
+| Run | Laws, brain | T4's acceptance | Beings missing an item of the mind | Population, by label | Integrity |
+|---|---|---|---|---|---|
+| 01 | defaults; `calibration/1`, 1 day | not judged in 1 day; no rejection | five not greeted | conversations 2 | 0 rejected, 0 prior-suspect, 0 rule problems |
+| 02 | defaults | every item on every label; lowest nutrition 0, health 741,270 (`/2`, being 8) | `/2`: 3, 8; `/4`: 1, 3, 4 | conversations 29, 9, 33, 24; revised down 20, 14, 14, 18; from testimony 28, 5, 29, 29; trust checked 6, 1, 10, 4 | 0, 0, 0 |
+| 03 | defaults; mindless baseline, `/2` | every item; being 8 the same as in run 02 | (no mind) | — | 0 rejected |
+| 04 | defaults; `/2`, with counts of seeking | as run 02 | as run 02 | no walk to believed food: being 8 searched with no belief, spawned out of sight of food | 0, 0, 0 |
+| 05 | will 1000, reach 12 | every item; lowest nutrition 0 (`/2`, being 8) | `/2`: 6, 8; `/3`: 7 | conversations 49, 14, 31, 36 | 0, 0, 0 |
+| 06 | sight 24, will 1000, reach 24 | every item on every label; lowest nutrition 420,855; health never fell | none | conversations 48, 60, 52, 36; revised down 16, 16, 17, 13; from testimony 75, 73, 61, 53; trust checked 15, 10, 19, 14 | 0, 0, 0; diverse on every label |
+| 07 | as 06, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41 | 0, 0, 0 |
+| 08 | as 06, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35 | 0, 0, 0 |
+| 09 | as 06; mindless baseline, `/2`, `--spawn 2` | every item; being 5 the same as in run 08 | (no mind) | — | 0 rejected |
+| 10 | as 06, with the final brain | every item on every label; lowest nutrition 420,855; health never fell | none | conversations 48, 60, 52, 36; revised down 25, 25, 36, 36; from testimony 54, 60, 56, 48; trust checked 43, 24, 32, 36 | 0, 0, 0; diverse on every label |
+| 11 | as 10, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41 | 0, 0, 0 |
+| 12 | as 10, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35 | 0, 0, 0 |
+| 13 | as 10, with the brain of the second correction | every item on every label; lowest nutrition 420,855; health never fell | none | conversations 48, 60, 52, 36; revised down 25, 26, 36, 36; from testimony 54, 60, 56, 48; trust checked 43, 24, 32, 36 | 0, 0, 0; diverse on every label |
+| 14 | as 13, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41; revised down 31, 32, 26, 34 | 0, 0, 0 |
+| 15 | as 13, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35; revised down 40, 39, 33, 23 | 0, 0, 0 |
+
+Runs 06 to 08 ran the brain of the freeze. A review of the ablation of [Evaluation](#evaluation)
+then found that the brain chose a landmark and a testimony by records they did not cite; the brain
+now puts the check first, takes the first testimony it hears, and the best cue in sight as the
+landmark, and tells no belief its window would check; runs 10 to 12 repeat runs 06 to 08 with it. An
+independent verification then found one more such dependence: a held doubt kept a testimony back,
+and the landmark, spaced from what the testimony would believe, formed only while it did. A
+landmark's spacing and novelty, and a testimony's novelty, are now judged only against the beliefs
+held before the decision ("How `mind@1` decides"); runs 13 to 15 repeat runs 10 to 12 with that
+brain, which is the one the evaluation runs, and differ from them only in a few counts of the
+population. No law and no parameter changed in either correction, so the freeze and its two digests
+stand.
+
+In every run with `mind@1`, no being spent more than 1‰ of its awake time talking, against a
+target of at most 5%, since its budget allows two acts in a talk window of 18,900 s. A run of 10
+days of one label took 11.7 to 20.7 s of wall time, against 8.9 to 9.3 s under the mindless
+baseline, with 13.5 to 21.7 decisions per being and day against 12.6 to 12.9. Calibration used
+about 15 minutes of compute.
+
+**No evidence of seeking in the world.** On the four registered calibration draws, no being ever
+walked to food it believed in: no such decision of the 32 beings over 10 days in runs 10 and 13,
+nor of the 8 of `calibration/2` in run 04, since a being is seldom hungry with no food in sight,
+and one that is, like being 8 of `calibration/2` in run 04, holds no belief of food then. The spawn checks add two such decisions, on
+`calibration/2` in runs 14 and 15. The calibration runs therefore give no in-world evidence that
+seeking works; only the hand-built tests of `mind-social.test.ts` do, and nothing was tuned for it.
+
+**A declared limit.** The spawn draws `--spawn 1` and `/2` are no registered scenario, only checks
+on the same terrain. On `calibration/2` with `--spawn 2`, being 5 spawned out of sight of food and
+of every other being, searched 1,550 cells away, reached nutrition 0, and never met anyone, in runs
+08 and 12: the mindless baseline lives exactly the same life (run 09), so no brain that perceives
+only its window can greet a being it never sees. The evaluation's item "every being greeted and was
+greeted" fails on a label that places a being so.
 
 ## Cost
 

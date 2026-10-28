@@ -50,7 +50,7 @@ describe("the default laws of life@2", () => {
     expect(life.capacity).toBe(64);
     const [species] = life.species;
     expect(species?.perception).toEqual({
-      sight: { day: 12, dim: 4 },
+      sight: { day: 24, dim: 4 },
       dimBelow: 150,
       attention: 6,
     });
@@ -141,24 +141,24 @@ describe("checkLife2", () => {
   });
 
   test("bounds sight by the radius of the window, which holds every being in sight", () => {
-    // A radius of 8 holds the day's sight of 12 no more; one of 3, neither sight.
-    expect(issues2(withMember("/species/0/senses/radius", 8))).toEqual([
+    // A radius of 23 holds the day's sight of 24 no more; one of 3, neither sight.
+    expect(issues2(withMember("/species/0/senses/radius", 23))).toEqual([
       {
         path: "/species/0/perception/sight/day",
-        message: "12 is out of bounds: it must be from 0 to 8",
+        message: "24 is out of bounds: it must be from 0 to 23",
       },
     ]);
     expect(issues2(withMember("/species/0/senses/radius", 3))).toEqual([
       {
         path: "/species/0/perception/sight/day",
-        message: "12 is out of bounds: it must be from 0 to 3",
+        message: "24 is out of bounds: it must be from 0 to 3",
       },
       {
         path: "/species/0/perception/sight/dim",
         message: "4 is out of bounds: it must be from 0 to 3",
       },
     ]);
-    expect(issues2(withMember("/species/0/senses/radius", 12))).toEqual([]);
+    expect(issues2(withMember("/species/0/senses/radius", 24))).toEqual([]);
   });
 
   test("keeps speech within dim sight, and silent without relationships", () => {

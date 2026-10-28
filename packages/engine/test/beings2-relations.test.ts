@@ -35,8 +35,11 @@ const SEARCH: Cell = [-128, -128];
 const [A, B] = standingPair(SEARCH, [2, 0], (a) => standable([a[0] + 3, a[1]]));
 /** A cell three east of A, where a being may stand, a little farther from it than B. */
 const C: Cell = [A[0] + 3, A[1]];
-/** A cell where a being stands out of sight of A: 20 cells east of a standable cell. */
-const [FAR_A, FAR] = standingPair(SEARCH, [20, 0], () => true);
+/**
+ * A cell where a being stands out of sight of another: 26 cells east of a standable cell, beyond
+ * the default day sight of 24 and the window's radius of 24.
+ */
+const [FAR_A, FAR] = standingPair(SEARCH, [26, 0], () => true);
 
 /** The relationships of the being `id` of `world`. */
 const relationsOf = (world: Parameters<typeof beingOf>[0], id: number) =>
