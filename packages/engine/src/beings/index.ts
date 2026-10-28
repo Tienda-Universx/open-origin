@@ -42,8 +42,10 @@ export {
   checkLife,
   defaultLife,
   LIFE_BOUNDS,
+  LIFE_RULES,
   LIFE_VERSION,
   type LifeConfig,
+  type LifeRules,
   lifeSeal,
   type NutritionLaw,
   type RestLaw,
@@ -53,6 +55,19 @@ export {
   sealedLifeIssues,
   sealLife,
 } from "./laws.ts";
+export {
+  checkLife2,
+  defaultLife2,
+  LIFE2_BOUNDS,
+  LIFE2_RULES,
+  LIFE2_VERSION,
+  type LifeConfig2,
+  lifeSeal2,
+  type Perception,
+  type Species2,
+  type SpeechLaws,
+  sealLife2,
+} from "./life2.ts";
 export { type LightClock, type LightWatch, nextLightTick } from "./light.ts";
 export { minimumSteps, type StepGeometry, stepDuration } from "./locomotion.ts";
 export { insertOccupied, OCCUPANCY_BOUNDS, occupancyIssues, pruneOccupancy } from "./occupancy.ts";

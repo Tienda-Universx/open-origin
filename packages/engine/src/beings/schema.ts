@@ -50,6 +50,11 @@ export class Fields {
     this.#sink = sink;
   }
 
+  /** The path of the record. */
+  get path(): string {
+    return this.#path;
+  }
+
   /** The path of the member `name`. */
   at(name: string): string {
     return `${this.#path}/${name}`;

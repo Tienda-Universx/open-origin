@@ -209,19 +209,17 @@ function checkBody(species: Fields | undefined, sink: IssueSink): void {
 }
 
 /** Reports every problem of the stages of a species: exactly the stages T4 knows. */
-function checkStages(value: unknown, path: string, sink: IssueSink): void {
+function checkStages(value: unknown, path: string, version: string, sink: IssueSink): void {
   const stages = readList(value, path, range(STAGES.length, STAGES.length), sink);
   stages?.forEach((stage, index) => {
     if (stage !== STAGES[index]) {
-      sink.report(
-        `${path}/${index}`,
-        `the stages of ${LIFE_VERSION} are exactly ${STAGES.join(", ")}`,
-      );
+      sink.report(`${path}/${index}`, `the stages of ${version} are exactly ${STAGES.join(", ")}`);
     }
   });
 }
 
-const SPECIES_MEMBERS: readonly string[] = Object.freeze([
+/** The members of a species of life@1: its body laws, which every later version keeps. */
+export const SPECIES_MEMBERS: readonly string[] = Object.freeze([
   "diet",
   "health",
   "id",
@@ -234,16 +232,41 @@ const SPECIES_MEMBERS: readonly string[] = Object.freeze([
   "traits",
 ]);
 
+/**
+ * What a version of the laws checks: its name, the members of the laws and of a species, and the
+ * laws it adds to those of life@1, each checked by its own function after the body laws.
+ */
+export type LifeShape = {
+  readonly version: string;
+  readonly members: readonly string[];
+  readonly species: readonly string[];
+  readonly addedLaws?: (life: Fields, sink: IssueSink) => void;
+  readonly addedSpeciesLaws?: (species: Fields, sink: IssueSink) => void;
+};
+
+/** What life@1 checks: its own members, and the body laws of each species. */
+const LIFE_SHAPE: LifeShape = Object.freeze({
+  version: LIFE_VERSION,
+  members: Object.freeze(["deathEnabled", "species", "version"]),
+  species: SPECIES_MEMBERS,
+});
+
 /** Reports every problem of the species at `value`; its id, when it has a valid one. */
-function checkSpecies(value: unknown, path: string, sink: IssueSink): string | undefined {
-  const species = readFields(value, path, { required: SPECIES_MEMBERS }, sink);
+function checkSpecies(
+  value: unknown,
+  path: string,
+  shape: LifeShape,
+  sink: IssueSink,
+): string | undefined {
+  const species = readFields(value, path, { required: shape.species }, sink);
   if (species === undefined) return undefined;
   const id = readId(species.value("id"), species.at("id"), sink);
-  checkStages(species.value("stages"), species.at("stages"), sink);
+  checkStages(species.value("stages"), species.at("stages"), shape.version, sink);
   checkNeeds(species.value("needs"), species.at("needs"), sink);
   checkDiet(species.value("diet"), species.at("diet"), sink);
   checkLocomotion(species.value("locomotion"), species.at("locomotion"), sink);
   checkBody(species, sink);
+  shape.addedSpeciesLaws?.(species, sink);
   return id;
 }
 
@@ -252,7 +275,12 @@ function checkSpecies(value: unknown, path: string, sink: IssueSink): string | u
  * regrowth every species shares, because a depletion entry records what was taken from a cell
  * without saying which deposit it was taken from. A later version may give each deposit its own.
  */
-function checkOneFood(species: readonly Species[], path: string, sink: IssueSink): void {
+function checkOneFood(
+  species: readonly Species[],
+  path: string,
+  version: string,
+  sink: IssueSink,
+): void {
   const [first] = species;
   species.forEach((other, index) => {
     if (index === 0 || first === undefined) return;
@@ -262,13 +290,13 @@ function checkOneFood(species: readonly Species[], path: string, sink: IssueSink
     if (sameDeposit && sameRegrowth) return;
     sink.report(
       `${path}/${index}`,
-      `${LIFE_VERSION} has one food deposit: every species eats deposit ${first.diet.deposit} with the regrowth of the first`,
+      `${version} has one food deposit: every species eats deposit ${first.diet.deposit} with the regrowth of the first`,
     );
   });
 }
 
 /** Reports every problem of the species list: ordered by id, without repeats, and one food. */
-function checkSpeciesList(value: unknown, path: string, sink: IssueSink): void {
+function checkSpeciesList(value: unknown, path: string, shape: LifeShape, sink: IssueSink): void {
   let reported = 0;
   const counted: IssueSink = {
     report: (at, message, cause) => {
@@ -279,7 +307,7 @@ function checkSpeciesList(value: unknown, path: string, sink: IssueSink): void {
   const list = readList(value, path, LIFE_BOUNDS.species, counted);
   let previous: string | undefined;
   list?.forEach((entry, index) => {
-    const id = checkSpecies(entry, `${path}/${index}`, counted);
+    const id = checkSpecies(entry, `${path}/${index}`, shape, counted);
     if (id !== undefined && previous !== undefined && id <= previous) {
       counted.report(
         `${path}/${index}/id`,
@@ -289,7 +317,8 @@ function checkSpeciesList(value: unknown, path: string, sink: IssueSink): void {
     if (id !== undefined) previous = id;
   });
   // Compared only when every species is valid, so that each has a diet and a regrowth.
-  if (list !== undefined && reported === 0) checkOneFood(list as readonly Species[], path, sink);
+  if (list !== undefined && reported === 0)
+    checkOneFood(list as readonly Species[], path, shape.version, sink);
 }
 
 /**
@@ -297,19 +326,42 @@ function checkSpeciesList(value: unknown, path: string, sink: IssueSink): void {
  * canonical, as a copy or a validator's value is; it never throws for a canonical value.
  */
 export function checkLife(value: unknown, path: string, sink: IssueSink): void {
-  const life = readFields(value, path, { required: ["deathEnabled", "species", "version"] }, sink);
+  checkLifeAs(LIFE_SHAPE, value, path, sink);
+}
+
+/** Reports every problem of `value` as the laws of life of the version `shape` describes. */
+export function checkLifeAs(shape: LifeShape, value: unknown, path: string, sink: IssueSink): void {
+  const life = readFields(value, path, { required: shape.members }, sink);
   if (life === undefined) return;
-  if (life.value("version") !== undefined && life.value("version") !== LIFE_VERSION) {
-    sink.report(life.at("version"), `the version must be "${LIFE_VERSION}"`);
+  if (life.value("version") !== undefined && life.value("version") !== shape.version) {
+    sink.report(life.at("version"), `the version must be "${shape.version}"`);
   }
   life.boolean("deathEnabled");
-  checkSpeciesList(life.value("species"), life.at("species"), sink);
+  shape.addedLaws?.(life, sink);
+  checkSpeciesList(life.value("species"), life.at("species"), shape, sink);
 }
 
 /** The seal of the laws of life `life`. */
 export function lifeSeal(life: LifeConfig): Digest {
   return digest(["life", LIFE_VERSION, life]);
 }
+
+/**
+ * A version of the laws of life: its name, the check of its laws, and their seal. The rules of a
+ * ruleset name the one they require, which validateGlobal applies.
+ */
+export type LifeRules = {
+  readonly version: string;
+  readonly check: (value: unknown, path: string, sink: IssueSink) => void;
+  readonly seal: (life: LifeConfig) => Digest;
+};
+
+/** The laws of life@1. */
+export const LIFE_RULES: LifeRules = Object.freeze({
+  version: LIFE_VERSION,
+  check: checkLife,
+  seal: lifeSeal,
+});
 
 /**
  * The number of deposits of the genesis `global` holds, or undefined when it cannot be read; each
@@ -351,31 +403,37 @@ function readCopy(global: object, name: string, issues: IssueList): unknown {
 }
 
 /**
- * Why `global`, a world's global value, does not hold sealed laws of life that its genesis can
- * feed, for a ruleset's validateGlobal: every problem of `life` at its path under /life, a seal
- * that is not a string or does not match at /lifeSeal, and a diet whose deposit the genesis does
- * not have. The genesis itself is sealedGenesisIssues' to check. Each member is read once, through
- * its own descriptor (world/members.ts), and copied before it is read further.
+ * Why `global`, a world's global value, does not hold sealed laws of life of the version `laws`
+ * that its genesis can feed, for a ruleset's validateGlobal: every problem of `life` at its path
+ * under /life, a seal that is not a string or does not match at /lifeSeal, and a diet whose
+ * deposit the genesis does not have. The genesis itself is sealedGenesisIssues' to check. Each
+ * member is read once, through its own descriptor (world/members.ts), and copied before it is read
+ * further.
  */
-export function sealedLifeIssues(global: unknown): Issue[] {
+export function sealedLifeIssues(global: unknown, laws: LifeRules = LIFE_RULES): Issue[] {
+  return sealedIssues(global, laws);
+}
+
+/** sealedLifeIssues of `global` under the laws `laws`. */
+function sealedIssues(global: unknown, laws: LifeRules): Issue[] {
   const issues = new IssueList();
   const notRecord = "the global value must be a record that holds life and lifeSeal";
   if (!expectRecord(global, "", notRecord, issues)) return issues.issues;
   const life = readCopy(global, "life", issues);
   const seal = readCopy(global, "lifeSeal", issues);
   const before = issues.count;
-  if (life !== undefined) checkLife(life, "", under(issues, "/life"));
+  if (life !== undefined) laws.check(life, "", under(issues, "/life"));
   // Measured before the seal's own check, so that a bad seal never hides the laws' deposits.
   const lifeValid = life !== undefined && issues.count === before;
   if (seal !== undefined && typeof seal !== "string") {
     issues.report("/lifeSeal", `the seal must be a string, not ${typeof seal}`);
   }
   if (!lifeValid) return issues.issues;
-  // checkLife reported nothing, so the copy is a LifeConfig.
-  const laws = life as LifeConfig;
+  // The check reported nothing, so the copy is a LifeConfig.
+  const valid = life as LifeConfig;
   const count = depositCount(global);
-  if (count !== undefined) checkDeposits(laws, count, under(issues, "/life"));
-  if (typeof seal === "string" && lifeSeal(laws) !== seal) {
+  if (count !== undefined) checkDeposits(valid, count, under(issues, "/life"));
+  if (typeof seal === "string" && laws.seal(valid) !== seal) {
     issues.report(
       "/lifeSeal",
       "the seal does not match the laws of life: they changed after they were sealed, or the seal was made for other laws",
