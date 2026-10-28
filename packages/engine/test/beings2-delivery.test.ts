@@ -527,3 +527,24 @@ describe("a hearer within reach", () => {
     expect(mindIn(world, 2).inbox).toEqual([{ ...greetingAt(2), act: "unknown" }]);
   });
 });
+
+describe("the room of an inbox and the record a delivery writes", () => {
+  test("gives each hearer of one chunk its message, and leaves the rest of the chunk as it was", () => {
+    // Beings 1 and 2 greet beings 3 and 4, both idle, in the chunk of being 5, which hears nothing.
+    const { world } = scripted(
+      [being2(1, A), being2(2, NEAR), being2(3, B), being2(4, THREE), being2(5, FOUR)],
+      { 1: once(talk(3, "greet")), 2: once(talk(4, "greet")) },
+    );
+    runTo(world, 1);
+    const bystander = beingOf(world, 5);
+    const events = runTo(world, 2);
+    expect(eventsOfType(events, "speech.delivered").map(({ payload }) => payload)).toEqual([
+      { id: 1, to: 3 },
+      { id: 2, to: 4 },
+    ]);
+    expect(mindIn(world, 3).inbox).toEqual([greetingAt(2)]);
+    expect(mindIn(world, 4).inbox).toEqual([greetingAt(2, 2, NEAR)]);
+    expect(beingOf(world, 5)).toEqual(bystander);
+    expect([3, 4].map((id) => beingOf(world, id).wake)).toEqual([3, 3]);
+  });
+});

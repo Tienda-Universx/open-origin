@@ -419,11 +419,12 @@ export function applyWorks(
  * that heard something at this tick, `heard`, put in their place.
  */
 function withHeard(beings: readonly Being[], heard: readonly Placed[]): Being[] {
-  let current = [...beings];
+  // One copy of the chunk's beings for all its hearers, each put in place by binary search.
+  const current = [...beings];
   for (const { being } of heard) {
     const index = indexOfBeing(current, being.id);
     if (index === undefined) throw integrity(`the hearer ${being.id} is not in its chunk`);
-    current = current.with(index, being);
+    current[index] = being;
   }
   return current;
 }
