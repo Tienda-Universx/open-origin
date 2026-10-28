@@ -47,28 +47,39 @@ function confidence(band: number | undefined): string {
   return band === 1 ? ", fairly sure" : ", unsure";
 }
 
-/** What a proposition claims, negated when it is a negation. */
+/**
+ * What a proposition claims: the food of a cell, or near it, for a proposition of the shape mind@1
+ * gives those concepts; otherwise its concept of its terms, and its value, negated when it is a
+ * negation.
+ */
 function claim(p: mind.Proposition | undefined): string {
   if (p === undefined) return "something";
-  const said = statement(p);
+  const food = foodOf(p);
+  if (food !== undefined) return food;
+  const value = p.v === undefined ? "" : `, at ${p.v}`;
+  const said = `${p.p} holds of ${p.a.map(term).join(" and ")}${value}`;
   return p.neg === true ? `it is not so that ${said}` : said;
 }
 
-/** What a proposition states: the food of a cell or near it, or its concept of its terms. */
-function statement(p: mind.Proposition): string {
-  const [first] = p.a;
-  const cell = first !== undefined && "c" in first ? first.c : undefined;
-  if (p.p === "m1.food-at" && cell !== undefined)
-    return `there is ${amount(p.v)} food at ${place(cell)}`;
-  if (p.p === "m1.food-near" && cell !== undefined) return `there is food near ${place(cell)}`;
-  const value = p.v === undefined ? "" : `, at ${p.v}`;
-  return `${p.p} holds of ${p.a.map(term).join(" and ")}${value}`;
+/**
+ * What `p` says of food when it has the shape of mind.md's table, no negation and one cell: for
+ * `m1.food-at`, a band 0 to 2 as its value, and for `m1.food-near`, no value; undefined otherwise.
+ */
+function foodOf(p: mind.Proposition): string | undefined {
+  const [only, ...more] = p.a;
+  if (p.neg === true || more.length > 0 || only === undefined || !("c" in only)) return undefined;
+  if (p.p === "m1.food-near" && p.v === undefined) return `there is food near ${place(only.c)}`;
+  const amount = p.v === undefined ? undefined : amountOf(p.v);
+  if (p.p === "m1.food-at" && amount !== undefined)
+    return `there is ${amount} food at ${place(only.c)}`;
+  return undefined;
 }
 
-/** The amount of food a band of the food cue says: none, some, or plenty. */
-function amount(band: number | undefined): string {
+/** The amount of food a band of the food cue says: none, some, or plenty; undefined for no band. */
+function amountOf(band: number): string | undefined {
   if (band === 2) return "plenty of";
-  return band === 1 ? "some" : "no";
+  if (band === 1) return "some";
+  return band === 0 ? "no" : undefined;
 }
 
 /** A term of a proposition: a cell, a being, or a number. */

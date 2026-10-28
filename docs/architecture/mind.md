@@ -509,8 +509,11 @@ a test checks that no template seeds a target topic (plan §K.4), which restrict
 what inhabitants think. `renderAct` writes an act as `speech.uttered` reports it, in English: the
 speaker and the hearer, as "being" and their id unless the caller names them; a greet, an ask for
 food, an "I do not know", or a tell with its confidence (sure, fairly sure, unsure, by band) and its
-claim, the food of a cell or near it for `m1.food-at` and `m1.food-near`, and any other concept
-written as its id and its terms. The audit renders every act, band, negation, and kind of term and
+claim. The claim is the food of a cell, or near it, only for a proposition of the shape the table
+of `prop@1` gives those concepts: one cell as its term, no negation, and a band from 0 to 2 as the
+value of `m1.food-at` and no value for `m1.food-near`; any other proposition is written as its
+concept id, its terms, and its value, negated when it is a negation. The audit renders every act,
+band, negation, and kind of term and
 finds no consciousness, creator, simulation, or external reality, nor AI, game, player, or server;
 an inhabitant's own concept, whatever it names, is written as it is.
 

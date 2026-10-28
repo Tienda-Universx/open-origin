@@ -46,6 +46,9 @@ const PROPOSITIONS: readonly mind.Proposition[] = [
   { p: "m1.food-at", a: [{ c: [10, -2] }], v: 2, neg: true },
   { p: "m1.food-near", a: [{ c: [0, 0] }] },
   { p: "m1.food-near", a: [{ c: [0, 0] }], neg: true },
+  { p: "m1.food-at", a: [{ c: [10, -2] }], v: 7 },
+  { p: "m1.food-at", a: [{ c: [10, -2] }, { e: 4 }] },
+  { p: "m1.food-near", a: [{ c: [0, 0] }], v: 1 },
   { p: "obs.deposit.0", a: [{ c: [1, 1] }], v: 30 },
   { p: "t1.kin", a: [{ e: 12 }, { n: 4 }], v: -3 },
 ];
@@ -74,14 +77,50 @@ describe("the templates of speech@1", () => {
     expect(tell({ p: "m1.food-at", a: [{ c: [10, -2] }], v: 1 }, 1)).toBe(
       "Being 3 tells being 7, fairly sure, that there is some food at (10, -2).",
     );
-    expect(tell({ p: "m1.food-at", a: [{ c: [10, -2] }], v: 0, neg: true }, 0)).toBe(
-      "Being 3 tells being 7, unsure, that it is not so that there is no food at (10, -2).",
+    expect(tell({ p: "m1.food-at", a: [{ c: [10, -2] }], v: 0 }, 0)).toBe(
+      "Being 3 tells being 7, unsure, that there is no food at (10, -2).",
     );
     expect(tell({ p: "m1.food-near", a: [{ c: [0, 0] }] }, 2)).toBe(
       "Being 3 tells being 7, sure, that there is food near (0, 0).",
     );
     expect(tell({ p: "t1.kin", a: [{ e: 12 }, { n: 4 }], v: -3 }, 1)).toBe(
       "Being 3 tells being 7, fairly sure, that t1.kin holds of being 12 and 4, at -3.",
+    );
+  });
+
+  test("say food only of the shape mind@1 defines: else the concept, its terms, and its value", () => {
+    // The food phrasing needs one cell, and for m1.food-at a band 0 to 2, and no negation.
+    const tell = (p: mind.Proposition) => renderAct(act({ act: "tell", p, band: 2 }));
+    const said = "Being 3 tells being 7, sure, that";
+    expect(tell({ p: "m1.food-at", a: [{ c: [1, 2] }] })).toBe(
+      `${said} m1.food-at holds of (1, 2).`,
+    );
+    expect(tell({ p: "m1.food-at", a: [{ c: [1, 2] }], v: 2, neg: true })).toBe(
+      `${said} it is not so that m1.food-at holds of (1, 2), at 2.`,
+    );
+    expect(tell({ p: "m1.food-at", a: [{ c: [1, 2] }], neg: true })).toBe(
+      `${said} it is not so that m1.food-at holds of (1, 2).`,
+    );
+    expect(tell({ p: "m1.food-at", a: [{ c: [1, 2] }], v: 7 })).toBe(
+      `${said} m1.food-at holds of (1, 2), at 7.`,
+    );
+    expect(tell({ p: "m1.food-at", a: [{ c: [1, 2] }], v: -1 })).toBe(
+      `${said} m1.food-at holds of (1, 2), at -1.`,
+    );
+    expect(tell({ p: "m1.food-at", a: [{ c: [1, 2] }, { e: 4 }], v: 2 })).toBe(
+      `${said} m1.food-at holds of (1, 2) and being 4, at 2.`,
+    );
+    expect(tell({ p: "m1.food-at", a: [{ e: 4 }], v: 2 })).toBe(
+      `${said} m1.food-at holds of being 4, at 2.`,
+    );
+    expect(tell({ p: "m1.food-near", a: [{ c: [1, 2] }], v: 2 })).toBe(
+      `${said} m1.food-near holds of (1, 2), at 2.`,
+    );
+    expect(tell({ p: "m1.food-near", a: [{ c: [1, 2] }], neg: true })).toBe(
+      `${said} it is not so that m1.food-near holds of (1, 2).`,
+    );
+    expect(tell({ p: "m1.food-near", a: [{ c: [1, 2] }, { n: 3 }] })).toBe(
+      `${said} m1.food-near holds of (1, 2) and 3.`,
     );
   });
 
