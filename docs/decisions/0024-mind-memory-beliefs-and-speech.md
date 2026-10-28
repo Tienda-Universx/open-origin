@@ -145,8 +145,9 @@ The specification and the preregistration are in [Mind](../architecture/mind.md)
 - A brain's hidden channels are declared, not removed; `ex` covers them, and the whole-decision
   ablation of `mind@1` runs in the soak.
 - The ledger grows with the population; T7 must persist it and never prune it.
-- Speech in T5 carries only beliefs about food and greetings; overhearing, lying, coined concepts,
-  and hypotheses wait for later versions.
+- Speech in T5 carries the four acts above, a `tell` with any belief its speaker holds, and
+  `mind@1` will tell only beliefs about food; overhearing, lying, coined concepts, and hypotheses
+  wait for later versions.
 - Revisit:
   - in T6: the projections of speech and of mind fields, built on the registry, and a host that
     handles a rejected promise;
