@@ -1124,8 +1124,9 @@ default or held-out label runs):
   a host that compacts what it saw fade diverges.
 - **Fuzz and `rule(cited)`.** `mind-fuzz.test.ts` runs `mind@1` among chaotic brains with
   injections, and the first 300 ticks of `calibration/1`, under the invariants, whose oracle of food
-  reads the terrain it is given. Every belief operation equals its rule in the subject, both
-  fuzzes, the false claim, and a day of `calibration/1` (`mind-world.test.ts`).
+  reads the terrain it is given. Every belief operation equals its rule in the subject, the fuzz
+  among chaotic brains, the false claim, and a day of `calibration/1` (`mind-world.test.ts`); the
+  300 ticks of the scenario's fuzz hold beliefs formed and none revised, so there it pins `believe`.
 - **Ablations.** `mind-world.test.ts` replays (a) and (b) of [Evaluation](#evaluation) on every
   decision of that day that proposed a belief operation: 30 operations, none missed. There the
   records an operation cites are those the mind held and the inbox messages its heard episodes

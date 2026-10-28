@@ -135,9 +135,9 @@ describe("a false claim injected into a being of mind@1 (plan §11.2, test 6)", 
     expect(dropped).toBeGreaterThan(check?.tick ?? TICKS);
     const { held } = run();
     expect(held.beliefs.some(({ p }) => mind.sameProposition(p, CLAIM))).toBe(false);
-    // What it remembered of X is the band its species finds there: none. The claim moved no food.
+    // What it remembered of X is the band its species finds there: none, as in the world without
+    // the claim, which the second test shows is the same world.
     expect(held.episodes.find(({ id }) => id === 3)).toMatchObject({ kind: "food", cell: X, v: 0 });
-    expect(baseFood(X)).toBe(0);
   });
 
   test("keeps human-external in the belief and the exposure; every operation is its rule", () => {

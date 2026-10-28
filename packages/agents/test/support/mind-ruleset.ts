@@ -1,4 +1,5 @@
 import { beings } from "@open-origin/engine";
+import { SHORT_DAY } from "../../../engine/test/support/beings-world.ts";
 import { life2With } from "../../../engine/test/support/beings2-world.ts";
 import { mindController } from "../../src/index.ts";
 
@@ -10,8 +11,8 @@ import { mindController } from "../../src/index.ts";
  * fresh ruleset with a fresh brain.
  */
 
-/** The seconds of the test genesis' day: 100 ticks of 12 seconds. */
-export const SUBJECT_DAY = 1200;
+/** The seconds of the test genesis' day, 1,200: 100 ticks of 12 seconds. */
+export const SUBJECT_DAY = SHORT_DAY.length;
 
 /**
  * The laws of the subject: the frozen laws of life@2, with two changes so that about a hundred

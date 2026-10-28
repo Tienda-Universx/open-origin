@@ -60,12 +60,16 @@ describe("mind@1 over one day of calibration/1", () => {
     const observer = new MindObserver();
     const decisions: Recorded[] = [];
     let brain: beings.Controller2 | undefined;
+    let built = 0;
     const scenario = scenario2Of(LABELS2.calibration[0] as string, {
       controller: (species, dayLength) => {
+        built += 1;
         brain = mindController({ species, dayLength });
         return observer.controller(recording(brain, decisions));
       },
     });
+    // One brain makes every decision the ablations replay below.
+    expect(built).toBe(1);
     const { world } = scenario;
     observer.start(
       world,
