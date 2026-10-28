@@ -18,8 +18,15 @@ import {
   streamId,
   tickKey,
 } from "../src/index.ts";
-import { beingOf, cumulative, runTo, walkMs, windowAt } from "./support/beings-world.ts";
-import { type Cell, eventsAt, idling } from "./support/beings2-mind.ts";
+import {
+  beingOf,
+  centerEdge,
+  cumulative,
+  runTo,
+  walkMs,
+  windowAt,
+} from "./support/beings-world.ts";
+import { type Cell, eventsAt, idling, standable } from "./support/beings2-mind.ts";
 import {
   A,
   B,
@@ -529,6 +536,24 @@ describe("a hearer within reach", () => {
 });
 
 describe("the room of an inbox and the record a delivery writes", () => {
+  test("is counted at the end of t: a full inbox its decision at t consumed takes the message", () => {
+    // Being 2 holds two messages, all its inbox may, and decides at tick 2, which consumes them.
+    const held = mindOf({ inbox: [greetingAt(0, 7), greetingAt(0, 8)] });
+    const hearer = {
+      ...being2(2, B, { mind: held }),
+      activity: { kind: "idle" as const, start: 0, ms: 24_000 },
+      wake: 2,
+    };
+    const { world } = scripted([being2(1, A), hearer], { 1: once(talk(2, "greet")) });
+    const events = runTo(world, 2);
+    expect(
+      events
+        .filter(({ type }) => type === "speech.delivered" || type === "speech.unheard")
+        .map(({ type, payload }) => [type, payload]),
+    ).toEqual([["speech.delivered", { id: 1, to: 2 }]]);
+    expect(mindIn(world, 2).inbox).toEqual([greetingAt(2)]);
+  });
+
   test("gives each hearer of one chunk its message, and leaves the rest of the chunk as it was", () => {
     // Beings 1 and 2 greet beings 3 and 4, both idle, in the chunk of being 5, which hears nothing.
     const { world } = scripted(
@@ -546,5 +571,84 @@ describe("the room of an inbox and the record a delivery writes", () => {
     expect(mindIn(world, 4).inbox).toEqual([greetingAt(2, 2, NEAR)]);
     expect(beingOf(world, 5)).toEqual(bystander);
     expect([3, 4].map((id) => beingOf(world, id).wake)).toEqual([3, 3]);
+  });
+});
+
+describe("a hearer that loses the contest for room on the tick a message reaches it", () => {
+  /** The border between chunks 1 and 2, at x 63 and 64. */
+  const EDGE = 63;
+
+  /**
+   * A row where a being may stand at EDGE − 2, EDGE, EDGE + 2, and EDGE + 3, and the step east
+   * from EDGE arrives at tick 3 to 6 after a decision at tick 2.
+   */
+  const ROW = ((): { readonly y: number; readonly arrival: number } => {
+    for (let y = -64; y < -32; y += 1) {
+      const ms = centerEdge(windowAt([EDGE, y]), 0);
+      const arrival = 2 + Math.ceil(ms / 12_000);
+      const cells: Cell[] = [EDGE - 2, EDGE, EDGE + 2, EDGE + 3].map((x) => [x, y]);
+      if (ms > 0 && arrival >= 3 && arrival <= 6 && cells.every(standable)) return { y, arrival };
+    }
+    throw new Error("no row beside the border at x 63");
+  })();
+
+  /**
+   * Being 1 greets being 2 at tick 1, an act that ends at ROW.arrival; being 2 decides at tick 2
+   * to step east into chunk 2, which beings 3 and 4 hold under a capacity of `capacity`.
+   */
+  const crossing = (capacity: number) => {
+    const { y, arrival } = ROW;
+    const hearer = {
+      ...being2(2, [EDGE, y]),
+      activity: { kind: "idle" as const, start: 0, ms: 24_000 },
+      wake: 2,
+    };
+    const east: Script = (_senses, decision) =>
+      decision === 0
+        ? {
+            steps: [{ kind: "walk", dirs: "0" }],
+            wakeWhen: {},
+            behavior: { kind: "x", since: 0, heading: 0 },
+          }
+        : idling(LONG);
+    const life = life2With(
+      (species) => ({ ...species, speech: { ...species.speech, actMs: (arrival - 1) * 12_000 } }),
+      capacity,
+    );
+    return scripted(
+      [being2(1, [EDGE - 2, y]), hearer, being2(3, [EDGE + 2, y]), being2(4, [EDGE + 3, y])],
+      { 1: once(talk(2, "greet")), 2: east },
+      { life },
+    );
+  };
+
+  test("keeps the message in the mind it started the tick with, and hears it at t + 1", () => {
+    const { y, arrival } = ROW;
+    const { world, sensed } = crossing(2);
+    const events = runTo(world, arrival);
+    const hearer = beingOf(world, 2) as beings.Being2;
+    expect(hearer).toMatchObject({
+      cell: [EDGE, y],
+      outcome: { reason: "crowded" },
+      wake: arrival + 1,
+    });
+    const message = greetingAt(arrival, 1, [EDGE - 2, y]);
+    expect(hearer.mind.inbox).toEqual([message]);
+    expect(payloadsAt(events, arrival, "speech.delivered")).toEqual([{ id: 1, to: 2 }]);
+    runTo(world, arrival + 1);
+    expect(sensed.get(2)?.at(-1)?.perceived.heard).toEqual([
+      { who: 1, cell: [EDGE - 2, y], act: "greet" },
+    ]);
+    // Its idle of 1 ms ended at t + 1: it decided then anyway, and no wake by hearing counted.
+    expect(mindIn(world, 2).quota.woken).toBe(0);
+  });
+
+  test("of a winner, the message is in its final record in the chunk it entered", () => {
+    const { y, arrival } = ROW;
+    const { world } = crossing(4);
+    runTo(world, arrival);
+    const hearer = beingOf(world, 2) as beings.Being2;
+    expect(hearer.cell).toEqual([EDGE + 1, y]);
+    expect(hearer.mind.inbox).toEqual([greetingAt(arrival, 1, [EDGE - 2, y])]);
   });
 });

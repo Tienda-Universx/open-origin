@@ -9,7 +9,7 @@
  * never reports.
  */
 import { describe, expect, test } from "bun:test";
-import { beings, type EngineEvent, type mind } from "../src/index.ts";
+import { beings, type EngineEvent, type mind, worldStatus } from "../src/index.ts";
 import { beingOf, runTo } from "./support/beings-world.ts";
 import { eventsAt, idling } from "./support/beings2-mind.ts";
 import {
@@ -512,6 +512,52 @@ describe("the end of a talk", () => {
     expect(eventsOfType(dead.events, "being.died")).toHaveLength(1);
     expect(dead.finished).toEqual([]);
     expect(eventsOfType(dead.events, "speech.uttered")).toEqual([]);
+  });
+
+  test("on the very tick the body cuts it, completes the tick, and says nothing", () => {
+    // The act of being 1, talking since tick 0, ends at the tick its body exhausts, incapacitates,
+    // or kills it: 4, 3, and 3.
+    const cases = [
+      [{ needs: { nutrition: beings.NEED_MAX, rest: 300 } }, false, 4],
+      [{ needs: { nutrition: 0, rest: beings.NEED_MAX }, health: 300 }, false, 3],
+      [{ needs: { nutrition: 0, rest: beings.NEED_MAX }, health: 300 }, true, 3],
+    ] as const;
+    const observed = cases.map(([body, deathEnabled, c]) => {
+      const speaker: beings.Being2 = {
+        ...being2(1, A),
+        ...body,
+        activity: { kind: "talk", start: 0, to: 2, act: "greet", captured: { tn: 0, ex: 0 } },
+        wake: 1,
+      };
+      const { world } = scripted(
+        [speaker, being2(2, B)],
+        {},
+        {
+          life: speechWith({ actMs: c * 12_000 }, deathEnabled),
+        },
+      );
+      const events = runTo(world, c + 2);
+      expect(worldStatus(world)).toMatchObject({ kind: "ok" });
+      expect(eventsOfType(events, "speech.uttered")).toEqual([]);
+      expect(eventsOfType(events, "speech.delivered")).toEqual([]);
+      expect(mindIn(world, 2).inbox).toEqual([]);
+      return eventsAt(events, c);
+    });
+    expect(observed).toEqual([
+      [
+        ["being.exhausted", { id: 1 }],
+        ["being.finished", { id: 1, activity: "talk", result: "interrupted", reason: "exhausted" }],
+        ["being.started", { id: 1, activity: "sleep" }],
+      ],
+      [
+        ["being.incapacitated", { id: 1 }],
+        [
+          "being.finished",
+          { id: 1, activity: "talk", result: "interrupted", reason: "incapacitated" },
+        ],
+      ],
+      [["being.died", { id: 1, cell: [...A] }]],
+    ]);
   });
 
   test("comes at speech.actMs whatever wake condition holds or message arrives meanwhile", () => {
