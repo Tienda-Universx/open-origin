@@ -12,12 +12,14 @@ import type { BeingsRules } from "./rules.ts";
 import { range, readId, readList } from "./schema.ts";
 
 /**
- * A brain as the ruleset captured it: its version, the behaviors a brain of beings@2 declared,
- * and its decision, which returns what the brain proposed, for the engine to judge.
+ * A brain as the ruleset captured it: its version, the behaviors and the namespace of concepts a
+ * brain of beings@2 declared, and its decision, which returns what the brain proposed, for the
+ * engine to judge.
  */
 export type Brain = {
   readonly brain: string;
   readonly behaviors: readonly string[] | undefined;
+  readonly concepts: string | undefined;
   readonly decide: (senses: object) => unknown;
 };
 
@@ -35,6 +37,9 @@ const BEHAVIORS = range(1, 16);
  * namespace, a dot, and at least one more character.
  */
 const NAMESPACE_LENGTH = 46;
+
+/** The namespace of the observables of the catalog, which no brain may declare as its own. */
+const OBSERVABLES = "obs";
 
 /** The brain of one species, read once: its version, its decide function, and what it declares. */
 function captureOne(
@@ -58,6 +63,7 @@ function captureOne(
   return Object.freeze({
     brain,
     behaviors: undefined,
+    concepts: undefined,
     decide: (senses: object) => decide.call(controller, senses),
   });
 }
@@ -85,6 +91,7 @@ function mindful(brain: string, decide: Decide, declared: Declared, path: string
   return Object.freeze({
     brain,
     behaviors: declared.behaviors,
+    concepts: declared.concepts,
     decide: (senses: object) => {
       // A plain call passes no receiver, so the brain cannot reach its controller through `this`.
       const result = decide(senses);
@@ -166,6 +173,13 @@ function readConcepts(value: unknown, path: string, issues: IssueList): string |
   if (value === UNREAD) return undefined;
   if (value === undefined) {
     issues.report(at, "a brain of beings@2 declares the namespace of its concepts");
+    return undefined;
+  }
+  if (value === OBSERVABLES) {
+    issues.report(
+      at,
+      `the namespace "${OBSERVABLES}" is reserved for the observables of the catalog: a brain declares its own`,
+    );
     return undefined;
   }
   if (

@@ -408,6 +408,18 @@ function remembered(random: Sfc32, subject: mind.Mind, ctx: mind.MindContext): m
   return mind.admitEpisode({ ...subject, next: id + 1, exposure }, { ...episode, w }, ctx);
 }
 
+/**
+ * How many of the beliefs `revised` lost a citation to the limit of three, from `before` to
+ * `after`: one that left `ev` though its record still lives.
+ */
+function cutsOf(before: mind.Mind, after: mind.Mind, revised: readonly { id: number }[]): number {
+  return revised.filter(({ id }) => {
+    const was = before.beliefs.find((held) => held.id === id)?.ev ?? [];
+    const now = after.beliefs.find((held) => held.id === id)?.ev ?? [];
+    return was.some((cited) => !now.includes(cited) && mind.recordOf(after, cited) !== undefined);
+  }).length;
+}
+
 /** One random step: a decision, forgetting, a perception, or a remembered message. */
 function provenanceStep(
   random: Sfc32,
@@ -421,7 +433,7 @@ function provenanceStep(
     if (outcome.kind === "rejected") return subject;
     const { changes } = outcome;
     seen.adopted += changes.revised.filter((entry) => entry.rule !== undefined).length;
-    seen.cut += changes.uncited.length;
+    seen.cut += cutsOf(subject, outcome.mind, changes.revised);
     seen.dropped += changes.dropped.length;
     seen.displaced += changes.unlinked.filter((link) => link.beliefs.length > 0).length;
     return outcome.mind;

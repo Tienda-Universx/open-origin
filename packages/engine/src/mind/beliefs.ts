@@ -10,8 +10,9 @@
  *   episodes and relationships of any id, but beliefs only of a lower id, so support is acyclic.
  * - Its depth is one more than that of the deepest belief it cites, at most `mind.depth`.
  * - Adopting a proposition already held, by canonical equality, revises the belief that holds it.
- * - A revision must cite a record it does not cite now; `ev` keeps the three most recent citations
- *   and reports the ones it drops, while `src`, `tn`, and `ex` keep what they brought.
+ * - A revision must cite a record it does not cite now; `ev` keeps the three most recent citations,
+ *   while `src`, `tn`, and `ex` keep what the ones it drops brought. The ledger records the drop
+ *   through the `ev` it gives of the revised belief (beings/mental.ts).
  * - Citing a record refreshes it: an episode as a recall does, a belief's `u` becomes now.
  */
 import { greatest } from "../int.ts";
@@ -79,8 +80,6 @@ export type BeliefChanges = {
   readonly dropped: readonly LocalId[];
   /** Every record that left the mind, dropped or evicted, and the beliefs that lost it. */
   readonly unlinked: readonly Unlinked[];
-  /** The citations a revision pushed out of `ev`. */
-  readonly uncited: readonly { readonly belief: LocalId; readonly records: readonly LocalId[] }[];
   /** The beliefs whose taints grew by the downstream flow, by increasing id. */
   readonly tainted: readonly LocalId[];
 };
@@ -147,21 +146,20 @@ function formedBelief(
 
 /**
  * `target` revised by `op` with the evidence `cited`: `ev` gains the citations of `op`, the most
- * recent last, and keeps the last three; `uncited` lists the ones it pushed out. Its depth is the
- * downstream pass's to recompute.
+ * recent last, and keeps the last three. Its depth is the downstream pass's to recompute.
  */
 function revisedBelief(
   target: Belief,
   op: ReviseOperation,
   cited: readonly MindRecord[],
   context: { readonly exposure: TaintMask; readonly now: number },
-): { readonly belief: Belief; readonly uncited: readonly LocalId[] } {
+): Belief {
   const added = op.ev;
   const merged = [...target.ev.filter((id) => !added.includes(id)), ...added];
   const cut = greatest(0, merged.length - MIND_BOUNDS.citations.max);
   const { tn, ex } = revisedTaints(target, cited, context.exposure);
   const who = lastSpeaker(cited) ?? target.who;
-  const belief: Belief = {
+  return {
     ...target,
     cr: op.cr,
     src: target.src | evidenceMask(cited),
@@ -171,7 +169,6 @@ function revisedBelief(
     ex,
     u: context.now,
   };
-  return { belief, uncited: merged.slice(0, cut) };
 }
 
 /** Whether `ids` holds an id twice. */
@@ -188,7 +185,6 @@ class Draft {
   readonly #revised: { readonly id: LocalId; readonly rule?: string }[] = [];
   readonly #dropped: LocalId[] = [];
   readonly #unlinked: Unlinked[] = [];
-  readonly #uncited: { readonly belief: LocalId; readonly records: readonly LocalId[] }[] = [];
   readonly #tainted: LocalId[] = [];
 
   constructor(mind: Mind, ctx: MindContext, manifest: Manifest) {
@@ -203,7 +199,6 @@ class Draft {
       revised: this.#revised,
       dropped: this.#dropped,
       unlinked: this.#unlinked,
-      uncited: this.#uncited,
       tainted: [...this.#tainted].sort((a, b) => a - b),
     };
   }
@@ -290,14 +285,13 @@ class Draft {
     if (higher || added.every((id) => target.ev.includes(id))) return "premise_order";
     this.#refresh(cited);
     const { exposure } = this.mind;
-    const { belief, uncited } = revisedBelief(target, op, cited, {
+    const belief = revisedBelief(target, op, cited, {
       exposure,
       now: this.#ctx.moment.tick,
     });
     const beliefs = this.mind.beliefs.map((held) => (held.id === target.id ? belief : held));
     this.mind = { ...this.mind, beliefs, exposure: exposureAfterBelief(exposure, belief) };
     this.#revised.push({ id: target.id, ...(rule === undefined ? {} : { rule }) });
-    if (uncited.length > 0) this.#uncited.push({ belief: target.id, records: uncited });
     return this.#settle(before);
   }
 

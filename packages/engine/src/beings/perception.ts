@@ -50,6 +50,11 @@ function shown(being: Being): PerceivedBeing {
     : seen;
 }
 
+/** A copy of `being` that shares nothing with it, for the senses a brain may keep and write. */
+export function copyPerceived(being: PerceivedBeing): PerceivedBeing {
+  return { ...being, cell: [being.cell[0], being.cell[1]] };
+}
+
 /**
  * The beings that the being `self` perceives in `chunks`, the chunks its window covers: every other
  * being within `sight` cells of its cell, the `attention` nearest kept, by distance, then id, in

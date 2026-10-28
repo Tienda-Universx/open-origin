@@ -13,6 +13,7 @@ import {
   type Command,
   DrawSequence,
   type EngineEvent,
+  mind,
   readView,
   type Seed,
   step,
@@ -34,6 +35,7 @@ import {
   spawn,
   windowAt,
 } from "./support/beings-world.ts";
+import { cellOf } from "./support/beings2-mind.ts";
 import {
   being2,
   beings2World,
@@ -42,6 +44,7 @@ import {
   gateMind,
   life2With,
 } from "./support/beings2-world.ts";
+import { belief, mindOf, own } from "./support/mind-records.ts";
 import { Sfc32 } from "./support/sfc32.ts";
 
 type Cell = readonly [number, number];
@@ -119,6 +122,45 @@ const payloadsAt = (events: readonly EngineEvent[], tick: number, type: string) 
 
 /** The crowded end of a walk, as its being.finished event reports it. */
 const crowded = (id: number) => ({ id, activity: "walk", result: "failed", reason: "crowded" });
+
+/**
+ * A crosser whose decision at its arrival, and at every later one, changes its mind: it remembers
+ * the food of its cell and believes a proposition citing that episode, by the id it predicts.
+ */
+const mindful = brain2((senses) => {
+  if (senses.self.outcome.result === "none") return crosser.decide(senses);
+  const { next } = senses.mind;
+  // Two copies of the cell: canonical values are trees, which share no object.
+  return {
+    ...idle(),
+    mind: {
+      remember: [{ percept: { food: cellOf(senses) }, w: 500 }],
+      believe: [
+        { p: { p: "t1.here", a: [{ c: cellOf(senses) }] }, cr: 500, ev: [next], rule: "here" },
+      ],
+    },
+  };
+});
+
+/**
+ * A mind whose episode 1 fades at tick 2 and not before, under a half-life of 12 seconds, cited
+ * by the belief 3 with the pinned episode 2.
+ */
+const fadingMind = () =>
+  mindOf({
+    episodes: [own(1, { w: 100 }), own(2, { w: 950 })],
+    beliefs: [belief(3, { ev: [1, 2] })],
+  });
+
+/** Laws of `capacity` under which the episodes of fadingMind fade fast. */
+const fastFading = (capacity: number) =>
+  life2With(
+    (species) => ({
+      ...species,
+      mind: { ...species.mind, halfLife: { episode: 12, belief: species.mind.halfLife.belief } },
+    }),
+    capacity,
+  );
 
 /**
  * A crosser whose decision at its arrival changes everything a decision may change: its behavior,
@@ -276,6 +318,93 @@ describe("the contest for room", () => {
       });
       expect(lost.mind).toEqual(gateMind());
     }
+  });
+
+  test("keeps nothing of a loser's mental operations and forgetting: its mind is the start's", () => {
+    const placed = [
+      being2(1, [EDGE + 1, row(0)], { mind: fadingMind() }),
+      being2(2, [EDGE, row(0)], { mind: fadingMind() }),
+    ];
+    const life = fastFading(1);
+    const world = beings2World({ controllers: { s1: mindful }, life, chunks: chunksOf(placed) });
+    const arrival = ARRIVAL - 1;
+    // At the arrival the episode 1 has faded, so a decision there would forget it.
+    const laws = { mind: life.species[0]?.mind, relations: life.species[0]?.relations } as never;
+    const at = (tick: number) => ({ moment: { tick, secondsPerTick: 12 }, laws, retention: 1000 });
+    expect(mind.forget(fadingMind(), at(1)).forgot).toEqual([]);
+    expect(mind.forget(fadingMind(), at(arrival)).forgot).toEqual([{ id: 1, beliefs: [3] }]);
+    const events = runTo(world, arrival);
+    for (const id of [1, 2]) {
+      const lost = beingOf(world, id) as beings.Being2;
+      expect(lost.outcome).toEqual({ result: "failed", tick: arrival, reason: "crowded" });
+      expect(lost.mind).toEqual(fadingMind());
+    }
+    expect(events.filter(({ type }) => type.startsWith("mind."))).toEqual([]);
+    // Not vacuous: at the next tick both decide where they stand, and the same changes apply.
+    const next = runTo(world, arrival + 1);
+    for (const id of [1, 2]) {
+      expect(
+        next
+          .filter(
+            ({ type, payload }) => type === "mind.changed" && (payload as { id: number }).id === id,
+          )
+          .map(({ payload }) => payload),
+      ).toEqual([
+        {
+          id,
+          encoded: [4],
+          formed: [{ id: 5, rule: "here" }],
+          revised: [],
+          dropped: [],
+          forgot: [{ id: 1, beliefs: [3] }],
+          related: [],
+        },
+      ]);
+      expect((beingOf(world, id) as beings.Being2).mind.next).toBe(6);
+    }
+  });
+
+  test("keeps a winner's mental changes and their events, in order, and drops a loser's", () => {
+    const at = (capacity: number) => {
+      const world = beings2World({
+        controllers: { s1: mindful },
+        life: life2With(undefined, capacity),
+      });
+      const events = runTo(
+        world,
+        ARRIVAL,
+        spawnsAt(1, [
+          [EDGE + 2, row(0)],
+          [EDGE, row(1)],
+          [EDGE, row(2)],
+        ]),
+      );
+      const minds = [2, 3].map((id) => (beingOf(world, id) as beings.Being2).mind);
+      return { events: events.filter(({ tick }) => tick === ARRIVAL), minds };
+    };
+    const roomy = at(3);
+    const tight = at(2);
+    const ofBeing = (events: readonly EngineEvent[], id: number) =>
+      events
+        .filter(({ payload }) => (payload as { id: number }).id === id)
+        .map(({ type, payload }) => [type, payload]);
+    const crowding = tight.events.find(
+      ({ payload }) => (payload as { reason?: string }).reason === "crowded",
+    );
+    const loser = (crowding?.payload as { id: number } | undefined)?.id;
+    if (loser === undefined) throw new Error("no arrival lost its room");
+    const winner = loser === 2 ? 3 : 2;
+    expect(ofBeing(roomy.events, winner).map(([type]) => type)).toEqual([
+      "being.finished",
+      "being.started",
+      "mind.changed",
+      "mind.provenance",
+    ]);
+    expect(ofBeing(tight.events, winner)).toEqual(ofBeing(roomy.events, winner));
+    expect(tight.minds[winner - 2]).toEqual(roomy.minds[winner - 2]);
+    expect(ofBeing(tight.events, loser)).toEqual([["being.finished", crowded(loser)]]);
+    expect(tight.minds[loser - 2]).toEqual(mind.newMind(0));
+    expect(roomy.minds[loser - 2]?.next).toBe(3);
   });
 
   test("emits a loser's crowded walk alone, after the second phase, and nothing of its decision", () => {

@@ -99,6 +99,24 @@ describe("the capture of a brain of beings@2", () => {
     }
   });
 
+  test("refuses the namespace obs, which the observables of the catalog hold", () => {
+    expect(
+      captureIssues({ s1: { brain: "a@1", decide: idle, behaviors: ["rest"], concepts: "obs" } }),
+    ).toEqual([
+      {
+        path: "/controllers/s1/concepts",
+        message:
+          'the namespace "obs" is reserved for the observables of the catalog: a brain declares its own',
+      },
+    ]);
+    expect(
+      beings.createBeingsRuleset({
+        controllers: { s1: { brain: "a@1", decide: idle, behaviors: ["rest"], concepts: "obs1" } },
+        rules: "beings@2",
+      }).versions.brain,
+    ).toBe("s1:a@1");
+  });
+
   test("keeps the behaviors it captured, whatever the host changes later", () => {
     const behaviors = ["rest"];
     const world = beings2World({
@@ -198,11 +216,14 @@ describe("a decision of beings@2", () => {
     expect(beingOf(declared, 1).behavior).toEqual({ kind: "rest", since: 2, heading: 0 });
   });
 
-  test("rejects as malformed an intention with a mind member, which arrives in a later batch", () => {
-    const early = brain2(() => ({ ...idle(), mind: { remember: [] } }) as never);
+  test("accepts an intention with a mind member, whose operations beings2-mind-ops.test.ts covers", () => {
+    const early = brain2(() => ({ ...idle(), mind: { remember: [] } }));
     const world = beings2World({ controllers: { s1: early } });
     runTo(world, 2, [spawn(1, { species: "s1", cell: [5, 5] })]);
-    expect(beingOf(world, 1).outcome).toEqual({ result: "rejected", tick: 2, reason: "malformed" });
+    expect(beingOf(world, 1)).toMatchObject({
+      outcome: { result: "none", tick: 1, reason: "" },
+      activity: { kind: "idle", start: 2 },
+    });
   });
 
   test("gives the brain senses it may keep: writing to them changes nothing", () => {

@@ -40,8 +40,9 @@ function arrivalsOf(env: BeingsEnv, works: readonly Work[]): Arrival[] {
  * the being keeps nothing of a decision it made at this tick (mind.md, "The tick of beings@2"): a
  * walk whose last step arrived already ended in the second phase, where the being decided again,
  * and that intention is discarded with what it started, its plan, behavior, wake conditions, and
- * cooldowns. Its mind is the one it had at the start of the tick: the system shares it, never
- * writes it. It decides again at the next tick from the cell it is in, unless its body put it into
+ * cooldowns, and with its mental operations and the forgetting of that decision: its mind is the
+ * very one it had at the start of the tick, and the decision's ledger is dropped with its events.
+ * It decides again at the next tick from the cell it is in, unless its body put it into
  * a forced sleep at this tick, a fact of its body that it keeps there, with no plan and no wake
  * conditions; its record then matches the events of its body it keeps.
  */
@@ -63,6 +64,8 @@ function crowd(env: BeingsEnv, work: Work): void {
   work.plan = [];
   work.behavior = restored.behavior;
   work.cooldowns = restored.cooldowns;
+  work.mind = work.held;
+  work.ledger = undefined;
   if (isForcedSleep(work)) {
     work.wakeWhen = {};
     return;
