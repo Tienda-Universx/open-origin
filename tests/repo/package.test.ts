@@ -83,8 +83,9 @@ const TSC_STEP = /^bunx --no-install --bun tsc --noEmit -p (\S+)$/;
 const TEST_BUDGET_MS = 30_000;
 
 /**
- * The most it may give: the largest budget a test sets itself. Above it the flag stops being a
- * budget, and a test that hangs waiting would run until the CI job's own timeout stops the job.
+ * The most it may give: the largest default a test file sets with setDefaultTimeout; a test that
+ * needs more sets its own, as survival.test.ts does (180 s). A far larger value, such as 2^32 - 1,
+ * would in effect turn the deadline off and leave only the CI job's timeout to stop a hang.
  */
 const TEST_BUDGET_MAX_MS = 60_000;
 
