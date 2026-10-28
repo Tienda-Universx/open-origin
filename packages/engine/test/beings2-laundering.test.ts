@@ -276,6 +276,54 @@ describe("forgetting the injected premise and believing again", () => {
   });
 });
 
+describe("displacing the injected premise from a full store (plan §6, forced eviction)", () => {
+  /** Laws under which a mind holds one episode, so that a new one displaces the one it holds. */
+  const ONE_EPISODE = life2With((species) => ({
+    ...species,
+    mind: { ...species.mind, episodes: 1 },
+  }));
+
+  /**
+   * Decision 1, woken by the injection: it remembers the message and believes it. Decision 2: it
+   * remembers, more strongly, the food of its own cell, a clean observation that displaces the
+   * message from the full store.
+   */
+  const displacing: Script = (senses, n) => {
+    const { next } = senses.mind;
+    if (n === 0) return idling(LONG);
+    if (n === 1)
+      return idling(120_000, {
+        remember: [{ percept: { heard: 0 }, w: 500 }],
+        believe: [{ p: CLAIM, cr: 800, ev: [next], rule: "told" }],
+      });
+    if (n === 2) return idling(LONG, { remember: [{ percept: { food: cellOf(senses) }, w: 900 }] });
+    return idling(LONG);
+  };
+
+  test("keeps the taints of the belief whose premise a clean observation displaced", () => {
+    const { world } = alone(displacing, ONE_EPISODE);
+    const events = runTo(world, 20, [inject(3, 1, rowCell(1))]);
+    // The clean episode took the only place: the message is forgotten, and the belief that cited it
+    // is named in the ledger with it.
+    const forgot = events.find(
+      ({ type, payload }) =>
+        type === "mind.changed" && (payload as { forgot: unknown[] }).forgot.length > 0,
+    );
+    expect(forgot?.payload).toMatchObject({ encoded: [3], forgot: [{ id: 1, beliefs: [2] }] });
+    const held = mindIn(world, 1);
+    expect(held.episodes.map(({ id, kind }) => [id, kind])).toEqual([[3, "food"]]);
+    expect(beliefsOf(held, CLAIM)[0]).toMatchObject({
+      id: 2,
+      ev: [],
+      lost: 1,
+      tn: humanExternal,
+      ex: humanExternal,
+    });
+    expect(held.exposure).toBe(humanExternal);
+    expect(ledgerProblems(world, events)).toEqual([]);
+  });
+});
+
 describe("a variant of the injected claim", () => {
   /** Woken by the injection, it never remembers it: it believes variants citing its own cell's food. */
   const varying: Script = (senses, n) => {

@@ -1105,13 +1105,14 @@ default or held-out label runs):
   engine, with brains that follow a script: a claim injected into the first of a chain of five
   beings keeps `human-external` in every belief and message to the fifth, each link citing a clean
   observation first, while the same chain from an observation stays reasoned; a belief keeps its
-  taints when its premise fades, and the claim believed again from a clean observation, or varied
-  in cell, band, or concept, keeps them in `ex`; a belief that cites nothing is
-  `model-prior-suspect` and grows the exposure; a `relate` citing a tainted message taints the
-  relationship and the beliefs that cite it, before and after; corroboration lowers nothing;
-  cycles are `premise_order`; a claim parked in a cooldown and `behavior.kind` keeps its `ex`; an
-  ask names only the food its species perceives; and an injection that claims to be clean carries
-  `human-external` or is `invalid_inject`. No sense of any being of the chain holds a taint.
+  taints when its premise fades, or when a clean observation displaces it from a full store, and the
+  claim believed again from a clean observation, or varied in cell, band, or concept, keeps them in
+  `ex`; a belief that cites nothing is `model-prior-suspect` and grows the exposure; a `relate`
+  citing a tainted message taints the relationship and the beliefs that cite it, before and after;
+  corroboration lowers nothing; cycles are `premise_order`; a claim parked in a cooldown and
+  `behavior.kind` keeps its `ex`; an ask names only the food its species perceives; and an injection
+  that claims to be clean carries `human-external` or is `invalid_inject`. No sense of any being of
+  the chain holds a taint.
 - **A false claim.** `mind-false-claim.test.ts`, on a corner of the test genesis without food:
   the world after the injection equals the world without it but for the being's mind; the being
   believes the claim at 600, seeks it, sees the cell hold nothing, revises to 100, and drops it.
