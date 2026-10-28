@@ -446,3 +446,59 @@ describe("the operations of one decision", () => {
     });
   });
 });
+
+describe("the check that every belief operation is its rule", () => {
+  // A told belief of (4, 0) that the window contradicts, the cue the decision remembers of it,
+  // and the relationship with its speaker: the operations of a check, written by hand.
+  const told = belief(3, [4, 0], { cr: 640, src: 2, who: 7 });
+  const senses = senses2Of(window(), {
+    mind: { next: 10, beliefs: [told], relations: [relationView(2, 7)] },
+  });
+  const checked = (ops: beings.MindIntention) =>
+    ruleProblems(senses, { ...utility.decide(senses), mind: ops });
+  const remember = [{ percept: { food: [4, 0] as const }, w: FOOD_W }];
+
+  test("accepts a relate that is the trust change of the testimony it checks", () => {
+    expect(checked({ remember, relate: [{ who: 7, tr: -TRUST_STEP, because: [3, 10] }] })).toEqual(
+      [],
+    );
+  });
+
+  test.each([
+    { name: "the wrong sign", relate: { who: 7, tr: TRUST_STEP, because: [3, 10] } },
+    { name: "the wrong size", relate: { who: 7, tr: -1, because: [3, 10] } },
+    { name: "another being", relate: { who: 8, tr: -TRUST_STEP, because: [3, 10] } },
+    { name: "an affinity", relate: { who: 7, aff: 5, tr: -TRUST_STEP, because: [3, 10] } },
+    { name: "no cue", relate: { who: 7, tr: -TRUST_STEP, because: [3] } },
+  ])("refuses a relate with $name", ({ relate }) => {
+    expect(checked({ remember, relate: [relate] })).toHaveLength(1);
+  });
+
+  test("refuses a relate of a belief the being was not told", () => {
+    const seen = senses2Of(window(), {
+      mind: {
+        next: 10,
+        beliefs: [belief(3, [4, 0], { cr: 640 })],
+        relations: [relationView(2, 7)],
+      },
+    });
+    const ops = { remember, relate: [{ who: 7, tr: -TRUST_STEP, because: [3, 10] }] };
+    expect(ruleProblems(seen, { ...utility.decide(seen), mind: ops })).toHaveLength(1);
+  });
+
+  test("accepts a drop of a belief contradicted again, or of food beyond its window, only", () => {
+    const twice = belief(3, [4, 0], { cr: CONTRADICTED_CR });
+    const beyond = belief(4, [40, 0]);
+    const held = senses2Of(window([[5, 0, 2]]), {
+      mind: { next: 10, beliefs: [twice, beyond, belief(5, [5, 0]), belief(6, [4, 0], { v: 0 })] },
+    });
+    const dropped = (id: number) =>
+      ruleProblems(held, { ...utility.decide(held), mind: { drop: [id] } });
+    expect(dropped(3)).toEqual([]);
+    expect(dropped(4)).toEqual([]);
+    // Seen as it believes it, or seen as it is: no drop.
+    expect(dropped(5)).toHaveLength(1);
+    expect(dropped(6)).toHaveLength(1);
+    expect(dropped(99)).toHaveLength(1);
+  });
+});
