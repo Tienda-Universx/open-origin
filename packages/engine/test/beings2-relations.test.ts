@@ -263,10 +263,21 @@ describe("the speaker of a message in the inbox", () => {
   });
 
   test("of a known speaker changes nothing: hearing is no co-presence, so step 1 only creates", () => {
+    // Being 1 last perceived being 41 at tick 1, and hears it at its decision at tick 5, 48 s on.
     const known = relationship(1, 41, { f: 100, seen: 1, aff: 20, tr: 700 });
-    const { being, events } = relateOnce({}, { held: { ...held, next: 2, relations: [known] } });
-    expect(being.mind.relations).toEqual([known]);
-    const changed = eventsAt(events, 1).find(([type]) => type === "mind.changed");
+    const hearer = {
+      ...being2(1, A, { mind: { ...held, next: 2, relations: [known] } }),
+      activity: { kind: "idle" as const, start: 0, ms: 5 * 12_000 },
+      wake: 5,
+    };
+    const world = beings2World({
+      controllers: { s1: brain2(() => idling(LONG)) },
+      chunks: chunksOf([hearer]),
+    });
+    const events = runTo(world, 5);
+    expect(relationsOf(world, 1)).toEqual([known]);
+    expect(beingOf(world, 1) as beings.Being2).toMatchObject({ mind: { inbox: [] } });
+    const changed = eventsAt(events, 5).find(([type]) => type === "mind.changed");
     expect(changed?.[1]).toMatchObject({ related: [] });
   });
 
