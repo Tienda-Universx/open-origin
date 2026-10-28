@@ -30,7 +30,7 @@ import { validCommands } from "./support/tally-fuzz.ts";
  * took about 22 s, and every check and Phase B mutant runs the whole suite, so the fuzz runs 64
  * seeds, about 8 s: a fuzz gains less from each extra seed than from the systems it drives, which
  * stay in. For a larger sweep, raise SEEDS locally for one run, and restore it before committing;
- * the timeout follows SEEDS, and the test script stays `bun test`.
+ * the timeout follows SEEDS, and the test script needs no change.
  *
  * Timeout. The test is synchronous, so Bun cannot interrupt it: it fails the test after it ran
  * longer than the timeout, and the CI job's timeout is what stops a hang. The timeout is thus a

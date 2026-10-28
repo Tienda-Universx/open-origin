@@ -76,6 +76,22 @@ function looselyPinned(dependencies: Record<string, string> = {}): string[] {
 /** One step of the typecheck script: tsc, forced onto Bun, on one project. */
 const TSC_STEP = /^bunx --no-install --bun tsc --noEmit -p (\S+)$/;
 
+/**
+ * The least time CI's test script gives a test that sets none of its own: about six times the
+ * slowest such test measured on CI, 5.1 s, where Bun's default of 5 s failed it (2026-10-28).
+ */
+const TEST_BUDGET_MS = 30_000;
+
+/**
+ * The most it may give: the largest default a test file sets with setDefaultTimeout; a test that
+ * needs more sets its own, as survival.test.ts does (180 s). A far larger value, such as 2^32 - 1,
+ * would in effect turn the deadline off and leave only the CI job's timeout to stop a hang.
+ */
+const TEST_BUDGET_MAX_MS = 60_000;
+
+/** CI's test script: the whole suite, one worker per core, with a time for tests that set none. */
+const TEST_SCRIPT = /^bun test --parallel --timeout (\d+)$/;
+
 describe("script checks", () => {
   const scripts = new Set(["lint", "typecheck"]);
 
@@ -153,9 +169,15 @@ describe("package.json", () => {
     expect(manifest.scripts.typecheck).toMatch(
       /^bunx --no-install --bun tsc (?=.*--noEmit)(?=.*-p tsconfig\.json)/,
     );
-    // Only --parallel, which runs every file on one worker per core: any other argument, a path or
-    // an option such as --test-name-pattern, can narrow the suite CI runs.
-    expect(manifest.scripts.test).toBe("bun test --parallel");
+    // Only --parallel, which runs every file on one worker per core, and --timeout: any other
+    // argument, a path or an option such as --test-name-pattern, can narrow the suite CI runs.
+    const script = manifest.scripts.test ?? "";
+    expect(script).toMatch(TEST_SCRIPT);
+    // Under --parallel a test's wall time varies with the runner's load: on CI the same test took
+    // from 1.8 to 5.0 s across seven runs, and Bun's default of 5 s failed two tests at 5.0 and 5.1 s.
+    const [, timeout] = TEST_SCRIPT.exec(script) ?? [];
+    expect(Number(timeout)).toBeGreaterThanOrEqual(TEST_BUDGET_MS);
+    expect(Number(timeout)).toBeLessThanOrEqual(TEST_BUDGET_MAX_MS);
   });
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {
