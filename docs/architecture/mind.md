@@ -77,10 +77,10 @@ the tick:
 - **Its mind.** A view of its episodes, beliefs, and relationships, with ages in simulated seconds
   (saturating at 2^31 − 1) instead of ticks, familiarity as it stands at that moment, from 0 to
   1000, and `next`, so that a brain can cite a record it creates in the same decision. A
-  relationship's `talk` is left out of the view until the being first addresses that being. A research injection appears in it as a message whose speaker is
-  not visible: the kind `external` and the evidence bit 8 are C3, and the view shows them as
-  `heard` and as told. That a message came with no visible speaker is the one thing the being can
-  tell, a declared limit.
+  relationship's `talk` is left out of the view until the being first addresses that being. A
+  research injection appears in it as a message whose speaker is not visible: the kind `external`
+  and the evidence bit 8 are C3, and the view shows them as `heard` and as told. That a message came
+  with no visible speaker is the one thing the being can tell, a declared limit.
 
 The senses and the view are built by allowlist, derived from the
 [classification registry](#classification): `tn`, `ex`, `exposure`, and the captured content of a
@@ -158,8 +158,8 @@ A **relationship** is `{ id, who, f, seen, aff, tr, tn, talk, turns }`: its loca
 being; `f`, its familiarity as seconds of co-presence, decayed by absences, as of the tick `seen` it
 was last perceived, saturating where it gives 1000; affinity from −1000 to 1000, starting at 0;
 trust in its claims from 0 to 1000, starting at 500; its taints; the tick the being last addressed
-it, 0 before it ever did; and the acts addressed to it in the current conversation. A mind holds one
-relationship per being.
+it, 0 before it ever did, which no act can be, since the first tick a world computes is 1; and the
+acts addressed to it in the current conversation. A mind holds one relationship per being.
 
 An **inbox message** is `{ who?, t, cell?, act, p?, band?, tn, ex }`. An injection's message has
 no `who` and no `cell`, and its act is `tell`.
@@ -295,7 +295,8 @@ no operation applies; what step 1 did stays, because it is a law, not a proposal
   cites none, at most `mind.depth`. Depth follows the live citations, so it falls when a cited
   belief leaves. An operation is refused when it makes a belief, new or held, deeper than it was and
   deeper than `mind.depth`; a belief already deeper does not stop an operation that leaves it no
-  deeper.
+  deeper. A new belief's depth is judged as it is formed, before its store admits it, so a full
+  store that would evict it, or its premise, changes nothing.
 - `revise` must cite at least one record it did not cite before; `ev` keeps the three most recent
   citations, those of the operation last, in the order given, and the ledger records any it drops.
   `src`, `tn`, and `ex` keep what the dropped ones brought.
@@ -636,28 +637,28 @@ Targets, measured with the named scenarios of [T4's benchmark](beings.md#the-sca
   changes no output; a miss that remains is recorded as it is.
 
 **The gate of the entity section.** In T5-4, before the brain exists, a benchmark brain gives every
-being of "dispersed 1,000" **the gate's mind**, the record mix a `mind@1` being holds, decided
-here: 5 `food`, 1 `being`, 1 `ate`, and 1 `heard` episode of a `tell`; 8 beliefs of `m1.food-at`,
-each citing 2 records; 6 relationships; an empty inbox, which every decision consumes; typical
-values and propositions without `neg`. Its values, which tests build exactly: distinct local ids of
-three digits (the records take 977 to 998, and `next` is 999); every tick 99,999,999 (`t`, `r`,
-`u`, `seen`, `talk`, and `quota.day`); every cell [−99,999, −99,999]; entity ids of five digits,
-99,999 and below, one per relationship; each proposition `{ p: "m1.food-at", a: [{ c: cell }],
-v: 2 }`. The `food` episodes have `v` 2, the `being` episode `v` 1, the `ate` episode `v` 25, and
-the `heard` episode `act` "tell", `band` 2, `tn` and `ex` 0, and no `v`; every episode has `w` 600.
-Each belief has `cr` 800, `src` 1, two episodes in `ev`, `lost` 0, `tn` and `ex` 0, `dp` 1, and no
-`who`. Each relationship has `f` 3,600, `aff` 100, `tr` 600, `tn` 0, and `turns` 1. The exposure is
-0, and the quota `{ said: 5, woken: 2 }`. It measures 2,680 B, so a being is about
-3.2 KB, and the estimate from T4's 112.4 KB at p99 is about 0.7 MB, below the trigger. If the
-measured p99 hashed is below 1 MB, the entity section stays in T7. If not, the capacities come down
-first (the largest mind at 6 episodes, 6 beliefs, and 4 relationships measured 3,096 B with
+being of "dispersed 1,000" **the gate's mind**, the record mix a `mind@1` being holds, decided here:
+5 `food`, 1 `being`, 1 `ate`, and 1 `heard` episode of a `tell`; 8 beliefs of `m1.food-at`, each
+citing 2 records; 6 relationships; an empty inbox, which every decision consumes; typical values and
+propositions without `neg`. Its values, which tests build exactly: distinct local ids of three
+digits (the records take 977 to 998, and `next` is 999); every tick 99,999,999 (`t`, `r`, `u`,
+`seen`, `talk`, and `quota.day`); every cell [−99,999, −99,999]; entity ids of five digits, 99,999
+and below, one per relationship; each proposition `{ p: "m1.food-at", a: [{ c: cell }], v: 2 }`. The
+`food` episodes have `v` 2, the `being` episode `v` 1, the `ate` episode `v` 25, and the `heard`
+episode `act` "tell", `band` 2, `tn` and `ex` 0, and no `v`; every episode has `w` 600. Each belief
+has `cr` 800, `src` 1, two of the episodes 977 to 983 in `ev`, never the `heard` one, `lost` 0, `tn`
+and `ex` 0, `dp` 1, and no `who`. Each relationship has `f` 3,600, `aff` 100, `tr` 600, `tn` 0, and
+`turns` 1. The exposure is 0, and the quota `{ said: 5, woken: 2 }`. It measures 2,680 B, so a being
+is about 3.2 KB, and the estimate from T4's 112.4 KB at p99 is about 0.7 MB, below the trigger. If
+the measured p99 hashed is below 1 MB, the entity section stays in T7. If not, the capacities come
+down first (the largest mind at 6 episodes, 6 beliefs, and 4 relationships measured 3,096 B with
 typical values); if the smallest useful mind is still above it, T5 stops for the maintainer's
-decision, because bringing the section forward changes the kernel,
-`ENGINE_VERSION`, and the goldens of T2 to T4. "dispersed 10,000" already crosses it: at about
-1.3 KB per being its p99 reaches 1 MB ([beings](beings.md#ceilings)), so with minds it is a ceiling
-outside what v0.1 supports, measured and recorded in T5-9. For T7, the section needs one hash term
-per component, body and mind, so that a step rehashes about 0.5 KB rather than about 4 KB; T5-9
-measures the share of writes that change only the body as evidence for that design.
+decision, because bringing the section forward changes the kernel, `ENGINE_VERSION`, and the goldens
+of T2 to T4. "dispersed 10,000" already crosses it: at about 1.3 KB per being its p99 reaches 1 MB
+([beings](beings.md#ceilings)), so with minds it is a ceiling outside what v0.1 supports, measured
+and recorded in T5-9. For T7, the section needs one hash term per component, body and mind, so that
+a step rehashes about 0.5 KB rather than about 4 KB; T5-9 measures the share of writes that change
+only the body as evidence for that design.
 
 ## Verification plan
 

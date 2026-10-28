@@ -71,8 +71,11 @@ export const LIVE_MANIFEST: Manifest = Object.freeze({ kind: "live" });
 export type BeliefChanges = {
   /** The beliefs formed, with the brain's rule, including one its full store evicted at once. */
   readonly formed: readonly { readonly id: LocalId; readonly rule: string }[];
-  /** The beliefs revised, by `revise` or by adopting a proposition they hold. */
-  readonly revised: readonly LocalId[];
+  /**
+   * Each revision, in order: by `revise`, or, with the rule of the `believe` that made it, by
+   * adopting a proposition the belief holds.
+   */
+  readonly revised: readonly { readonly id: LocalId; readonly rule?: string }[];
   readonly dropped: readonly LocalId[];
   /** Every record that left the mind, dropped or evicted, and the beliefs that lost it. */
   readonly unlinked: readonly Unlinked[];
@@ -182,7 +185,7 @@ class Draft {
   readonly #ctx: MindContext;
   readonly #manifest: Manifest;
   readonly #formed: { readonly id: LocalId; readonly rule: string }[] = [];
-  readonly #revised: LocalId[] = [];
+  readonly #revised: { readonly id: LocalId; readonly rule?: string }[] = [];
   readonly #dropped: LocalId[] = [];
   readonly #unlinked: Unlinked[] = [];
   readonly #uncited: { readonly belief: LocalId; readonly records: readonly LocalId[] }[] = [];
@@ -252,12 +255,14 @@ class Draft {
 
   believe(op: BelieveOperation): MindReason | undefined {
     const held = this.mind.beliefs.find((belief) => sameProposition(belief.p, op.p));
-    if (held !== undefined) return this.revise({ id: held.id, cr: op.cr, ev: op.ev });
+    if (held !== undefined) return this.revise({ id: held.id, cr: op.cr, ev: op.ev }, op.rule);
     const before = this.mind.beliefs;
     const cited = this.#cite(op.ev);
     if (typeof cited === "string") return cited;
     const id = freeId(this.mind);
     if (id === undefined) return "mind_malformed";
+    // Judged as formed: its store may evict it, or its premise, only once it is admitted.
+    if (deepestOf(cited) + 1 > this.#ctx.laws.mind.depth) return "depth_exceeded";
     this.#refresh(cited);
     const { exposure } = this.mind;
     const belief = formedBelief(id, op, cited, { exposure, now: this.#ctx.moment.tick });
@@ -273,7 +278,8 @@ class Draft {
     return this.#settle(before);
   }
 
-  revise(op: ReviseOperation): MindReason | undefined {
+  /** Revises a belief; `rule` is the rule of the `believe` that adopted its proposition, if one did. */
+  revise(op: ReviseOperation, rule?: string): MindReason | undefined {
     const before = this.mind.beliefs;
     const added = op.ev;
     const cited = this.#cite(added);
@@ -290,7 +296,7 @@ class Draft {
     });
     const beliefs = this.mind.beliefs.map((held) => (held.id === target.id ? belief : held));
     this.mind = { ...this.mind, beliefs, exposure: exposureAfterBelief(exposure, belief) };
-    if (!this.#revised.includes(target.id)) this.#revised.push(target.id);
+    this.#revised.push({ id: target.id, ...(rule === undefined ? {} : { rule }) });
     if (uncited.length > 0) this.#uncited.push({ belief: target.id, records: uncited });
     return this.#settle(before);
   }

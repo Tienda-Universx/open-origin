@@ -157,7 +157,8 @@ describe("believe", () => {
       { ...belief(3, { p: foodAt(5, 5) }), cr: 950, ev: [1, 2], u: 100 },
     ]);
     expect(changes.formed).toEqual([]);
-    expect(changes.revised).toEqual([3]);
+    // The adoption carries the rule of the believe that made it.
+    expect(changes.revised).toEqual([{ id: 3, rule: "again" }]);
   });
 
   test("stores a copy of the proposition it is given", () => {
@@ -327,7 +328,7 @@ describe("revise", () => {
       ex: 4 | 1,
       u: 100,
     });
-    expect(changes.revised).toEqual([5]);
+    expect(changes.revised).toEqual([{ id: 5 }]);
     // Belief 6 cites 5, so it takes the new taints.
     expect(after.beliefs[1]).toMatchObject({ tn: 6, ex: 5 });
     expect(changes.tainted).toEqual([6]);
@@ -394,6 +395,33 @@ describe("revise", () => {
 });
 
 describe("the depth limit", () => {
+  // A full store of three: beliefs 1 to 3 at depths 1 to 3, the limit of 3.
+  const chain = (premise: number) =>
+    mindOf({
+      beliefs: [
+        belief(1, { cr: 1000, u: 100 }),
+        belief(2, { cr: 1000, ev: [1], dp: 2, src: 4, u: 100 }),
+        belief(3, { cr: premise, ev: [2], dp: 3, src: 4, u: 100 }),
+      ],
+    });
+  const full = contextAt(100, lawsWith({ beliefs: 3, depth: 3 }));
+
+  test("judges a new belief as formed, even when its full store would evict it at once", () => {
+    // Salience 500 is the lowest, so the store would drop the new belief and keep the rest.
+    const weak = believe([3], foodAt(9, 9), 500);
+    expect(reasonOf(chain(1000), { believe: [weak] }, full)).toBe("depth_exceeded");
+    expect(reasonOf(chain(1000), { believe: [weak] }, contextAt(100, lawsWith({ depth: 3 })))).toBe(
+      "depth_exceeded",
+    );
+  });
+
+  test("judges a new belief as formed, even when admitting it would evict its own premise", () => {
+    // Belief 3 has the lowest salience, 500: admitting the new belief would evict it, leaving the
+    // new one at depth 1.
+    const strong = believe([3], foodAt(9, 9), 900);
+    expect(reasonOf(chain(500), { believe: [strong] }, full)).toBe("depth_exceeded");
+  });
+
   // Beliefs 2 and 3 are already deeper than a limit of 1.
   const beyond = mindOf({
     episodes: [own(1), own(5)],

@@ -187,7 +187,8 @@ function gateMind(): mind.Mind {
       p: proposition(),
       cr: 800,
       src: 1,
-      ev: [977 + (index % 5), 982 + (index % 3)],
+      // Own episodes only: a belief citing the heard one would have `src` 2 and `who`.
+      ev: [977 + (index % 5), 982 + (index % 2)],
       lost: 0,
       tn: 0,
       ex: 0,

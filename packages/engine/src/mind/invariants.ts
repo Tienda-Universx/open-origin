@@ -22,7 +22,7 @@ import {
   type Relationship,
   recordOf,
 } from "./records.ts";
-import { citedTaints, coversTaints } from "./taints.ts";
+import { citedTaints, coversTaints, TAINTS } from "./taints.ts";
 
 const B = MIND_BOUNDS;
 
@@ -53,6 +53,18 @@ function checkCell(cell: Cell, path: string, sink: IssueSink): void {
 function checkAct(act: string, path: string, sink: IssueSink): void {
   if (!(ACTS as readonly string[]).includes(act))
     sink.report(path, `the act is one of ${ACTS.join(", ")}`);
+}
+
+/** Reports a `greet`, `ask`, or `unknown` with a taint: those acts carry no content. */
+function checkContent(act: string, taints: number, path: string, sink: IssueSink): void {
+  if (act === "tell" || !(ACTS as readonly string[]).includes(act) || taints === 0) return;
+  sink.report(path, `the act ${act} carries no content, so it carries no taint`);
+}
+
+/** Reports an injection's lineage without human-external, which it always carries. */
+function checkInjected(tn: number, path: string, sink: IssueSink): void {
+  if (!within(tn, B.taints) || (tn & TAINTS.humanExternal) !== 0) return;
+  sink.report(path, `an injection always carries human-external (${TAINTS.humanExternal})`);
 }
 
 /** Reports a store holding more records than any law allows. */
@@ -103,6 +115,7 @@ function checkEpisode(episode: Episode, path: string, sink: IssueSink): void {
   checkInt(episode.r, B.tick, `${path}/r`, sink);
   if (episode.kind === "external") {
     checkInt(episode.tn, B.taints, `${path}/tn`, sink);
+    checkInjected(episode.tn, `${path}/tn`, sink);
     return;
   }
   checkCell(episode.cell, `${path}/cell`, sink);
@@ -116,6 +129,7 @@ function checkEpisode(episode: Episode, path: string, sink: IssueSink): void {
   checkOptional(episode.band, B.band, `${path}/band`, sink);
   checkInt(episode.tn, B.taints, `${path}/tn`, sink);
   checkInt(episode.ex, B.taints, `${path}/ex`, sink);
+  checkContent(episode.act, episode.tn | episode.ex, path, sink);
 }
 
 /** The records `belief` cites that `mind` holds, after reporting each citation it does not. */
@@ -196,6 +210,22 @@ function checkRelationship(
   }
 }
 
+/**
+ * Reports a message whose speaker and cell do not come together: a known speaker's message has
+ * both, and an injection's has neither, is a `tell`, and carries human-external.
+ */
+function checkSender(message: InboxMessage, path: string, sink: IssueSink): void {
+  if (message.who !== undefined && message.cell === undefined) {
+    sink.report(`${path}/cell`, "a message from a known speaker has the cell it was said from");
+  } else if (message.who === undefined && message.cell !== undefined) {
+    sink.report(`${path}/who`, "a message with a cell has a speaker: an injection has neither");
+  } else if (message.who === undefined && message.act !== "tell") {
+    sink.report(`${path}/act`, "an injection's message is a tell");
+  } else if (message.who === undefined) {
+    checkInjected(message.tn, `${path}/tn`, sink);
+  } else checkContent(message.act, message.tn | message.ex, path, sink);
+}
+
 function checkMessage(message: InboxMessage, path: string, sink: IssueSink): void {
   checkOptional(message.who, B.entity, `${path}/who`, sink);
   checkInt(message.t, B.tick, `${path}/t`, sink);
@@ -204,6 +234,7 @@ function checkMessage(message: InboxMessage, path: string, sink: IssueSink): voi
   checkOptional(message.band, B.band, `${path}/band`, sink);
   checkInt(message.tn, B.taints, `${path}/tn`, sink);
   checkInt(message.ex, B.taints, `${path}/ex`, sink);
+  checkSender(message, path, sink);
 }
 
 /** Reports the bounds of the members that are not records. */

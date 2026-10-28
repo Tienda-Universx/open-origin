@@ -142,6 +142,44 @@ describe("checkMind", () => {
     expect(pathsOf({ ...VALID, ...change })).toEqual(expected);
   });
 
+  test("reports an injection without human-external, and a message without content that is tainted", () => {
+    const episodes = [
+      external(1, { tn: 4 }),
+      heard(2, 41, { act: "greet", tn: 0, ex: 2 }),
+      heard(3, 41, { act: "ask", tn: 1, ex: 0 }),
+    ];
+    expect(issuesOf({ ...VALID, episodes, beliefs: [], relations: [], next: 4 })).toEqual([
+      { path: "/mind/episodes/0/tn", message: "an injection always carries human-external (2)" },
+      {
+        path: "/mind/episodes/1",
+        message: "the act greet carries no content, so it carries no taint",
+      },
+      {
+        path: "/mind/episodes/2",
+        message: "the act ask carries no content, so it carries no taint",
+      },
+    ]);
+    const inbox: mind.InboxMessage[] = [
+      { who: 41, t: 0, act: "greet", tn: 0, ex: 0 },
+      { t: 0, cell: [1, 1], act: "tell", tn: 2, ex: 0 },
+      { t: 0, act: "greet", tn: 2, ex: 0 },
+      { t: 0, act: "tell", tn: 4, ex: 0 },
+    ];
+    expect(pathsOf({ ...VALID, inbox })).toEqual([
+      "/mind/inbox/0/cell",
+      "/mind/inbox/1/who",
+      "/mind/inbox/2/act",
+      "/mind/inbox/3/tn",
+    ]);
+    const silent: mind.InboxMessage = { who: 41, t: 0, cell: [1, 1], act: "unknown", tn: 0, ex: 4 };
+    expect(issuesOf({ ...VALID, inbox: [silent] })).toEqual([
+      {
+        path: "/mind/inbox/0",
+        message: "the act unknown carries no content, so it carries no taint",
+      },
+    ]);
+  });
+
   test("bounds a failed episode's value by the reasons it indexes", () => {
     expect(mind.FAILURES).toEqual(["no_food", "food_gone", "incapacitated", "crowded"]);
     expect(mind.MIND_BOUNDS.failure).toEqual({ min: 0, max: mind.FAILURES.length - 1 });
@@ -234,7 +272,7 @@ describe("checkMind", () => {
 
   test("bounds each store by the largest capacity a law allows", () => {
     const episodes = Array.from({ length: 17 }, (_, index) => own(index + 1));
-    const inbox = Array.from({ length: 5 }, () => ({ t: 0, act: "greet" as const, tn: 0, ex: 0 }));
+    const inbox = Array.from({ length: 5 }, () => ({ t: 0, act: "tell" as const, tn: 2, ex: 0 }));
     expect(pathsOf({ ...mindOf({ episodes }), inbox })).toEqual(["/mind/episodes", "/mind/inbox"]);
     expect(issuesOf({ ...mindOf({ episodes }) })[0]?.message).toBe(
       "a store holds at most 16 records, not 17",
