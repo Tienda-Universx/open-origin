@@ -99,7 +99,8 @@ const TEST_SCRIPT =
 /**
  * The file CI's test script runs alone, after the rest: the preregistered evaluation of T5, whose
  * two child processes run 63,000 ticks each. Among the other files under --parallel, it took 31 to
- * 44 s of a suite that reached 76.1 s on a slow runner, past the budget of 70 s (plan §11.4).
+ * 44 s of a suite that reached 76.1 s on CI, past the budget of 70 s (plan §11.4), which now holds
+ * for each step: a decision recorded in the tracker (L65).
  */
 const SEQUENTIAL_TEST = "packages/agents/test/mind-evaluation.test.ts";
 

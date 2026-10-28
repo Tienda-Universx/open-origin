@@ -1031,7 +1031,7 @@ computes, without judging:
   `ate`, or `failed` episode at that belief's cell. Two kinds of record leave the state in the
   decision that makes them: an episode a full store evicts at once, whose kind its percept gives,
   and a belief evicted at once, which the ledger gives no citations for and which is classed by its
-  rule. None did in the two runs of CI; in the soak, 6 beliefs did on `heldout/2` under `mind@1`
+  rule. No belief did in the two runs of CI; in the soak, 6 beliefs did on `heldout/2` under `mind@1`
   (4 in its run with the false claim), classed by their rule. A belief with `model-prior-suspect`
   counts once for its being, however many decisions the ledger shows it in.
 - **Speech**: greetings and conversations from `speech.uttered` and `speech.delivered`.
@@ -1101,7 +1101,8 @@ label, informative only, since only the default label and `heldout/1` are prereg
 | `heldout/5` | every being: meals ≥ 300,000; 1 also beliefs seen; 6 also outside the birth window | every item |
 | `heldout/6` | none | every item |
 
-The items of T4 among these misses come from the terrain and the laws, not from `mind@1`: the
+The items of T4 among these misses come from the terrain and the laws, not from what `mind@1`
+remembers or says: the
 amnesic ablation, which keeps no record and says nothing, misses the same ones, the regrowth on
 `heldout/2`, beings 5 and 8 of `heldout/4` outside their birth window, and on `heldout/5` every
 being without a meal of 300,000 and being 6 outside its birth window, and one more there, being 3
@@ -1197,7 +1198,7 @@ wake that does not decide cost 486 µs against 143 µs (152 such ticks), 320 µs
 tick. The p99 hashed is below 1 MB, so the entity section stays in T7. With full minds, the time
 targets of "dispersed 1,000" are missed: the median tick of 50.01 ms misses at most 50 by 0.01 ms;
 the p99 of 113.28 ms misses at most 100; and 320 µs more per wake that does not decide misses at
-most 150. The cause is not yet measured: every write of a being turns its whole
+most 150. At T5-4 the cause was not yet measured: every write of a being turns its whole
 chunk, mind included, into canonical text, hashes it, and validates it. T5-9 profiled that cost
 after its refactor of the window's edges, which leaves it as it was ("The misses that remain",
 below), and records the miss as it is.
@@ -1252,7 +1253,7 @@ EPYC 7763 core, with Bun 1.4.4; "before" is `main` at `7a26777`, "after" the ref
   decisions. Unprofiled, a write cost 561 µs against 279, 282 µs more. In the profile, the commit
   took 6.96 s against 1.77 s: validating the chunk 3.49 s against 0.80 (2.48 s of it checking the
   stores of the gate's minds), its canonical text 3.06 s against 0.84, and the rest, hashing
-  included, 0.41 s against 0.13; the beings system itself, 1.84 s against 1.85, since a wake
+  included, 0.41 s against 0.14; the beings system itself, 1.84 s against 1.85, since a wake
   copies no mind. So about
   half of the extra cost is validating the mind and about two fifths turning it into text: a hash
   per component of the entity section (T7) removes the second only with a commit that also stops
@@ -1423,8 +1424,26 @@ chunks, read again only where a step wrote, with the same output. The refactor o
 edges shortened the files that run beings: of 13 such files, together 48.2 s before and 42.0 s
 after, `survival.test.ts` went from 20.1 to 17.7 s.
 
-On CI, with the evaluation among the other files under `--parallel`, `bun test` took 56.4 s on a
-fast runner and 76.1 s on a slow one (the evaluation file 31.3 and 43.9 s), past the budget of
-70 s (plan §11.4). So `bun run test` runs the parallel suite without that file, then the file
-alone in a step of its own, which plan §11.4 provides for; `tests/repo/package.test.ts` requires
-that the file the first step leaves out is the one the second runs.
+On CI, with the evaluation among the other files under `--parallel`, `bun test` took 56.4 and
+76.1 s on two runs of one commit (the evaluation file 31.3 and 43.9 s), the second past the budget
+of 70 s (plan §11.4). That plan's clause for running tests apart and in sequence is for timed tests
+that turn unstable under load, which the evaluation is not; so running it apart is a decision,
+recorded in the tracker (L65): the budget of 70 s holds for each `bun test` that `bun run test`
+runs. That script now runs the parallel suite without the evaluation, then the evaluation alone,
+and `tests/repo/package.test.ts` requires that the file the first step leaves out is the one the
+second runs, which Bun confirms. The split does not shorten the total, since the evaluation no
+longer overlaps the other files. Every run so far, with the time of the region test I2, which T5-9
+does not touch, as the runner's class (about 1.9 to 2.3 s on fast runners, 2.7 to 2.8 s on medium
+ones, and 3.4 to 4.3 s on the slow ones of T5-8):
+
+| Commit, run | Steps | Parallel suite | Evaluation | Total | I2 |
+|---|---|---|---|---|---|
+| `0f6b3db`, 1 | one | 56.44 s | inside it | 56.44 s | 1.93 s |
+| `0f6b3db`, 2 | one | 76.09 s | inside it | 76.09 s | 2.68 s |
+| `1e3a21d`, 1 | two | 59.57 s | 20.91 s | 80.48 s | 2.80 s |
+| `1e3a21d`, 2 | two | 60.09 s | 21.07 s | 81.16 s | 2.73 s |
+| `0a257c1`, 1 | two | 45.87 s | 17.59 s | 63.46 s | 2.23 s |
+
+Each step stays under 70 s on every runner measured. No runner of the slow class has run the two
+steps yet; there, the parallel suite alone could take about 60 to 65 s, as T5-8's whole suite did
+(60.7 and 61.9 s), which is unmeasured.
