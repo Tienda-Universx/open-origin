@@ -6,6 +6,18 @@
  */
 
 export {
+  applyBeliefs,
+  type BeliefChanges,
+  type BeliefOperations,
+  type BeliefsApplied,
+  type BelieveOperation,
+  LIVE_MANIFEST,
+  type Manifest,
+  type MindReason,
+  type MindRefused,
+  type ReviseOperation,
+} from "./beliefs.ts";
+export {
   ceilDiv,
   greatest,
   INT31_MAX,
@@ -69,6 +81,7 @@ export {
   SALIENCE_HALVINGS,
   scaledHalfLife,
 } from "./salience.ts";
+export { settle } from "./settle.ts";
 export {
   type Admitted,
   admitBelief,
@@ -77,6 +90,18 @@ export {
   type Unlinked,
   withoutRecords,
 } from "./store.ts";
+export {
+  citedTaints,
+  coversTaints,
+  exposureAfterBelief,
+  exposureAfterMessage,
+  formedTaints,
+  isReasoned,
+  revisedTaints,
+  TAINTS,
+  type Taints,
+  taintsOf,
+} from "./taints.ts";
 export {
   type BeliefView,
   type EpisodeView,

@@ -289,11 +289,18 @@ The operations are atomic: if any fails, the intention is rejected with that ope
 no operation applies; what step 1 did stays, because it is a law, not a proposal.
 
 - A belief may cite episodes and relationships of any id, but only beliefs of a **lower** id, so
-  support cannot be circular. Its depth is one more than the deepest belief it cites, at most
-  `mind.depth`.
+  support cannot be circular. Its depth is one more than the deepest belief it cites, 1 when it
+  cites none, at most `mind.depth`. Depth follows the live citations, so it falls when a cited
+  belief leaves, and an operation that would make any belief deeper is refused.
 - `revise` must cite at least one record it did not cite before; `ev` keeps the three most recent
-  citations, and the ledger records any it drops. `src`, `tn`, and `ex` keep what the dropped ones
-  brought.
+  citations, those of the operation last, in the order given, and the ledger records any it drops.
+  `src`, `tn`, and `ex` keep what the dropped ones brought.
+- Citing a `food`, `being`, `ate`, or `failed` episode is evidence seen; a `heard` one, told; an
+  `external` one, external; and a belief or a relationship, inferred. `who` becomes the speaker of
+  the last `heard` episode an operation cites.
+- A new belief that its full store evicts at once still takes its id, so a brain's predictions from
+  `next` hold. Once ids have run out, `believe` is `mind_malformed`, and a perception of a being
+  with no relationship creates none.
 - A record **involves** a being when it is a `being` or `heard` episode whose `who` is that being,
   or a belief whose `who` is that being.
 - Validation receives the decision's **manifest**: in T5 the whole live mind; in T9 the context of
