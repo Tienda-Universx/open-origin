@@ -960,21 +960,34 @@ beings, the beings that missed an item of the mind, and the population's counts.
 | 10 | as 06, with the final brain | every item on every label; lowest nutrition 420,855; health never fell | none | conversations 48, 60, 52, 36; revised down 25, 25, 36, 36; from testimony 54, 60, 56, 48; trust checked 43, 24, 32, 36 | 0, 0, 0; diverse on every label |
 | 11 | as 10, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41 | 0, 0, 0 |
 | 12 | as 10, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35 | 0, 0, 0 |
+| 13 | as 10, with the brain of the second correction | every item on every label; lowest nutrition 420,855; health never fell | none | conversations 48, 60, 52, 36; revised down 25, 26, 36, 36; from testimony 54, 60, 56, 48; trust checked 43, 24, 32, 36 | 0, 0, 0; diverse on every label |
+| 14 | as 13, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41; revised down 31, 32, 26, 34 | 0, 0, 0 |
+| 15 | as 13, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35; revised down 40, 39, 33, 23 | 0, 0, 0 |
 
-Runs 06 to 08 ran the brain of the freeze. A review of the ablation of
-[Evaluation](#evaluation) then found that the brain chose a landmark and a testimony by records
-they did not cite; the brain now puts the check first, takes the first testimony it hears, and the
-best cue in sight as the landmark, and tells no belief its window would check ("How `mind@1`
-decides"). No law and no parameter changed, so the freeze stands; runs 10 to 12 repeat runs 06 to
-08 with the final brain, which is the one the evaluation runs.
+Runs 06 to 08 ran the brain of the freeze. A review of the ablation of [Evaluation](#evaluation)
+then found that the brain chose a landmark and a testimony by records they did not cite; the brain
+now puts the check first, takes the first testimony it hears, and the best cue in sight as the
+landmark, and tells no belief its window would check; runs 10 to 12 repeat runs 06 to 08 with it. An
+independent verification then found one more such dependence: a held doubt kept a testimony back,
+and the landmark, spaced from what the testimony would believe, formed only while it did. A
+landmark's spacing and novelty, and a testimony's novelty, are now judged only against the beliefs
+held before the decision ("How `mind@1` decides"); runs 13 to 15 repeat runs 10 to 12 with that
+brain, which is the one the evaluation runs, and differ from them only in a few counts of the
+population. No law and no parameter changed in either correction, so the freeze and its two digests
+stand.
 
 In every run with `mind@1`, no being spent more than 1‰ of its awake time talking, against a
 target of at most 5%, since its budget allows two acts in a talk window of 18,900 s. A run of 10
-days of one label took 11.8 to 20.7 s of wall time, against 8.9 to 9.3 s under the mindless
+days of one label took 11.7 to 20.7 s of wall time, against 8.9 to 9.3 s under the mindless
 baseline, with 13.5 to 21.7 decisions per being and day against 12.6 to 12.9. Calibration used
-about 12 minutes of compute.
+about 15 minutes of compute.
 
-
+**No evidence of seeking in the world.** On the four registered calibration draws, no being ever
+walked to food it believed in: no such decision of the 32 beings over 10 days in runs 10 and 13,
+nor of the 8 of `calibration/2` in run 04, since a being is seldom hungry with no food in sight,
+and one that is, like being 8 of `calibration/2` in run 04, holds no belief of food then. The spawn checks add two such decisions, on
+`calibration/2` in runs 14 and 15. The calibration runs therefore give no in-world evidence that
+seeking works; only the hand-built tests of `mind-social.test.ts` do, and nothing was tuned for it.
 
 **A declared limit.** The spawn draws `--spawn 1` and `/2` are no registered scenario, only checks
 on the same terrain. On `calibration/2` with `--spawn 2`, being 5 spawned out of sight of food and
