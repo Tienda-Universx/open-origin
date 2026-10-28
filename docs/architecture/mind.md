@@ -102,7 +102,7 @@ prompt, because they reveal the kernel's randomness.
 | `mind.depth` | Deepest inference | 6 | 1 to 8 |
 | `mind.halfLife.episode`, `.belief` | Half-life of salience, in seconds, scaled by `retention` | 75,600, 302,400 | 1 to 2^31 − 1 |
 | `mind.floor`, `.pinLevel`, `.pins`, `.recall` | Salience below which an episode is forgotten; importance from which it never fades; pinned episodes per being; the importance a recall adds | 50, 900, 2, 200 | 0–999, 1–1000 and above `floor`, 0–4, 0–1000 |
-| `relations.rate` | Familiarity per second of co-presence, a ratio | 5/36 | as the rates of T4 |
+| `relations.rate` | Familiarity per second of co-presence, a ratio; `f` saturates at `⌈1000 / rate⌉` seconds | 5/36 | as the rates of T4, and `⌈1000 / rate⌉ ≤ 2^22`, so every product of the salience formula stays a safe integer |
 | `relations.gap`, `.halfLife` | Longest pause between two perceptions still counted as co-presence; half-life of familiarity in absence, in seconds, not scaled by traits | 600, 756,000 | 1 to 2^31 − 1 |
 | `relations.delta` | Largest change of affinity or trust in one operation | 200 | 0 to 1000 |
 | `speech.range`, `.actMs` | Reach of speech in cells; duration of one act | 3, 4,000 | 1 to 8 and at most `perception.sight.dim`; 1–60,000 |
@@ -142,7 +142,8 @@ importance `w` from 0 to 1000; and the tick `r` its salience is anchored at.
 | `heard` | A message from a known speaker | `who`, `cell`, `act`, `p?`, `band?`, `tn`, `ex` |
 | `external` | A research injection; the kind is C3, and the view shows it as `heard` with no speaker | `p`, `tn`; no speaker, no cell |
 
-The reasons a `failed` episode indexes, in this order: `no_food`, `incapacitated`, `crowded`.
+The reasons a `failed` episode indexes, in this order: `no_food`, `food_gone`, `incapacitated`,
+`crowded`.
 
 A **belief** is `{ id, p, cr, src, who?, ev, lost, tn, ex, dp, u }`: its proposition; its
 confidence from 0 to 1000; `src`, the mask of the kinds of evidence that ever supported it (1 seen,
@@ -269,12 +270,14 @@ An intention of `beings@2` may carry `mind`, with at most `mind.ops` operations 
 | `believe: [{ p, cr, ev, rule }]` | A belief citing live records; adopting a proposition already held revises it |
 | `revise: [{ id, cr, ev? }]` | New confidence, and new evidence added |
 | `drop: [id]` | Removes a belief |
-| `relate: [{ who, aff?, tr?, because }]` | Changes a relationship, citing a record that involves `who` |
+| `relate: [{ who, aff?, tr?, because }]` | Changes a relationship, citing in `because` one to three live records, at least one of which involves `who` |
 
 At a decision, in this order:
 
 1. the engine forgets what has faded by now, and updates familiarity, creating a relationship for
-   each perceived being and each speaker heard that has none (affinity 0, trust 500);
+   each perceived being and each speaker heard that has none (affinity 0, trust 500): first the
+   perceived beings in the order attention keeps them, then the speakers of the inbox by increasing
+   id, each evicting by the rule above when the store is full;
 2. the brain decides on the view of that mind;
 3. the operations apply in this order of kinds: `remember`, `recall`, `believe`, `revise`, `drop`,
    `relate`, each kind in the order given. New records take the ids `next`, `next + 1`, and so on in
@@ -335,7 +338,8 @@ and later).
 | `tell` | One of its beliefs: the engine captures its proposition, its confidence band (≥ 800: 2; ≥ 500: 1; else 0), its `tn`, and its `ex` united with the speaker's `exposure` at that decision | As for `greet`, and the belief exists |
 | `unknown` | — ("I do not know") | As for `greet` |
 
-A `talk { to, act, about? }` step lasts `speech.actMs` and counts as idle for the needs. The
+A `talk { to, act, about? }` step lasts `speech.actMs`, counts as idle for the needs, and is always
+the last step of its intention, so the being decides when it ends. The
 captured content lives in the activity as a C3 member the senses never copy. The quotas: at most
 `speech.perDay` acts per simulated day, and at most `speech.turns` acts to the same hearer in a
 conversation, which ends after a pause longer than `speech.gap`; after a full one, the pair keeps
@@ -373,8 +377,8 @@ what inhabitants think.
    of a talk that ends; and, at a decision, the senses, the percepts, and the view, then `decide`,
    called without `this`, the validation, and the new mind from `src/mind`.
 3. `resolveClaims` for food; then the **contest for room**: a chunk has as free places `capacity`
-   less the beings it held at the start of the tick, since a departure frees no place until the next
-   tick. When more beings arrive than it has free places, the arrivals, by increasing id, are ordered
+   less the beings it holds when the beings system starts, after the commands of the tick (spawns
+   included), since a departure frees no place until the next tick. When more beings arrive than it has free places, the arrivals, by increasing id, are ordered
    by `random.permutation` on the stream `beings.crowd`, keyed by the lowest arriving id, and the
    first take the places. The rest end their walk at the cell they started the tick in, which their
    own chunk still counts, with the result `failed`, the reason `crowded`, an idle of 1 ms, and a
@@ -553,11 +557,11 @@ Expressed in the world's day L, with neutral traits:
     `failed` episode;
   - a belief **from testimony**: a `believe` or `revise` that cites a `heard` episode of a `tell`;
   - a belief **revised down after seeing it contradicted**: a `revise` of an `m1.food-at` belief that
-    lowers `cr` and cites a `food` or `ate` episode of the same cell whose band differs from the
-    belief's;
-  - **trust changed by checking a testimony**: a `relate` with a nonzero trust change whose
-    `because` is a `food` or `ate` episode at the cell of a belief whose `who` is that being and
-    whose `src` includes told;
+    lowers `cr` and cites, at the same cell, a `food` episode whose band differs from the belief's
+    or a `failed` episode whose reason is `no_food` or `food_gone`;
+  - **trust changed by checking a testimony**: a `relate` with a nonzero trust change that cites a
+    belief whose `who` is that being and whose `src` includes told, and, at that belief's cell, a
+    `food`, `ate`, or `failed` episode;
   - a **conversation**: delivered acts between one pair, at least one in each direction, each
     delivered within `speech.gap` of the one before;
   - **greeted and was greeted**: a `speech.delivered` of a `greet` with the being as speaker, and one
@@ -607,23 +611,28 @@ Targets, measured with the named scenarios of [T4's benchmark](beings.md#the-sca
   and p99 hashed at most 1 MB.
 - Many speaking: 1,000 beings in 500 pairs cost linearly in acts; 50 speaking to one hearer cost at
   most its `speech.wakesPerDay` decisions a day.
-- A mind at capacity, every record of the largest kind and every optional member present: at most
-  3.5 KB of canonical text with values typical of v0.1 (coordinates of 5 digits and a sign, ticks
-  below 10^8, local ids below 1,000, entity ids below 10^5, propositions of 50 B), and at most
-  5.5 KB with the largest values (coordinates of 2^31, ticks and entity ids of 2^53 − 1, local ids of
-  2^31 − 1, propositions of 96 B), both pinned by tests that build exactly those minds; measured
-  while planning: 3,394 B and 5,075 B. A chunk at `capacity` is then at most 64 × 6.3 KB, about
-  0.4 MB. Shorter member names would save about 4%, so the names stay readable.
+- **The largest mind**, which tests build exactly: every episode a `heard` episode of a `tell` and
+  every message in the inbox a `tell`, each with every optional member; every belief with `who` and
+  three citations; every relationship full; propositions with `neg`. With values typical of v0.1
+  (coordinates −99,999, ticks 99,999,999, local ids 999, entity ids 99,999, so a proposition of
+  63 B) it must stay at most 4.5 KB; measured while planning, 4,056 B. With the largest values
+  (coordinates −2^31, ticks and entity ids 2^53 − 1, local ids 2^31 − 1, propositions of 96 B), at
+  most 6 KB; measured, 5,711 B. A chunk at `capacity` is then at most 64 × 6.3 KB, about 0.4 MB.
+  Shorter member names would save about 4%, so the names stay readable.
 - If a decision or the p99 of "dispersed 1,000" misses its target, the window's edges, about two
   fifths of a decision ([beings](beings.md#the-scale-benchmark)), are optimized by a refactor that
   changes no output; a miss that remains is recorded as it is.
 
-**The gate of the entity section.** In T5-4, before the brain exists, a benchmark brain that fills
-every mind to its capacity measures "dispersed 1,000". The estimate, from T4's 112.4 KB at p99 and a
-being of about 0.5 KB, is about 0.8 to 0.9 MB, close to the trigger. If the measured p99 hashed is
-below 1 MB, the entity section stays in T7. If not, the capacities come down first (6 episodes, 6
-beliefs, and 4 relationships give about 2.5 KB); if the smallest useful mind is still above it, T5
-stops for the maintainer's decision, because bringing the section forward changes the kernel,
+**The gate of the entity section.** In T5-4, before the brain exists, a benchmark brain gives every
+being of "dispersed 1,000" **the gate's mind**, the record mix a `mind@1` being holds, decided
+here: 5 `food`, 1 `being`, 1 `ate`, and 1 `heard` episode of a `tell`; 8 beliefs of `m1.food-at`,
+each citing 2 records; 6 relationships; an empty inbox, which every decision consumes; typical
+values and propositions without `neg`. It measured 2,680 B while planning, so a being is about
+3.2 KB, and the estimate from T4's 112.4 KB at p99 is about 0.7 MB, below the trigger. If the
+measured p99 hashed is below 1 MB, the entity section stays in T7. If not, the capacities come down
+first (the largest mind at 6 episodes, 6 beliefs, and 4 relationships measured 3,096 B with
+typical values); if the smallest useful mind is still above it, T5 stops for the maintainer's
+decision, because bringing the section forward changes the kernel,
 `ENGINE_VERSION`, and the goldens of T2 to T4. "dispersed 10,000" already crosses it: at about
 1.3 KB per being its p99 reaches 1 MB ([beings](beings.md#ceilings)), so with minds it is a ceiling
 outside what v0.1 supports, measured and recorded in T5-9. For T7, the section needs one hash term

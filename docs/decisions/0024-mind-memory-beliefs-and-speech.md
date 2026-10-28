@@ -38,9 +38,10 @@ The forces:
 
 Evidence gathered while planning (tracker L55): a mind with one-letter member names, 12 episodes,
 10 beliefs, and 6 relationships is 3.4 to 4.1 KB of canonical text, and hashing a chunk with it
-costs 165 to 210 µs; the mind specified here, at its capacities of 8 episodes, 8 beliefs, 6
-relationships, and 2 messages, is 3,394 B with typical values and 5,075 B with the largest, and
-shorter names would save about 4%. Two read-only reviews found that the first draft's 4 KB bound
+costs 165 to 210 µs. The mind specified here, at its capacities of 8 episodes, 8 beliefs, 6
+relationships, and 2 messages, measures 4,056 B with typical values and 5,711 B with the largest
+when every record is of its largest kind, and 2,680 B with the record mix a being holds; shorter
+names would save about 4%. Two read-only reviews found that the first draft's 4 KB bound
 was false, that a content-keyed Bloom filter of exposure could be evaded and mixed two criteria,
 and that a brain could pass information between beings within one tick through its controller
 object.
@@ -134,10 +135,11 @@ The specification and the preregistration are in [Mind](../architecture/mind.md)
   events that happened in the world; two inhabitants in different places hold different minds.
 - Every belief is attributable, and its contamination never decreases; analysis can filter whole
   lineages by `tn` and apply the strict criterion by `ex`.
-- A full mind adds about 3.4 KB, with typical values, to a being's record of about 0.5 KB, and
-  every step rehashes it; "dispersed 1,000" is estimated at about 0.8 to 0.9 MB p99 hashed, close to
-  the trigger, so the gate may lower the capacities. "dispersed 10,000" crosses the trigger: with
-  minds it is a ceiling outside what v0.1 supports.
+- A mind adds about 2.7 KB with the record mix a being holds, and up to about 4 KB at its largest
+  with typical values, to a being's record of about 0.5 KB, and every step rehashes it. "dispersed
+  1,000" is estimated at about 0.7 MB p99 hashed, below the trigger; the gate measures it and may
+  lower the capacities. "dispersed 10,000" crosses the trigger: with minds it is a ceiling outside
+  what v0.1 supports.
 - `beings@2` adds two draws whose outcomes become public once T6 projects positions, the streams
   `beings.crowd` and `beings.speech`; the gate on `ctr-mix32@1` from 0023 still applies.
 - A brain's hidden channels are declared, not removed; `ex` covers them, and the whole-decision
