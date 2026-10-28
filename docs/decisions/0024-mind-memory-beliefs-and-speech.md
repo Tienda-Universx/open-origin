@@ -36,11 +36,14 @@ The forces:
   brain-written, and one controller object serves every being of a species, called in id order.
   `sensesOf` copies the whole activity to the brain.
 
-Evidence gathered while planning (tracker L55): a compact mind of 12 episodes, 10 beliefs, and 6
-relationships is 3.4 to 4.1 KB of canonical text, and hashing a chunk with it costs 165 to 210 µs;
-two read-only reviews found that the first draft's 4 KB bound was false, that a content-keyed Bloom
-filter of exposure could be evaded and mixed two criteria, and that a brain could pass information
-between beings within one tick through its controller object.
+Evidence gathered while planning (tracker L55): a mind with one-letter member names, 12 episodes,
+10 beliefs, and 6 relationships is 3.4 to 4.1 KB of canonical text, and hashing a chunk with it
+costs 165 to 210 µs; the mind specified here, at its capacities of 8 episodes, 8 beliefs, 6
+relationships, and 2 messages, is 3,394 B with typical values and 5,075 B with the largest, and
+shorter names would save about 4%. Two read-only reviews found that the first draft's 4 KB bound
+was false, that a content-keyed Bloom filter of exposure could be evaded and mixed two criteria,
+and that a brain could pass information between beings within one tick through its controller
+object.
 
 ## Decision
 
@@ -74,20 +77,23 @@ a talk never reach a brain.
 **The brain proposes mental acts**: remember a percept, recall, believe, revise, drop, and relate,
 each citing local records. A belief cites only beliefs of a lower id, so support is acyclic. An
 invalid operation is a rejection, the being's experience. Each belief operation of `mind@1` is a
-pure function of the records it cites.
+pure function of the records it cites, the being's traits, and the laws of its species.
 
 **Two measures of contamination**, refining [0006](0006-provenance-and-inheritable-contamination-taints.md):
 `tn`, the exact union over the lineage, which classifies a belief by the table of 0006; and `ex`,
 the being's lifetime exposure at the moment of forming or revising, which plan §K.7's "formed
 without prior contaminated inputs" requires and which no citation or rephrasing avoids. Both only
-grow; a belief is reasoned when both are empty. A belief that cites nothing gains
-`model-prior-suspect`; a research injection (`mind.inject`, admin only) always carries
+grow, and they flow downstream: when a record's taints grow, every belief that cites it takes them
+too, so a belief's taints always contain those of what it cites. A belief is reasoned when both are
+empty. A belief that cites nothing gains `model-prior-suspect`; a `tell` carries the belief's
+taints and the speaker's exposure; a research injection (`mind.inject`, admin only) always carries
 `human-external`. The engine computes both measures; a brain never sees them.
 
 **Provenance is a summary in the state and a ledger in events.** A belief keeps its taints, its
-sources, its last speaker, and how many of its supports were forgotten; every change of a mind emits
-`mind.changed` (C1) and `mind.provenance` (C3), and the tick checksums that T7 persists make that
-ledger tamper-evident. Forgetting is never silent.
+sources, its last speaker, and how many of its supports were forgotten; every change of a mind is in
+the ledger, through `mind.changed` (C1), `mind.provenance` (C3), and the events of speech and
+injection, and the tick checksums that T7 persists make that ledger tamper-evident. Forgetting is
+never silent.
 
 **Forgetting in closed form.** Salience halves every half-life, scaled by a trait, from an anchor,
 with exact integer arithmetic; it is applied only when the being decides, and the view a brain gets
@@ -128,9 +134,10 @@ The specification and the preregistration are in [Mind](../architecture/mind.md)
   events that happened in the world; two inhabitants in different places hold different minds.
 - Every belief is attributable, and its contamination never decreases; analysis can filter whole
   lineages by `tn` and apply the strict criterion by `ex`.
-- A mind adds at most 2.5 KB, with typical values, to a being's record of about 0.5 KB, and every
-  step rehashes it; "dispersed 1,000" is estimated at about 0.6 MB p99 hashed, below the trigger. The
-  gate measures it.
+- A full mind adds about 3.4 KB, with typical values, to a being's record of about 0.5 KB, and
+  every step rehashes it; "dispersed 1,000" is estimated at about 0.8 to 0.9 MB p99 hashed, close to
+  the trigger, so the gate may lower the capacities. "dispersed 10,000" crosses the trigger: with
+  minds it is a ceiling outside what v0.1 supports.
 - `beings@2` adds two draws whose outcomes become public once T6 projects positions, the streams
   `beings.crowd` and `beings.speech`; the gate on `ctr-mix32@1` from 0023 still applies.
 - A brain's hidden channels are declared, not removed; `ex` covers them, and the whole-decision

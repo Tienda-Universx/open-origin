@@ -107,7 +107,7 @@ apps/server (Bun)
     Cognitive allocator ──commands (applyTick, seq)───────▶ packages/engine
     Cognitive allocator ──calls───────────────────────────▶ packages/ai-gateway
     Persistence: batches, checkpoints, idempotency, lock ◀──batches── packages/engine
-    packages/agents: policies, memory, prompts, provenance (depends on engine)
+    packages/agents: policies, prompts (depends on engine); memory and provenance live in the engine's state
     packages/ai-gateway: modes off / mock / free-only / paid, caps
           │                                   │
           ▼                                   ▼
