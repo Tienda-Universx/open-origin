@@ -2,15 +2,15 @@
  * `utility@1` on beings@2 as the mindless baseline (ADR 0024, docs/architecture/mind.md "Beliefs"
  * and "Verification plan"): wrapped with its five behaviors and a namespace of no concepts, it
  * lives on beings@2 the same life it lives on beings@1, over T4's short determinism subject: at
- * every tick the same events, and every being with the same cell, needs, activity, and every other
- * member of T4; only what beings@2 adds differs, the three traits, the mind, and the units a meal
- * ate in its outcome, which the test checks are there.
+ * every tick the same events but the ledger of minds, and every being with the same cell, needs,
+ * activity, and every other member of T4; only what beings@2 adds differs, the three traits, the
+ * mind, which holds only the relationships the law of familiarity gives, and the units a meal ate
+ * in its outcome, which the test checks are there.
  */
 import { describe, expect, test } from "bun:test";
 import {
   beings,
   type EngineEvent,
-  mind,
   readView,
   type Seed,
   step,
@@ -80,6 +80,14 @@ function shownOf(
     occupancy: [...occupancy],
     depletion: occupancy.map((key) => chunkIn(world, key)?.depletion ?? []),
   };
+}
+
+/**
+ * `shown` without the ledger of minds: familiarity is a law, so the baseline's beings meet each
+ * other and their minds change, which beings@1 has no events for.
+ */
+function withoutLedger(shown: Shown): Shown {
+  return { ...shown, events: shown.events.filter(({ type }) => !type.startsWith("mind.")) };
 }
 
 /** Runs the subject in `world` for TICKS ticks; what every tick showed. */
@@ -165,8 +173,9 @@ describe("the mindless baseline", () => {
     const one = run(patchWorld(SEED, utilityRuleset(), false), (being) => being);
     const two = patchWorld2(SEED, mindlessRuleset(), false);
     const twice = run(two, (being) => asBeing1(being as beings.Being2));
+    const body = twice.map(withoutLedger);
     for (let tick = 0; tick < TICKS; tick += 1)
-      expect([tick + 1, twice[tick]]).toEqual([tick + 1, one[tick]]);
+      expect([tick + 1, body[tick]]).toEqual([tick + 1, one[tick]]);
     // Not vacuous: the beings ate, contested a bite, walked across a chunk, slept, and woke.
     const types = new Set(one.flatMap(({ events }) => events.map(({ type }) => type)));
     for (const type of ["being.ate", "being.contested", "being.started", "being.finished"])
@@ -180,11 +189,25 @@ describe("the mindless baseline", () => {
       ),
     );
     expect(meals.length).toBeGreaterThan(0);
-    // Only what beings@2 adds differs: neutral traits, and minds as empty as at their spawn.
+    // Only what beings@2 adds differs: neutral traits, and minds that hold nothing the brain
+    // proposed, only the relationships the law of familiarity gives for the beings they saw.
+    let related = 0;
     for (const being of beingsIn(two) as beings.Being2[]) {
       expect(being.traits).toMatchObject({ sociability: 1000, credulity: 1000, retention: 1000 });
-      expect(being.mind).toEqual(mind.newMind(0));
+      const { episodes, beliefs, inbox, exposure, relations } = being.mind;
+      expect({ episodes, beliefs, inbox, exposure }).toEqual({
+        episodes: [],
+        beliefs: [],
+        inbox: [],
+        exposure: 0,
+      });
+      related += relations.length;
     }
+    expect(related).toBeGreaterThan(0);
+    const ledger = twice.flatMap(({ events }) =>
+      events.filter(({ type }) => type === "mind.changed"),
+    );
+    expect(ledger.length).toBeGreaterThan(0);
     expect(readView(two).tick).toBe(TICKS);
   });
 
