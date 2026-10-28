@@ -100,6 +100,43 @@ describe("createBeingsRuleset", () => {
     );
   });
 
+  test("refuses a decide that is an async function or a generator: it never returns an intention (tracker L53)", () => {
+    const message =
+      "a brain's decide must be an ordinary function: an async function or a generator returns a promise or an iterator, never an intention";
+    expect(
+      issuesOf(() =>
+        beings.createBeingsRuleset({
+          controllers: {
+            s1: { brain: "a@1", decide: async () => idleIntention() },
+            s2: { brain: "b@1", async *decide() {} },
+            s3: { brain: "c@1", *decide() {} },
+          } as never,
+        }),
+      ),
+    ).toEqual([
+      { path: "/controllers/s1/decide", message },
+      { path: "/controllers/s2/decide", message },
+      { path: "/controllers/s3/decide", message },
+    ]);
+    // Arrow functions, methods, and bound functions are ordinary.
+    const method = { brain: "m@1", decide: (_senses: unknown) => idleIntention() };
+    const bound = { brain: "b@1", decide: idleIntention.bind(undefined) };
+    expect(() =>
+      beings.createBeingsRuleset({ controllers: { s1: method, s2: bound } as never }),
+    ).not.toThrow();
+  });
+
+  test("still rejects a promise that an ordinary decide returns as a malformed intention, as before", () => {
+    const world = beingsWorld({
+      controllers: { [SPECIES.id]: brain(() => Promise.resolve(idleIntention()) as never) },
+    });
+    const events = runTo(world, 2, [spawn(1, { species: SPECIES.id, cell: [5, 5] })]);
+    expect(
+      events.filter(({ tick }) => tick === 2).map(({ type, payload }) => [type, payload]),
+    ).toEqual([["being.intention_rejected", { id: 1, reason: "malformed" }]]);
+    expect(worldStatus(world)).toEqual({ kind: "ok", tick: 2 });
+  });
+
   test("captures each brain once, so that changing the options later changes nothing", () => {
     const controller = { brain: "script@1", decide: (_senses: unknown) => idleIntention() };
     const options: { controllers: { [species: string]: beings.Controller } } = {
@@ -288,6 +325,38 @@ describe("beings.spawn", () => {
     expect(readView(world).chunkKeys()).toEqual([]);
     const events = step(world, [spawn(2, { species: SPECIES.id, cell: [0, 0] })]).events;
     expect(events.map(({ type }) => type)).toEqual(["being.spawned"]);
+  });
+
+  test("rejects a spawn into a chunk that holds as many beings as a chunk may, so the world never faults (tracker L53)", () => {
+    const ruleset = beings.createBeingsRuleset({ controllers: { [SPECIES.id]: idler(600_000) } });
+    const world = beingsWorld({ controllers: { [SPECIES.id]: idler(600_000) } });
+    const check = ruleset.commands["beings.spawn"]?.check;
+    if (check === undefined) throw new Error("the ruleset has no beings.spawn");
+    // A view whose chunk "0,0" holds `count` beings: only its length matters to the check, which
+    // stops a spawn that would make the chunk invalid and poison the world at commit.
+    const holding = (count: number) => {
+      const view = readView(world);
+      const full = { beings: Array(count).fill(undefined), depletion: [], due: 1 };
+      return {
+        tick: view.tick,
+        simSecondsPerTick: view.simSecondsPerTick,
+        chunkKeys: () => ["0,0"],
+        readChunk: (key: string) => (key === "0,0" ? full : view.readChunk(key)),
+        readGlobal: () => view.readGlobal(),
+      } as never;
+    };
+    const command = spawn(1, { species: SPECIES.id, cell: [3, 4] });
+    const most = beings.CHUNK_BOUNDS.beings.max;
+    expect(most).toBe(65_536);
+    expect(check(holding(most), command)).toEqual({
+      reason: "invalid_spawn",
+      details: {
+        issues: [
+          { path: "/cell", message: "the chunk of the cell holds as many beings as a chunk may" },
+        ],
+      },
+    });
+    expect(check(holding(most - 1), command)).toBeUndefined();
   });
 
   test("accepts a cell exactly as deep as the species may wade, and refuses one deeper", () => {

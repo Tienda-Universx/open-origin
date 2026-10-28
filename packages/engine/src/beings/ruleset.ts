@@ -29,7 +29,7 @@ import {
   WORLDGEN_VERSION,
 } from "../worldgen/index.ts";
 import { BEING_BOUNDS, type Being } from "./being.ts";
-import { type BeingsChunk, beingsChunkIssues, dueOf } from "./chunk.ts";
+import { type BeingsChunk, beingsChunkIssues, CHUNK_BOUNDS, dueOf } from "./chunk.ts";
 import type { Controller, Senses } from "./contracts.ts";
 import { type BeingsGlobal, BRAIN_STREAM, CONTEST_STREAM, type Controllers } from "./env.ts";
 import { type LifeConfig, lifeSeal, type Species, sealedLifeIssues } from "./laws.ts";
@@ -62,10 +62,32 @@ function captureOne(controller: unknown, path: string, issues: IssueList): Contr
   if (decide !== UNREAD && typeof decide !== "function")
     issues.report(`${path}/decide`, "a brain must have a decide function");
   if (brain === undefined || typeof decide !== "function") return undefined;
+  if (!isOrdinary(decide, `${path}/decide`, issues)) return undefined;
   return Object.freeze({
     brain,
     decide: (senses: DeepReadonly<Senses>) => decide.call(controller, senses),
   });
+}
+
+/**
+ * Whether `decide` is an ordinary function, whose prototype is that of every function declared in
+ * this module; an async function or a generator, whose prototypes differ, returns a promise or an
+ * iterator, never an intention (tracker L53). An issue at `path` otherwise. A sync function that
+ * returns a promise is still a malformed intention when it decides, and a promise it leaves
+ * rejected is the host's to handle: the engine may not name `Promise`.
+ */
+function isOrdinary(decide: unknown, path: string, issues: IssueList): boolean {
+  try {
+    if (Object.getPrototypeOf(decide) === Object.getPrototypeOf(readVersion)) return true;
+  } catch (error) {
+    issues.report(path, "the decide function threw while being inspected", error);
+    return false;
+  }
+  issues.report(
+    path,
+    "a brain's decide must be an ordinary function: an async function or a generator returns a promise or an iterator, never an intention",
+  );
+  return false;
 }
 
 /** `value` as the version of the brain at `path`; undefined after an issue, or when unread. */
@@ -265,10 +287,22 @@ function checkSpawn(
       reason: "invalid_spawn",
       details: { issues: issues.issues.map(({ path, message }) => ({ path, message })) },
     };
-  const blocked = spawnBlocked(view, spawn);
+  const blocked = spawnBlocked(view, spawn) ?? spawnCrowded(view, spawn);
   return blocked === undefined
     ? undefined
     : { reason: "invalid_spawn", details: { issues: [{ path: "/cell", message: blocked }] } };
+}
+
+/**
+ * Why a spawn at `cell` cannot happen: its chunk already holds as many beings as a chunk may, so the
+ * spawn would make the chunk invalid and poison the world at commit (tracker L53).
+ */
+function spawnCrowded(view: ReadView<BeingsGlobal, BeingsChunk>, spawn: Spawn): string | undefined {
+  const [x, y] = spawn.cell;
+  const chunk = view.readChunk(`${chunkOfCell(x)},${chunkOfCell(y)}`);
+  return (chunk?.beings.length ?? 0) >= CHUNK_BOUNDS.beings.max
+    ? "the chunk of the cell holds as many beings as a chunk may"
+    : undefined;
 }
 
 /** A new being for `spawn`, born at `tick`, free at the next tick. */
