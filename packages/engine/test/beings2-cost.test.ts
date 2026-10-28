@@ -24,7 +24,7 @@ import {
   windowChunks,
 } from "./support/beings-cost.ts";
 import { type BeingsWorld, behavior, chunkOf, spawn, testGenesis } from "./support/beings-world.ts";
-import { being2, brain2, chunksOf, gateMind } from "./support/beings2-world.ts";
+import { being2, brain2, chunksOf, gateMind, life2With } from "./support/beings2-world.ts";
 
 /** A window a brain sensed: the cell it starts at and its side. */
 type Window = { origin: [number, number]; side: number };
@@ -302,11 +302,18 @@ describe("the minds of beings that are not due, and of wakes that decide nothing
     );
     const chunks = chunksOf(placed);
     const occupancy = Object.keys(chunks).sort();
+    // Beings that perceive no other (attention 0): a decision that perceives one changes its mind
+    // by the law of familiarity, while these brains propose no mental operation, so here every
+    // decision leaves the mind as it was, and only a copy could make a new one.
+    const unseeing = life2With((species) => ({
+      ...species,
+      perception: { ...species.perception, attention: 0 },
+    }));
     const world = createWorld(
       {
         seed: [3, 3],
         simSecondsPerTick: SPS,
-        global: { ...beings.beingsGlobal(testGenesis(), beings.defaultLife2()), occupancy },
+        global: { ...beings.beingsGlobal(testGenesis(), unseeing), occupancy },
         chunks: chunks as { [key: string]: CanonicalValue } as never,
         ruleset,
       },
