@@ -139,8 +139,8 @@ const cited = (step: Step, id: number) => step.after.get(id) ?? step.before.get(
  */
 export class LedgerItems {
   readonly tallies = new Map<number, LedgerTally>();
-  /** Beliefs whose lineage holds model-prior-suspect, by the ledger. */
-  priorSuspect = 0;
+  /** The beliefs, as "being/belief", whose lineage the ledger shows holding model-prior-suspect. */
+  readonly #suspects = new Set<string>();
   readonly #known = new Map<number, Map<number, Known>>();
   readonly #pending = new Map<number, Decision>();
   readonly #onTold: ((being: number, tick: number, p: mind.Proposition) => void) | undefined;
@@ -196,7 +196,7 @@ export class LedgerItems {
     for (const { id } of changed.revised) this.#revised(step, id);
     for (const id of changed.related) if (trustChecked(step, id)) tally.trustChecked += 1;
     for (const entry of step.entries.values())
-      if (priorSuspect(step, entry)) this.priorSuspect += 1;
+      if (priorSuspect(step, entry)) this.#suspects.add(`${tally.id}/${entry.id}`);
   }
 
   /** A new belief: from its own observations, from testimony, or evicted at once. */
@@ -237,6 +237,14 @@ export class LedgerItems {
       );
     };
     if (records.some(contradicts)) step.tally.revisedDown += 1;
+  }
+
+  /**
+   * How many beliefs held model-prior-suspect in their lineage by the ledger: each belief of each
+   * being once, however many entries of the ledger name it.
+   */
+  get priorSuspect(): number {
+    return this.#suspects.size;
   }
 
   /** Closes the run: the tallies of every being of `ids`, zero for one whose mind never changed. */

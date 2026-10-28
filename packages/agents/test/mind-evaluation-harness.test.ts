@@ -6,6 +6,8 @@
  * count the same thing; and the acceptance names each item a run misses, by where it belongs.
  */
 import { describe, expect, test } from "bun:test";
+import { mind, type StepResult } from "@open-origin/engine";
+import { being2 } from "../../engine/test/support/beings2-world.ts";
 import { startJsonChild } from "./support/child.ts";
 import {
   acceptance,
@@ -15,6 +17,7 @@ import {
   startEvaluation,
 } from "./support/mind-evaluation.ts";
 import { evaluate, evaluationProblems } from "./support/mind-evaluation-run.ts";
+import { LedgerItems } from "./support/mind-ledger.ts";
 import { LABELS2 } from "./support/mind-scenario.ts";
 
 const FAKE = Bun.fileURLToPath(new URL("./support/fake-child.ts", import.meta.url));
@@ -228,3 +231,76 @@ function withMind(run: EvaluationOutput, change: object): EvaluationOutput {
   const minds = run.minds.map((mind, index) => (index === 2 ? { ...mind, ...change } : mind));
   return { ...run, minds };
 }
+
+describe("the ledger's count of model-prior-suspect", () => {
+  /** A belief of `m1.food-at` with the lineage `tn`, citing nothing. */
+  const belief = (id: number, tn: number): mind.Belief => ({
+    id,
+    p: { p: "m1.food-at", a: [{ c: [5, 5] }], v: id % 3 },
+    cr: 900,
+    src: 1,
+    ev: [],
+    lost: 0,
+    tn,
+    ex: tn,
+    dp: 1,
+    u: 1,
+  });
+
+  /** Being 7 holding `held`, as the state holds it after a tick. */
+  const holding = (held: readonly mind.Belief[]) =>
+    new Map([[7, being2(7, [5, 5], { mind: { ...mind.newMind(0), next: 9, beliefs: held } })]]);
+
+  /**
+   * The step of tick `tick` whose ledger formed `formed` and revised `revised` among the beliefs
+   * `held`, its provenance giving each the taints it holds.
+   */
+  function ledgerStep(
+    tick: number,
+    held: readonly mind.Belief[],
+    ops: { readonly formed?: readonly number[]; readonly revised?: readonly number[] },
+  ) {
+    const ids = [...(ops.formed ?? []), ...(ops.revised ?? [])];
+    const records = held
+      .filter(({ id }) => ids.includes(id))
+      .map(({ id, tn, ex }) => ({ id, tn, ex, ev: [] }));
+    const events = [
+      {
+        type: "mind.changed",
+        tick,
+        payload: {
+          id: 7,
+          encoded: [],
+          formed: (ops.formed ?? []).map((id) => ({ id, rule: "seen-food" })),
+          revised: (ops.revised ?? []).map((id) => ({ id })),
+          dropped: [],
+          forgot: [],
+          related: [],
+        },
+      },
+      { type: "mind.provenance", tick, payload: { id: 7, records, exposure: 1 } },
+    ];
+    return { tick, events, changedChunks: [] } as unknown as StepResult;
+  }
+
+  test("counts each belief of a being that holds it once, however often the ledger names it", () => {
+    const items = new LedgerItems();
+    const held = [belief(1, 1), belief(2, 0)];
+    items.observe(ledgerStep(1, held, { formed: [1, 2] }), () => holding(held));
+    expect(items.priorSuspect).toBe(1);
+    // The same belief revised: still one belief with the taint.
+    items.observe(ledgerStep(2, held, { revised: [1] }), () => holding(held));
+    expect(items.priorSuspect).toBe(1);
+    // Another belief that holds it.
+    const more = [...held, belief(3, 1)];
+    items.observe(ledgerStep(3, more, { formed: [3] }), () => holding(more));
+    expect(items.priorSuspect).toBe(2);
+  });
+
+  test("counts none for a belief without it", () => {
+    const items = new LedgerItems();
+    const held = [belief(2, 0)];
+    items.observe(ledgerStep(1, held, { formed: [2] }), () => holding(held));
+    expect(items.priorSuspect).toBe(0);
+  });
+});
