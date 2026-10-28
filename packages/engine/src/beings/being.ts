@@ -1,16 +1,27 @@
 /**
  * A being (ADR 0023): its identity, cell, body, what it is doing, and what its brain stored, as it
  * lives in the chunk of its cell. What an observer inside the world could see is C0; the rest is C1
- * (docs/architecture/beings.md). The validator checks shapes and bounds; the laws a being follows
- * are checked where they apply, because a chunk's validator cannot see the global value.
+ * (docs/architecture/beings.md). A being of beings@2 also has three more traits and a mind (ADR
+ * 0024), whose classes classes.ts records. The validator checks shapes and bounds by the rules of
+ * its version; the laws a being follows are checked where they apply, because a chunk's validator
+ * cannot see the global value.
  */
 import type { IssueSink } from "../canonical/value.ts";
 import { type Issue, IssueList } from "../errors.ts";
+import type { Mind } from "../mind/index.ts";
 import type { Tick } from "../time/tick.ts";
 import type { EntityId } from "../world/contracts.ts";
 import { MAX_CELL, MIN_CELL } from "../worldgen/index.ts";
 import { STAGES } from "./laws.ts";
+import { checkMindValue } from "./minds.ts";
 import { NEED_MAX } from "./rates.ts";
+import {
+  type ActivityKind,
+  BEINGS_RULES,
+  type BeingsRules,
+  type BeingsVersion,
+  rulesOf,
+} from "./rules.ts";
 import { type Fields, range, readFields, readId, readInt, readList, TICKS } from "./schema.ts";
 
 /** An absolute cell, `[x, y]`. */
@@ -62,8 +73,16 @@ export const RESULTS: readonly string[] = Object.freeze([
   "rejected",
 ]);
 
-/** How the last step ended, when, and why. */
-export type Outcome = { readonly result: string; readonly tick: Tick; readonly reason: string };
+/**
+ * How the last step ended, when, and why; under beings@2, when the step was a meal, also the units
+ * it ate in total, 0 when it ate nothing.
+ */
+export type Outcome = {
+  readonly result: string;
+  readonly tick: Tick;
+  readonly reason: string;
+  readonly units?: number;
+};
 
 /** A target the brain failed to reach, avoided until `until`. */
 export type Cooldown = { readonly cell: Cell; readonly until: Tick };
@@ -74,6 +93,20 @@ export type Cooldown = { readonly cell: Cell; readonly until: Tick };
  */
 export type CooldownRequest = { readonly cell: Cell; readonly ms: number };
 
+/** The traits of a being of T4, in permille. */
+export type Traits = {
+  readonly appetite: number;
+  readonly sleepiness: number;
+  readonly curiosity: number;
+};
+
+/** The traits of a being of beings@2: retention scales the half-lives of its memories. */
+export type Traits2 = Traits & {
+  readonly sociability: number;
+  readonly credulity: number;
+  readonly retention: number;
+};
+
 export type Being = {
   readonly id: EntityId;
   readonly species: string;
@@ -83,11 +116,7 @@ export type Being = {
   readonly needs: { readonly nutrition: number; readonly rest: number };
   readonly health: number;
   readonly anchor: Tick;
-  readonly traits: {
-    readonly appetite: number;
-    readonly sleepiness: number;
-    readonly curiosity: number;
-  };
+  readonly traits: Traits;
   readonly condition: "ok" | "incapacitated";
   readonly activity: Activity;
   readonly plan: readonly PlanStep[];
@@ -97,6 +126,9 @@ export type Being = {
   readonly outcome: Outcome;
   readonly cooldowns: readonly Cooldown[];
 };
+
+/** A being of beings@2: a being of T4 with six traits and a mind, empty at its spawn. */
+export type Being2 = Omit<Being, "traits"> & { readonly traits: Traits2; readonly mind: Mind };
 
 /** The most steps a walk may have, and the most steps an intention may plan. */
 export const MAX_WALK_STEPS = 64;
@@ -116,6 +148,8 @@ export const BEING_BOUNDS = Object.freeze({
   durationMs: range(1, 0x1_0000_0000),
   arrivalMs: range(1, 0x40_0000_0000),
   bites: range(0, 0x10_0000),
+  /** The units a meal ate: at most 2^20 bites of 2^20 units. */
+  eaten: range(0, 0x100_0000_0000),
   plan: range(0, MAX_INTENTION_STEPS - 1),
   cooldowns: range(0, 4),
   reasonLength: 64,
@@ -162,16 +196,15 @@ function checkWalk(walk: Fields, sink: IssueSink): void {
 }
 
 /** The members of each activity, by kind. */
-const ACTIVITY_MEMBERS = Object.freeze({
+export const ACTIVITY_MEMBERS = Object.freeze({
   eat: Object.freeze(["bites", "kind", "start", "untilNutrition"]),
   idle: Object.freeze(["kind", "ms", "start"]),
   sleep: Object.freeze(["forced", "kind", "untilRest"]),
   walk: Object.freeze(["dirs", "done", "kind", "ms", "start"]),
 });
-const ACTIVITY_KINDS = Object.freeze(["eat", "idle", "sleep", "walk"] as const);
 
 /** The members of each planned step, by kind. */
-const STEP_MEMBERS = Object.freeze({
+export const STEP_MEMBERS = Object.freeze({
   eat: Object.freeze(["kind", "untilNutrition"]),
   idle: Object.freeze(["kind", "ms"]),
   sleep: Object.freeze(["kind", "untilRest"]),
@@ -199,10 +232,15 @@ function kindIn<T extends string>(
   return found;
 }
 
-/** Reports every problem of the activity at `value`. */
-function checkActivity(value: unknown, path: string, sink: IssueSink): void {
+/** Reports every problem of the activity at `value`, one of the kinds `kinds`. */
+function checkActivity(
+  value: unknown,
+  path: string,
+  kinds: readonly ActivityKind[],
+  sink: IssueSink,
+): void {
   if (value === undefined) return;
-  const kind = kindIn(value, path, ACTIVITY_KINDS, sink);
+  const kind = kindIn(value, path, kinds, sink);
   const activity =
     kind === undefined
       ? undefined
@@ -225,9 +263,14 @@ function checkActivity(value: unknown, path: string, sink: IssueSink): void {
   }
 }
 
-/** Reports every problem of one planned step at `value`. */
-export function checkPlanStep(value: unknown, path: string, sink: IssueSink): void {
-  const kind = kindIn(value, path, ACTIVITY_KINDS, sink);
+/** Reports every problem of one planned step at `value`, of one of the kinds `kinds`. */
+export function checkPlanStep(
+  value: unknown,
+  path: string,
+  sink: IssueSink,
+  kinds: readonly ActivityKind[],
+): void {
+  const kind = kindIn(value, path, kinds, sink);
   const step =
     kind === undefined
       ? undefined
@@ -244,10 +287,20 @@ export function checkPlanStep(value: unknown, path: string, sink: IssueSink): vo
   if (kind === "idle") step.int("ms", BEING_BOUNDS.durationMs);
 }
 
+/** The members of wake conditions, each optional. */
+export const WAKE_MEMBERS = Object.freeze({
+  required: Object.freeze([] as string[]),
+  optional: Object.freeze(["lightAbove", "lightBelow", "nutritionBelow", "restBelow"]),
+});
+
+/** The members of a brain's stored behavior, of a cooldown, and of a being's needs. */
+export const BEHAVIOR_MEMBERS: readonly string[] = Object.freeze(["heading", "kind", "since"]);
+export const COOLDOWN_MEMBERS: readonly string[] = Object.freeze(["cell", "until"]);
+export const NEEDS_MEMBERS: readonly string[] = Object.freeze(["nutrition", "rest"]);
+
 /** Reports every problem of wake conditions at `value`: each member optional. */
 export function checkWakeConditions(value: unknown, path: string, sink: IssueSink): void {
-  const optional = ["lightAbove", "lightBelow", "nutritionBelow", "restBelow"];
-  const wake = readFields(value, path, { required: [], optional }, sink);
+  const wake = readFields(value, path, WAKE_MEMBERS, sink);
   wake?.int("nutritionBelow", BEING_BOUNDS.level);
   wake?.int("restBelow", BEING_BOUNDS.level);
   wake?.int("lightBelow", BEING_BOUNDS.light);
@@ -256,19 +309,29 @@ export function checkWakeConditions(value: unknown, path: string, sink: IssueSin
 
 /** Reports every problem of a brain's stored behavior at `value`. */
 export function checkBehavior(value: unknown, path: string, sink: IssueSink): void {
-  const behavior = readFields(value, path, { required: ["heading", "kind", "since"] }, sink);
+  const behavior = readFields(value, path, { required: BEHAVIOR_MEMBERS }, sink);
   if (behavior === undefined) return;
   readId(behavior.value("kind"), behavior.at("kind"), sink);
   behavior.int("since", TICKS);
   behavior.int("heading", BEING_BOUNDS.heading);
 }
 
-/** Reports every problem of an outcome at `value`. */
-function checkOutcome(value: unknown, path: string, sink: IssueSink): void {
-  const outcome = readFields(value, path, { required: ["reason", "result", "tick"] }, sink);
+/** The members of an outcome; under beings@2, a meal's also holds the optional `units`. */
+export const OUTCOME_MEMBERS = Object.freeze({
+  required: Object.freeze(["reason", "result", "tick"]),
+  optional: Object.freeze(["units"]),
+});
+
+/** Reports every problem of an outcome at `value`; one of beings@2 may hold a meal's units. */
+function checkOutcome(value: unknown, path: string, rules: BeingsRules, sink: IssueSink): void {
+  const { required } = OUTCOME_MEMBERS;
+  const optional = rules.minds ? OUTCOME_MEMBERS.optional : [];
+  const outcome = readFields(value, path, { required, optional }, sink);
   if (outcome === undefined) return;
   outcome.choice("result", RESULTS);
   outcome.int("tick", TICKS);
+  // Read only where it is a member: under beings@1, it is reported as unknown, and only that.
+  if (rules.minds) outcome.int("units", BEING_BOUNDS.eaten);
   const reason = outcome.value("reason");
   if (typeof reason !== "string") {
     if (reason !== undefined) sink.report(outcome.at("reason"), "the reason must be a string");
@@ -295,7 +358,7 @@ function checkEach(value: unknown, path: string, spec: ListCheck, sink: IssueSin
 
 /** Reports every problem of a cooldown at `value`. */
 function checkCooldown(value: unknown, path: string, sink: IssueSink): void {
-  const cooldown = readFields(value, path, { required: ["cell", "until"] }, sink);
+  const cooldown = readFields(value, path, { required: COOLDOWN_MEMBERS }, sink);
   if (cooldown === undefined) return;
   checkCell(cooldown.value("cell"), cooldown.at("cell"), sink);
   cooldown.int("until", TICKS);
@@ -314,89 +377,71 @@ function checkCooldownRequest(value: unknown, path: string, sink: IssueSink): vo
   request.int("ms", BEING_BOUNDS.durationMs);
 }
 
-/** Reports every problem of a being's body: needs, health, traits, and condition. */
-function checkBody(being: Fields, sink: IssueSink): void {
+/** Reports every problem of a being's body: needs, health, the traits of `rules`, and condition. */
+function checkBody(being: Fields, rules: BeingsRules, sink: IssueSink): void {
   const needs = readFields(
     being.value("needs"),
     being.at("needs"),
-    { required: ["nutrition", "rest"] },
+    { required: NEEDS_MEMBERS },
     sink,
   );
   needs?.int("nutrition", BEING_BOUNDS.level);
   needs?.int("rest", BEING_BOUNDS.level);
   being.int("health", BEING_BOUNDS.level);
-  const traitNames = ["appetite", "curiosity", "sleepiness"];
-  const traits = readFields(
-    being.value("traits"),
-    being.at("traits"),
-    { required: traitNames },
-    sink,
-  );
-  for (const name of traitNames) traits?.int(name, BEING_BOUNDS.trait);
+  const names = rules.traitMembers;
+  const traits = readFields(being.value("traits"), being.at("traits"), { required: names }, sink);
+  for (const name of names) traits?.int(name, BEING_BOUNDS.trait);
   being.choice("condition", ["ok", "incapacitated"]);
 }
 
-const BEING_MEMBERS: readonly string[] = Object.freeze([
-  "activity",
-  "anchor",
-  "behavior",
-  "born",
-  "cell",
-  "condition",
-  "cooldowns",
-  "health",
-  "id",
-  "needs",
-  "outcome",
-  "plan",
-  "species",
-  "stage",
-  "traits",
-  "wake",
-  "wakeWhen",
-]);
-
-/** Reports every problem of the being at `value` to `sink`. */
-export function checkBeing(value: unknown, path: string, sink: IssueSink): void {
-  const being = readFields(value, path, { required: BEING_MEMBERS }, sink);
+/** Reports every problem of the being at `value` to `sink`, by the rules of its version. */
+export function checkBeing(
+  value: unknown,
+  path: string,
+  sink: IssueSink,
+  rules: BeingsRules = BEINGS_RULES,
+): void {
+  const being = readFields(value, path, { required: rules.members }, sink);
   if (being === undefined) return;
   being.int("id", BEING_BOUNDS.id);
   readId(being.value("species"), being.at("species"), sink);
   being.choice("stage", STAGES);
   being.int("born", TICKS);
   checkCell(being.value("cell"), being.at("cell"), sink);
-  checkBody(being, sink);
+  checkBody(being, rules, sink);
   being.int("anchor", TICKS);
-  checkActivity(being.value("activity"), being.at("activity"), sink);
-  checkEach(
-    being.value("plan"),
-    being.at("plan"),
-    { count: BEING_BOUNDS.plan, entry: checkPlanStep },
-    sink,
-  );
+  checkActivity(being.value("activity"), being.at("activity"), rules.activities, sink);
+  const step = (entry: unknown, at: string, inner: IssueSink) =>
+    checkPlanStep(entry, at, inner, rules.activities);
+  checkEach(being.value("plan"), being.at("plan"), { count: BEING_BOUNDS.plan, entry: step }, sink);
   checkBehavior(being.value("behavior"), being.at("behavior"), sink);
   checkWakeConditions(being.value("wakeWhen"), being.at("wakeWhen"), sink);
   being.int("wake", TICKS);
-  checkOutcome(being.value("outcome"), being.at("outcome"), sink);
+  checkOutcome(being.value("outcome"), being.at("outcome"), rules, sink);
   checkEach(
     being.value("cooldowns"),
     being.at("cooldowns"),
     { count: BEING_BOUNDS.cooldowns, entry: checkCooldown },
     sink,
   );
+  if (rules.minds) checkMindValue(being.value("mind"), being.at("mind"), sink);
 }
 
 /**
- * Every problem of the being at `value`, at paths from `path`. `value` is canonical, as a
- * validator's value is; a host that holds an arbitrary value copies it first with copyCanonical.
- * Never throws for a canonical value.
+ * Every problem of the being at `value` as a being of the ruleset `version`, at paths from `path`.
+ * `value` is canonical, as a validator's value is; a host that holds an arbitrary value copies it
+ * first with copyCanonical. Never throws for a canonical value.
  */
-export function beingIssues(value: unknown, path: string): Issue[] {
+export function beingIssues(
+  value: unknown,
+  path: string,
+  version: BeingsVersion = "beings@1",
+): Issue[] {
   const issues = new IssueList();
   if (value === undefined) {
     issues.report(path, "the being is missing");
     return issues.issues;
   }
-  checkBeing(value, path, issues);
+  checkBeing(value, path, issues, rulesOf(version));
   return issues.issues;
 }

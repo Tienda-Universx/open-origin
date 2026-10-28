@@ -266,7 +266,8 @@ records the reason, and the engine emits `being.intention_rejected`. A brain tha
 poisons the world. The ruleset captures its brains as it captures its lists, and its
 brain version composes each species with its brain, in species order. A `decide` must be an
 ordinary function: the capture refuses an async function or a generator with `invalid_ruleset`,
-because it returns a promise or an iterator, never an intention (tracker L53). A sync `decide`
+because it returns a promise or an iterator, never an intention (tracker L53), and reports it with
+every other problem of the brain, such as its version. A sync `decide`
 that returns a promise is rejected as `malformed` when it decides, and a promise it leaves rejected
 is the host's to handle, since the engine may not name `Promise`; T6's host installs that handler.
 

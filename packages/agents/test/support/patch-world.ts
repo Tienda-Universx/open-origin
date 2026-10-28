@@ -52,6 +52,18 @@ export function patchWorld(seed: Seed, ruleset: SuiteRuleset, audit: boolean): W
   );
 }
 
+/**
+ * A patch world at tick 0 with `seed`, running `ruleset`, a ruleset of beings@2, under the default
+ * laws of life@2, whose body laws are those of patchWorld's laws.
+ */
+export function patchWorld2(seed: Seed, ruleset: SuiteRuleset, audit: boolean): World {
+  const global = beings.beingsGlobal(patchGenesis(), beings.defaultLife2());
+  return createWorld(
+    { seed, simSecondsPerTick: PATCH_SPS, global, chunks: {}, ruleset },
+    { audit },
+  );
+}
+
 /** A being to spawn: its cell and needs, with neutral traits. */
 export type Spawn = {
   readonly cell: readonly [number, number];

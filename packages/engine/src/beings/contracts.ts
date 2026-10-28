@@ -2,8 +2,10 @@
  * The port between the body and a brain (ADR 0023): what the engine gives a brain at a decision,
  * and what a brain may propose. The engine defines it; packages/agents implements brains. A brain
  * is a pure function of its senses: whatever it must remember between decisions travels in
- * `behavior`, which the engine stores in the being and hands back.
+ * `behavior`, which the engine stores in the being and hands back. A brain of beings@2 (ADR 0024)
+ * also declares its behaviors and the namespace of its concepts, and senses others and its mind.
  */
+import type { MindView } from "../mind/index.ts";
 import type { DeepReadonly } from "../world/contracts.ts";
 import type {
   Activity,
@@ -13,8 +15,10 @@ import type {
   CooldownRequest,
   Outcome,
   PlanStep,
+  Traits2,
   WakeConditions,
 } from "./being.ts";
+import type { PerceivedBeing } from "./perception.ts";
 
 /**
  * The 8 directions, by index: 0 E, 1 NE, 2 N, 3 NW, 4 W, 5 SW, 6 S, 7 SE, counterclockwise from
@@ -84,4 +88,31 @@ export type Intention = {
 export interface Controller {
   readonly brain: string;
   decide(senses: DeepReadonly<Senses>): Intention;
+}
+
+/**
+ * What a brain of beings@2 receives at a decision (ADR 0024, docs/architecture/mind.md
+ * "Perception"): the senses of T4, `self` with its six traits and copied by the allowlist of
+ * classes.ts; the beings it perceives; what it hears, which speech fills in T5-6 and which is empty
+ * until then; and the view of its mind, which never holds a taint.
+ */
+export type Senses2 = Omit<Senses, "self"> & {
+  readonly self: Omit<Senses["self"], "traits"> & { readonly traits: Traits2 };
+  readonly perceived: {
+    readonly beings: readonly PerceivedBeing[];
+    readonly heard: readonly never[];
+  };
+  readonly mind: MindView;
+};
+
+/**
+ * A brain of beings@2: its version; the 1 to 16 identifiers its `behavior.kind` may take, so that
+ * no other value hides information there; the namespace of its concepts, the first segment of the
+ * concept ids it may form; and its decision, called without `this`.
+ */
+export interface Controller2 {
+  readonly brain: string;
+  readonly behaviors: readonly string[];
+  readonly concepts: string;
+  decide(senses: DeepReadonly<Senses2>): Intention;
 }

@@ -1,20 +1,19 @@
 /**
- * The ruleset of the beings (ADR 0023), `beings@1`: one system, `beings`, and one command,
- * `beings.spawn`, over a global value that holds the sealed genesis of worldgen, the sealed laws of
- * life, and the occupancy index, and chunks that hold beings and the food they took. The host gives
- * one brain per species; the ruleset captures them when it is made, so they cannot change later.
+ * The ruleset of the beings (ADR 0023, ADR 0024), `beings@1` and, beside it, `beings@2`: one
+ * system, `beings`, and one command, `beings.spawn`, over a global value that holds the sealed
+ * genesis of worldgen, the sealed laws of life, and the occupancy index, and chunks that hold
+ * beings and the food they took. The host gives one brain per species; the ruleset captures them
+ * when it is made, so they cannot change later. Each version follows its own rules (rules.ts):
+ * beings@2 requires life@2, spawns beings with six traits and an empty mind, and caps the beings of
+ * a chunk.
  */
 import type { IssueSink } from "../canonical/value.ts";
 import { type Issue, IssueList } from "../errors.ts";
+import { floorDiv } from "../int.ts";
+import { newMind } from "../mind/index.ts";
+import { simSeconds } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
-import type {
-  Command,
-  DeepReadonly,
-  ReadView,
-  Rejection,
-  Ruleset,
-  TickContext,
-} from "../world/contracts.ts";
+import type { Command, ReadView, Rejection, Ruleset, TickContext } from "../world/contracts.ts";
 import { readMember, readRecordKeys, UNREAD } from "../world/members.ts";
 import {
   chunkOfCell,
@@ -28,106 +27,42 @@ import {
   sealedGenesisIssues,
   WORLDGEN_VERSION,
 } from "../worldgen/index.ts";
-import { BEING_BOUNDS, type Being } from "./being.ts";
-import { type BeingsChunk, beingsChunkIssues, CHUNK_BOUNDS, dueOf } from "./chunk.ts";
-import type { Controller, Senses } from "./contracts.ts";
-import { type BeingsGlobal, BRAIN_STREAM, CONTEST_STREAM, type Controllers } from "./env.ts";
+import { BEING_BOUNDS, type Being, type Being2, type Traits2 } from "./being.ts";
+import { brainVersion, type Controllers, captureControllers } from "./capture.ts";
+import { type BeingsChunk, beingsChunkIssues, dueOf } from "./chunk.ts";
+import type { Controller, Controller2 } from "./contracts.ts";
+import type { BeingsGlobal } from "./env.ts";
 import { type LifeConfig, lifeSeal, type Species, sealedLifeIssues } from "./laws.ts";
+import { LIFE2_RULES, LIFE2_VERSION, type LifeConfig2 } from "./life2.ts";
 import { insertOccupied, isOccupied, occupancyIssues } from "./occupancy.ts";
 import { NEED_MAX } from "./rates.ts";
+import {
+  BEINGS_RULES,
+  BEINGS_RULESET_VERSION,
+  BEINGS2_RULES,
+  BEINGS2_RULESET_VERSION,
+  type BeingsRules,
+} from "./rules.ts";
 import { range, readFields, readId, readInt, readList, TICKS } from "./schema.ts";
 import { runBeings } from "./system.ts";
 
-/** The version of the beings ruleset: its system, its command, and its data. */
-export const BEINGS_RULESET_VERSION = "beings@1";
-
-/** What the host gives the ruleset: one brain per species of the world's laws of life. */
+/**
+ * What the host gives the ruleset beings@1: one brain per species of the world's laws of life, and
+ * no rules, or "beings@1".
+ */
 export type BeingsRulesetOptions = {
   readonly controllers: { readonly [species: string]: Controller };
+  readonly rules?: typeof BEINGS_RULESET_VERSION;
+};
+
+/** What the host gives the ruleset beings@2: one brain of beings@2 per species of life@2. */
+export type Beings2RulesetOptions = {
+  readonly controllers: { readonly [species: string]: Controller2 };
+  readonly rules: typeof BEINGS2_RULESET_VERSION;
 };
 
 /** The neutral trait, in permille. */
 const NEUTRAL_TRAIT = 1000;
-
-/** The brain of one species, read once: its version and its decide function. */
-function captureOne(controller: unknown, path: string, issues: IssueList): Controller | undefined {
-  // A member readMember could not read was already reported there.
-  if (controller === UNREAD) return undefined;
-  if (typeof controller !== "object" || controller === null) {
-    issues.report(path, "a brain must be an object with a brain version and a decide function");
-    return undefined;
-  }
-  const brain = readVersion(readMember(controller, "brain", `${path}/brain`, issues), path, issues);
-  const decide = readMember(controller, "decide", `${path}/decide`, issues);
-  if (decide !== UNREAD && typeof decide !== "function")
-    issues.report(`${path}/decide`, "a brain must have a decide function");
-  if (brain === undefined || typeof decide !== "function") return undefined;
-  if (!isOrdinary(decide, `${path}/decide`, issues)) return undefined;
-  return Object.freeze({
-    brain,
-    decide: (senses: DeepReadonly<Senses>) => decide.call(controller, senses),
-  });
-}
-
-/**
- * Whether `decide` is an ordinary function, whose prototype is that of every function declared in
- * this module; an async function or a generator, whose prototypes differ, returns a promise or an
- * iterator, never an intention (tracker L53). An issue at `path` otherwise. A sync function that
- * returns a promise is still a malformed intention when it decides, and a promise it leaves
- * rejected is the host's to handle: the engine may not name `Promise`.
- */
-function isOrdinary(decide: unknown, path: string, issues: IssueList): boolean {
-  try {
-    if (Object.getPrototypeOf(decide) === Object.getPrototypeOf(readVersion)) return true;
-  } catch (error) {
-    issues.report(path, "the decide function threw while being inspected", error);
-    return false;
-  }
-  issues.report(
-    path,
-    "a brain's decide must be an ordinary function: an async function or a generator returns a promise or an iterator, never an intention",
-  );
-  return false;
-}
-
-/** `value` as the version of the brain at `path`; undefined after an issue, or when unread. */
-function readVersion(value: unknown, path: string, issues: IssueList): string | undefined {
-  if (typeof value === "string" && value.length > 0) return value;
-  if (value !== UNREAD)
-    issues.report(`${path}/brain`, "a brain's version must be a non-empty string");
-  return undefined;
-}
-
-/** A frozen copy of the brains by species, each read once; throws invalid_ruleset with every problem. */
-function captureControllers(value: unknown): Controllers {
-  const issues = new IssueList();
-  const captured: { [species: string]: Controller } = Object.create(null);
-  const read = readRecordKeys(
-    value,
-    "/controllers",
-    "the brains must be a plain record by species id",
-    issues,
-  );
-  for (const species of read?.keys ?? []) {
-    const path = `/controllers/${species}`;
-    readId(species, path, issues);
-    const controller = captureOne(
-      readMember(read?.record ?? {}, species, path, issues),
-      path,
-      issues,
-    );
-    if (controller !== undefined) captured[species] = controller;
-  }
-  if (read !== undefined && read.keys.length === 0)
-    issues.report("/controllers", "the ruleset needs a brain for at least one species");
-  issues.throwIfAny("invalid_ruleset");
-  return Object.freeze(captured);
-}
-
-/** The ruleset's brain version: each species and its brain, in the order of species ids. */
-function brainVersion(controllers: Controllers, species: readonly string[]): string {
-  return species.map((id) => `${id}:${(controllers[id] as Controller).brain}`).join(",");
-}
 
 /** Reports a species of the laws of life without a brain. */
 function checkBrains(global: unknown, controllers: Controllers, sink: IssueSink): void {
@@ -144,8 +79,8 @@ function checkBrains(global: unknown, controllers: Controllers, sink: IssueSink)
   });
 }
 
-/** Every problem of `value` as the global value of a world of beings. */
-function globalIssues(value: unknown, controllers: Controllers): Issue[] {
+/** Every problem of `value` as the global value of a world of beings of `rules`. */
+function globalIssues(value: unknown, controllers: Controllers, rules: BeingsRules): Issue[] {
   const issues = new IssueList();
   const global = readFields(
     value,
@@ -154,7 +89,7 @@ function globalIssues(value: unknown, controllers: Controllers): Issue[] {
     issues,
   );
   if (global === undefined) return issues.issues;
-  for (const issue of [...sealedGenesisIssues(value), ...sealedLifeIssues(value)])
+  for (const issue of [...sealedGenesisIssues(value), ...sealedLifeIssues(value, rules.life)])
     issues.report(issue.path, issue.message);
   for (const issue of occupancyIssues(global.value("occupancy"), "/occupancy"))
     issues.report(issue.path, issue.message);
@@ -169,22 +104,19 @@ const SPAWN_MEMBERS = Object.freeze({
   optional: Object.freeze(["needs", "traits"]),
 });
 
-/** The validated payload of a spawn. */
+/** The validated payload of a spawn: the traits of beings@1, or the six of beings@2. */
 type Spawn = {
   readonly species: Species;
   readonly cell: readonly [number, number];
   readonly needs: { readonly nutrition: number; readonly rest: number };
-  readonly traits: {
-    readonly appetite: number;
-    readonly sleepiness: number;
-    readonly curiosity: number;
-  };
+  readonly traits: Being["traits"] | Traits2;
 };
 
-/** Every problem of the payload of a spawn, or the spawn it asks for. */
+/** Every problem of the payload of a spawn by `rules`, or the spawn it asks for. */
 function readSpawn(
   view: ReadView<BeingsGlobal, BeingsChunk>,
   payload: unknown,
+  rules: BeingsRules,
   issues: IssueList,
 ): Spawn | undefined {
   const fields = readFields(payload, "", SPAWN_MEMBERS, issues);
@@ -192,7 +124,7 @@ function readSpawn(
   const species = readSpecies(view, fields.value("species"), issues);
   const cell = readCell(fields.value("cell"), issues);
   const needs = readNeeds(fields.value("needs"), issues);
-  const traits = readTraits(fields.value("traits"), species, issues);
+  const traits = readTraits(fields.value("traits"), { species, rules }, issues);
   if (species === undefined || cell === undefined || needs === undefined || traits === undefined)
     return undefined;
   return issues.count > 0 ? undefined : { species, cell, needs, traits };
@@ -231,27 +163,33 @@ function readNeeds(value: unknown, issues: IssueList): Spawn["needs"] | undefine
 }
 
 /**
- * The traits `value` gives within the species' bounds, all neutral when it is omitted; undefined
- * after an issue at /traits. Without a species, each trait is still checked against the widest
- * bounds a being may have, so that its other problems are reported too.
+ * The traits of the version of `of.rules` that `value` gives within the species' bounds, all
+ * neutral when it is omitted; undefined after an issue at /traits. Without a species, each trait
+ * is still checked against the widest bounds a being may have, so that its other problems are
+ * reported too.
  */
 function readTraits(
   value: unknown,
-  species: Species | undefined,
+  of: { readonly species: Species | undefined; readonly rules: BeingsRules },
   issues: IssueList,
 ): Spawn["traits"] | undefined {
+  const traits: { [name: string]: number } = {};
   if (value === undefined) {
-    return { appetite: NEUTRAL_TRAIT, sleepiness: NEUTRAL_TRAIT, curiosity: NEUTRAL_TRAIT };
+    for (const name of of.rules.traits) traits[name] = NEUTRAL_TRAIT;
+    // The neutral value of every trait of the version.
+    return traits as Spawn["traits"];
   }
-  const names = { required: ["appetite", "curiosity", "sleepiness"] };
-  const traits = readFields(value, "/traits", names, issues);
-  const bounds = species?.traits ?? BEING_BOUNDS.trait;
-  const appetite = traits?.int("appetite", bounds);
-  const sleepiness = traits?.int("sleepiness", bounds);
-  const curiosity = traits?.int("curiosity", bounds);
-  if (appetite === undefined || sleepiness === undefined || curiosity === undefined)
-    return undefined;
-  return { appetite, sleepiness, curiosity };
+  const required = of.rules.traitMembers;
+  const fields = readFields(value, "/traits", { required }, issues);
+  const bounds = of.species?.traits ?? BEING_BOUNDS.trait;
+  let complete = fields !== undefined;
+  for (const name of of.rules.traits) {
+    const trait = fields?.int(name, bounds);
+    if (trait === undefined) complete = false;
+    else traits[name] = trait;
+  }
+  // Each trait of the version was read within its bounds.
+  return complete ? (traits as Spawn["traits"]) : undefined;
 }
 
 /** Why a spawn at `cell` cannot happen: its cell lies under liquid deeper than the species wades. */
@@ -271,37 +209,50 @@ function spawnBlocked(view: ReadView<BeingsGlobal, BeingsChunk>, spawn: Spawn): 
 }
 
 /**
- * `check` of `beings.spawn`: a rejection for a spawn that is not the admin's, a malformed one, or a
- * cell the species cannot stand on.
+ * `check` of `beings.spawn`: a rejection for a spawn that is not the admin's, a malformed one, a
+ * cell the species cannot stand on, or a chunk already full.
  */
 function checkSpawn(
   view: ReadView<BeingsGlobal, BeingsChunk>,
   command: Command,
+  rules: BeingsRules,
 ): Rejection | undefined {
   // Beings come from the admin plane only (AGENTS.md, rule 7); an inhabitant cannot create them.
   if (command.origin.kind !== "admin") return { reason: "admin_only" };
   const issues = new IssueList();
-  const spawn = readSpawn(view, command.payload, issues);
+  const spawn = readSpawn(view, command.payload, rules, issues);
   if (spawn === undefined)
     return {
       reason: "invalid_spawn",
       details: { issues: issues.issues.map(({ path, message }) => ({ path, message })) },
     };
-  const blocked = spawnBlocked(view, spawn) ?? spawnCrowded(view, spawn);
+  const blocked = spawnBlocked(view, spawn) ?? spawnCrowded(view, spawn, rules);
   return blocked === undefined
     ? undefined
     : { reason: "invalid_spawn", details: { issues: [{ path: "/cell", message: blocked }] } };
 }
 
 /**
- * Why a spawn at `cell` cannot happen: its chunk already holds as many beings as a chunk may, so the
- * spawn would make the chunk invalid and poison the world at commit (tracker L53).
+ * Why a spawn at `cell` cannot happen: under beings@1, its chunk already holds as many beings as a
+ * chunk may, so the spawn would make the chunk invalid and poison the world at commit (tracker
+ * L53); under beings@2, the chunk holds its capacity, a law of life@2. The view is live, so the
+ * spawns of the same tick count as they apply.
  */
-function spawnCrowded(view: ReadView<BeingsGlobal, BeingsChunk>, spawn: Spawn): string | undefined {
+function spawnCrowded(
+  view: ReadView<BeingsGlobal, BeingsChunk>,
+  spawn: Spawn,
+  rules: BeingsRules,
+): string | undefined {
   const [x, y] = spawn.cell;
-  const chunk = view.readChunk(`${chunkOfCell(x)},${chunkOfCell(y)}`);
-  return (chunk?.beings.length ?? 0) >= CHUNK_BOUNDS.beings.max
-    ? "the chunk of the cell holds as many beings as a chunk may"
+  const held = view.readChunk(`${chunkOfCell(x)},${chunkOfCell(y)}`)?.beings.length ?? 0;
+  if (!rules.minds)
+    return held >= rules.chunkBeings.max
+      ? "the chunk of the cell holds as many beings as a chunk may"
+      : undefined;
+  // validateGlobal accepted the laws of life@2, which hold the capacity.
+  const { capacity } = view.readGlobal().life as LifeConfig2;
+  return held >= capacity
+    ? `the chunk of the cell holds its capacity, ${capacity} beings`
     : undefined;
 }
 
@@ -328,10 +279,32 @@ function newBeing(id: number, spawn: Spawn, tick: number): Being {
   };
 }
 
+/**
+ * A new being of beings@2 for `spawn`, born at the tick of `ctx`: the being of beings@1 with an
+ * empty mind, whose quota counts the simulated day of its birth as the daily prune counts days.
+ */
+function newBeing2(id: number, spawn: Spawn, ctx: TickContext<BeingsGlobal, BeingsChunk>): Being2 {
+  const day = floorDiv(
+    simSeconds(ctx.tick, ctx.simSecondsPerTick),
+    ctx.readGlobal().genesis.laws.day.length,
+  );
+  // readSpawn read the six traits of beings@2.
+  return {
+    ...newBeing(id, spawn, ctx.tick),
+    traits: { ...spawn.traits } as Traits2,
+    mind: newMind(day),
+  };
+}
+
 /** `apply` of `beings.spawn`: the being in the chunk of its cell, and the chunk in the occupancy index. */
-function applySpawn(ctx: TickContext<BeingsGlobal, BeingsChunk>, command: Command): undefined {
-  const spawn = readSpawn(ctx, command.payload, new IssueList()) as Spawn;
-  const being = newBeing(ctx.newEntityId(), spawn, ctx.tick);
+function applySpawn(
+  ctx: TickContext<BeingsGlobal, BeingsChunk>,
+  command: Command,
+  rules: BeingsRules,
+): undefined {
+  const spawn = readSpawn(ctx, command.payload, rules, new IssueList()) as Spawn;
+  const id = ctx.newEntityId();
+  const being = rules.minds ? newBeing2(id, spawn, ctx) : newBeing(id, spawn, ctx.tick);
   const [x, y] = spawn.cell;
   const key: ChunkKey = `${chunkOfCell(x)},${chunkOfCell(y)}`;
   if (ctx.readChunk(key) === undefined)
@@ -346,51 +319,87 @@ function applySpawn(ctx: TickContext<BeingsGlobal, BeingsChunk>, command: Comman
   return undefined;
 }
 
+/** The rules the member `rules` of the options names: beings@1 when it is absent or names it. */
+function readRules(value: unknown, issues: IssueList): BeingsRules | undefined {
+  if (value === UNREAD) return undefined;
+  if (value === undefined || value === BEINGS_RULESET_VERSION) return BEINGS_RULES;
+  if (value === BEINGS2_RULESET_VERSION) return BEINGS2_RULES;
+  issues.report(
+    "/rules",
+    `the rules are "${BEINGS_RULESET_VERSION}", the same as absent, or "${BEINGS2_RULESET_VERSION}"`,
+  );
+  return undefined;
+}
+
 /**
- * The beings ruleset over the brains of `options`, one per species. Throws
- * EngineError("invalid_ruleset") with every problem of the brains.
+ * The beings ruleset over the brains of `options`, one per species: beings@1 when `rules` is absent
+ * or names it, and beings@2 when it names beings@2. Throws EngineError("invalid_ruleset") with
+ * every problem of the options and the brains.
  */
 export function createBeingsRuleset(
-  options: BeingsRulesetOptions,
+  options: BeingsRulesetOptions | Beings2RulesetOptions,
 ): Ruleset<BeingsGlobal, BeingsChunk> {
   const issues = new IssueList();
   const given: unknown = options;
+  const record = typeof given === "object" && given !== null ? given : undefined;
   const raw =
-    typeof given === "object" && given !== null
-      ? readMember(given, "controllers", "/controllers", issues)
-      : undefined;
+    record === undefined ? undefined : readMember(record, "controllers", "/controllers", issues);
+  const rules = readRules(
+    record === undefined ? undefined : readMember(record, "rules", "/rules", issues),
+    issues,
+  );
   issues.throwIfAny("invalid_ruleset");
-  const controllers = captureControllers(raw === UNREAD ? undefined : raw);
+  // readRules reported nothing, so it named the rules.
+  return rulesetOf(
+    captureControllers(raw === UNREAD ? undefined : raw, rules as BeingsRules),
+    rules as BeingsRules,
+  );
+}
+
+/** The ruleset of `rules` over the captured `controllers`. */
+function rulesetOf(
+  controllers: Controllers,
+  rules: BeingsRules,
+): Ruleset<BeingsGlobal, BeingsChunk> {
   const species = Object.freeze(readRecordKeys(controllers, "", "", new IssueList())?.keys ?? []);
   return {
     versions: {
-      ruleset: BEINGS_RULESET_VERSION,
+      ruleset: rules.version,
       generator: WORLDGEN_VERSION,
       brain: brainVersion(controllers, species),
     },
     systems: [
       {
         name: "beings",
-        streams: [BRAIN_STREAM, CONTEST_STREAM],
+        streams: rules.streams,
         run: (ctx) => {
-          runBeings(ctx, controllers);
+          runBeings(ctx, controllers, rules);
           return undefined;
         },
       },
     ],
-    commands: { "beings.spawn": { check: checkSpawn, apply: applySpawn } },
-    validateGlobal: (value) => globalIssues(value, controllers),
-    validateChunk: (key, value) => beingsChunkIssues(key, value),
+    commands: {
+      "beings.spawn": {
+        check: (view, command) => checkSpawn(view, command, rules),
+        apply: (ctx, command) => applySpawn(ctx, command, rules),
+      },
+    },
+    validateGlobal: (value) => globalIssues(value, controllers, rules),
+    validateChunk: (key, value) =>
+      beingsChunkIssues(key, value, rules.minds ? BEINGS2_RULESET_VERSION : BEINGS_RULESET_VERSION),
   };
 }
 
-/** The global value of a new world of beings, for createWorld: sealed genesis and laws, no occupancy. */
-export function beingsGlobal(genesis: Genesis, life: LifeConfig): BeingsGlobal {
+/**
+ * The global value of a new world of beings, for createWorld: sealed genesis and laws, no
+ * occupancy. Laws of life@2 are sealed with their own version.
+ */
+export function beingsGlobal(genesis: Genesis, life: LifeConfig | LifeConfig2): BeingsGlobal {
   return {
     genesis,
     genesisSeal: genesisSeal(genesis),
     life,
-    lifeSeal: lifeSeal(life),
+    lifeSeal: life.version === LIFE2_VERSION ? LIFE2_RULES.seal(life) : lifeSeal(life),
     occupancy: [],
     prunedDay: 0,
   };

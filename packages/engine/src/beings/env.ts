@@ -20,11 +20,12 @@ import {
   sampleSurface,
 } from "../worldgen/index.ts";
 import type { Cell } from "./being.ts";
+import type { Brain, Controllers } from "./capture.ts";
 import type { BeingsChunk } from "./chunk.ts";
-import type { Controller } from "./contracts.ts";
 import { takenAt } from "./food.ts";
 import type { LifeConfig, Species } from "./laws.ts";
 import { greatest, type Ratio } from "./rates.ts";
+import { type BeingsRules, BRAIN_STREAM } from "./rules.ts";
 
 /** The global value of a world of beings. */
 export type BeingsGlobal = {
@@ -37,16 +38,13 @@ export type BeingsGlobal = {
   prunedDay: number;
 };
 
-/** The streams the beings system draws from: the brains' draws and the contests over food. */
-export const BRAIN_STREAM = "beings.brain";
-export const CONTEST_STREAM = "beings.contest";
-
-/** The brains of a ruleset, by species id, captured when the ruleset was made. */
-export type Controllers = { readonly [species: string]: Controller };
+export { BRAIN_STREAM, CONTEST_STREAM, CROWD_STREAM } from "./rules.ts";
 
 /** What the second and third phases read and do during one tick. */
 export type BeingsEnv = {
   readonly ctx: TickContext<BeingsGlobal, BeingsChunk>;
+  /** The rules of the ruleset's version. */
+  readonly rules: BeingsRules;
   readonly tick: Tick;
   readonly sps: number;
   /** The simulated second at the start of the tick. */
@@ -56,7 +54,7 @@ export type BeingsEnv = {
   readonly view: { readChunk(key: ChunkKey): BeingsChunk | undefined };
   emit(type: string, payload: CanonicalValue): void;
   species(id: string): Species;
-  controller(species: string): Controller;
+  controller(species: string): Brain;
   prepared(): PreparedGenesis;
   light(): number;
   draws(id: number): number[];
@@ -75,10 +73,11 @@ function placeOf(cell: Cell): { readonly chunk: ChunkKey; readonly cell: number 
   };
 }
 
-/** The tick's environment, over `ctx` and the brains of the ruleset. */
+/** The tick's environment, over `ctx` and the brains and rules of the ruleset. */
 export function envOf(
   ctx: TickContext<BeingsGlobal, BeingsChunk>,
   controllers: Controllers,
+  rules: BeingsRules,
 ): BeingsEnv {
   const global = ctx.readGlobal();
   const sps = ctx.simSecondsPerTick;
@@ -88,6 +87,7 @@ export function envOf(
   const view = { readChunk: (key: ChunkKey) => ctx.readChunk(key) as BeingsChunk | undefined };
   const env: BeingsEnv = {
     ctx,
+    rules,
     tick: ctx.tick,
     sps,
     now,
@@ -121,7 +121,7 @@ function speciesIn(life: DeepReadonly<LifeConfig>, id: string): Species {
 }
 
 /** The brain of `species`; validateGlobal guarantees one for every species. */
-function controllerOf(controllers: Controllers, species: string): Controller {
+function controllerOf(controllers: Controllers, species: string): Brain {
   const controller = controllers[species];
   if (controller === undefined) throw integrity(`no brain for the species "${species}"`);
   return controller;

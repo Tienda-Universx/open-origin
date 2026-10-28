@@ -10,7 +10,7 @@ import { compareCodeUnits } from "../canonical/order.ts";
 import { simSeconds, type Tick } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import { idleEnd, nextArrival, nextBite } from "./activity.ts";
-import type { Work } from "./advance.ts";
+import { outcomeOf, type Work } from "./advance.ts";
 import type { Being } from "./being.ts";
 import {
   type Course,
@@ -66,7 +66,10 @@ function grant(env: BeingsEnv, work: Work, units: number, contested: boolean): v
       result,
       reason: sated ? "" : "food_gone",
     });
-    work.outcome = { result, tick: env.tick, reason: sated ? "" : "food_gone" };
+    // Every earlier bite of the meal was whole, since a short one ends it: this one is the last.
+    const eaten = (work.activity.bites - claim.bites) * work.species.diet.biteUnits + units;
+    const outcome = { result, tick: env.tick, reason: sated ? "" : "food_gone" };
+    work.outcome = outcomeOf(env, work, outcome, eaten);
     work.activity = { kind: "idle", start: env.tick, ms: 1 };
   }
 }
@@ -171,7 +174,8 @@ function lightTicks(env: BeingsEnv, work: Work): (Tick | undefined)[] {
 /**
  * The record of `work` after this tick: anchored at this tick when its body jumped or its rates
  * changed, and kept on its old anchor otherwise, so that its values never depend on how often it
- * was processed; with its next wake, at least the next tick and at most a day away.
+ * was processed; with its next wake, at least the next tick and at most a day away; and, under
+ * beings@2, with its mind.
  */
 function finalBeing(env: BeingsEnv, work: Work): Being {
   const old = work.old;
@@ -209,6 +213,8 @@ function finalBeing(env: BeingsEnv, work: Work): Being {
     wake: wake > env.tick ? wake : env.tick + 1,
     outcome: work.outcome,
     cooldowns: work.cooldowns,
+    // A mind of beings@2 that did not change is the very value the chunk held, not a copy.
+    ...(work.mind === undefined ? {} : { mind: work.mind }),
   };
 }
 
@@ -322,7 +328,7 @@ function placedBeings(env: BeingsEnv, works: readonly Work[]): Placed[] {
 }
 
 /** Whether the ascending `ids` hold `id`, by binary search. */
-function hasId(ids: readonly number[], id: number): boolean {
+export function hasId(ids: readonly number[], id: number): boolean {
   let low = 0;
   let high = ids.length;
   while (low < high) {
