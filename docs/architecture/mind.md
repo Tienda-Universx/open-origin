@@ -408,9 +408,11 @@ what inhabitants think.
    single `being.finished` of its walk, with the result `failed` and the reason `crowded`, which the
    contest for room emits. The events of its body, facts of L0 rather than of the decision,
    `being.exhausted`, `being.incapacitated`, `being.recovered`, and `being.died`, stay in their
-   phase-2 order, and its condition in the record matches them. So `beings@2` holds each being's
-   events of phase 2 until that contest, then emits them in the order below. Then deliveries are
-   resolved.
+   phase-2 order, and its record matches the events it keeps: its condition, and a forced sleep its
+   body put it into at t, which it keeps at its start cell, `{ kind: "sleep", forced: true, … }`
+   with the plan `[]` and the wake conditions `{}`, together with that sleep's `being.started`. So
+   `beings@2` holds each being's events of phase 2 until that contest, then emits them in the order
+   below. Then deliveries are resolved.
 4. `applyWorks`: the final records, where an unchanged mind is the same value, not a copy; then the
    deliveries; then `due` and the occupancy.
 5. Events: those of phase 2 by being id, each being's in the order T4 emits them, then its
@@ -425,8 +427,9 @@ A being's mind is copied only when it decides. A spawn into a chunk at `capacity
 
 `createBeingsRuleset({ controllers })` stays `beings@1` with `life@1`, byte for byte.
 `createBeingsRuleset({ controllers, rules: "beings@2" })` requires `life@2`; `rules: "beings@1"` is
-the same as no `rules`, and any other value is refused with `invalid_ruleset`. Each version is one immutable object of rules with its own
-lists: the members of a being, the kinds of activity, the validators. They differ in `ruleset.ts`
+the same as no `rules`, and any other value is refused with `invalid_ruleset`. Each version is one
+immutable object of rules with its own lists: the members of a being, the kinds of activity, the
+validators. They differ in `ruleset.ts`
 (`readTraits`, `newBeing`, `globalIssues`, the capture), `being.ts`, `chunk.ts`, `laws.ts`,
 `env.ts`, `advance.ts` (`workOf`, `carryOn`, `sensesOf`), `intention.ts`, `body.ts`,
 `resolve.ts` (`finalBeing`, `activityTick`, `applyWorks`), and `beings.beingIssues`.
@@ -682,17 +685,18 @@ only the body as evidence for that design.
 **Measured: the gate** (2026-10-28, `bun packages/agents/bench/gate.ts`, one run at `nice -n 19` on
 the Codespace, Bun 1.4.4; indicative). "dispersed 1,000" on the terrain of `open-origin/t5/bench`,
 whose spawn area centers on chunk (−4, −4), built as initial chunks with every being of `beings@2`
-holding the gate's mind, ran one simulated day (6,300 ticks after 100 of warm-up) under the mindless
-baseline, stepped in turn with the same beings under `beings@1` and `utility@1`; both worlds woke and
-decided the same beings at every tick. Under `beings@2`: 247.8 KB hashed at the median tick and
-419.5 KB at p99, against 52.6 and 106.2 KB under `beings@1`; ticks of 50.0 ms at the median and
-113.3 ms at p99, against 26.7 and 68.9 ms; and a wake that does not decide cost 486 µs against 143 µs
-(152 such ticks), 320 µs more paired tick by tick. The p99 hashed is below 1 MB, so the entity
-section stays in T7. The time targets of "dispersed 1,000" are missed with full minds: the median
-tick of 50.0 ms against at most 50, the p99 of 113.3 ms against at most 100, and 320 µs more per
-wake that does not decide against at most 150. The cause is not yet measured: every write of a being
-turns its whole chunk, mind included, into canonical text, hashes it, and validates it. T5-9
-profiles that cost before any optimization, and a miss that remains is recorded as it is.
+holding the gate's mind, ran one simulated day (6,300 ticks after 100 of warm-up) under the
+mindless baseline, stepped in turn with the same beings under `beings@1` and `utility@1`; both
+worlds woke and decided the same number of beings at every tick, which the benchmark checks. Under
+`beings@2`: 247.8 KB hashed at the median tick and 419.5 KB at p99, against 52.6 and 106.2 KB under
+`beings@1`; ticks of 50.01 ms at the median and 113.28 ms at p99, against 26.74 and 68.89 ms; and a
+wake that does not decide cost 486 µs against 143 µs (152 such ticks), 320 µs more paired tick by
+tick. The p99 hashed is below 1 MB, so the entity section stays in T7. With full minds, the time
+targets of "dispersed 1,000" are at their limit or missed: the median tick of 50.01 ms stands at the
+limit of at most 50; the p99 of 113.28 ms misses at most 100; and 320 µs more per wake that does not
+decide misses at most 150. The cause is not yet measured: every write of a being turns its whole
+chunk, mind included, into canonical text, hashes it, and validates it. T5-9 profiles that cost
+before any optimization, and a miss that remains is recorded as it is.
 
 ## Verification plan
 

@@ -1,10 +1,11 @@
 /**
  * The ruleset of the beings (ADR 0023, ADR 0024), `beings@1` and, beside it, `beings@2`: one
  * system, `beings`, and one command, `beings.spawn`, over a global value that holds the sealed
- * genesis of worldgen, the sealed laws of life, and the occupancy index, and chunks that hold beings
- * and the food they took. The host gives one brain per species; the ruleset captures them when it
- * is made, so they cannot change later. Each version follows its own rules (rules.ts): beings@2
- * requires life@2, spawns beings with six traits and an empty mind, and caps the beings of a chunk.
+ * genesis of worldgen, the sealed laws of life, and the occupancy index, and chunks that hold
+ * beings and the food they took. The host gives one brain per species; the ruleset captures them
+ * when it is made, so they cannot change later. Each version follows its own rules (rules.ts):
+ * beings@2 requires life@2, spawns beings with six traits and an empty mind, and caps the beings of
+ * a chunk.
  */
 import type { IssueSink } from "../canonical/value.ts";
 import { type Issue, IssueList } from "../errors.ts";
@@ -332,8 +333,8 @@ function readRules(value: unknown, issues: IssueList): BeingsRules | undefined {
 
 /**
  * The beings ruleset over the brains of `options`, one per species: beings@1 when `rules` is absent
- * or names it, and beings@2 when it names beings@2. Throws EngineError("invalid_ruleset") with every problem of the options and the
- * brains.
+ * or names it, and beings@2 when it names beings@2. Throws EngineError("invalid_ruleset") with
+ * every problem of the options and the brains.
  */
 export function createBeingsRuleset(
   options: BeingsRulesetOptions | Beings2RulesetOptions,
@@ -385,7 +386,7 @@ function rulesetOf(
     },
     validateGlobal: (value) => globalIssues(value, controllers, rules),
     validateChunk: (key, value) =>
-      beingsChunkIssues(key, value, rules.minds ? BEINGS2_RULESET_VERSION : "beings@1"),
+      beingsChunkIssues(key, value, rules.minds ? BEINGS2_RULESET_VERSION : BEINGS_RULESET_VERSION),
   };
 }
 

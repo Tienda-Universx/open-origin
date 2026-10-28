@@ -35,7 +35,9 @@ const WARM_UP = 100;
 /** The gate's trigger: 1 MB hashed in a tick, at p99. */
 export const TRIGGER_BYTES = 1024 * 1024;
 
-/** The terrain of the gate: its label's seeds, the prepared genesis, and its spawn area's center. */
+/**
+ * The terrain of the gate: its label's seeds, the prepared genesis, and its spawn area's center.
+ */
 export type GateScene = {
   readonly seeds: ReturnType<typeof labelSeeds>;
   readonly prepared: worldgen.PreparedGenesis;

@@ -1,8 +1,8 @@
 /**
- * The units a meal ate, in the outcome of beings@2 (ADR 0024, docs/architecture/mind.md "Perception"
- * and "The mind of a being"): when the activity that ended was `eat`, `outcome.units` holds the
- * units it ate in total, 0 when it ate nothing, and a decision senses it as its own experience; any
- * other outcome has no `units`, and beings@1 keeps the outcome of T4.
+ * The units a meal ate, in the outcome of beings@2 (ADR 0024, docs/architecture/mind.md
+ * "Perception" and "The mind of a being"): when the activity that ended was `eat`, `outcome.units`
+ * holds the units it ate in total, 0 when it ate nothing, and a decision senses it as its own
+ * experience; any other outcome has no `units`, and beings@1 keeps the outcome of T4.
  */
 import { describe, expect, test } from "bun:test";
 import { beings } from "../src/index.ts";
@@ -132,6 +132,18 @@ describe("the units a meal ate", () => {
     });
     runTo(one, SECOND_BITE + 1, hungry(PARTIAL_CELL));
     expect(beingOf(one, 1).outcome).toEqual({ result: "done", tick: SECOND_BITE, reason: "" });
+  });
+
+  test("leave the issues of an outcome of beings@1 those of T4: an unknown member, no more", () => {
+    const { mind: _mind, ...one } = being2(1, [0, 0]);
+    const traits = { appetite: 1000, sleepiness: 1000, curiosity: 1000 };
+    const outcome = { result: "done", tick: 3, reason: "", units: -1 };
+    expect(beings.beingIssues({ ...one, traits, outcome }, "/being")).toEqual([
+      {
+        path: "/being/outcome/units",
+        message: "unknown member: the members here are reason, result, tick",
+      },
+    ]);
   });
 
   test("are a member of the outcome that beings@2 validates as a count, and beings@1 refuses", () => {

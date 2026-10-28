@@ -65,7 +65,9 @@ function captureOne(
 /** A brain's decide function, as the host gave it: it takes the senses, and returns anything. */
 type Decide = (this: unknown, senses: object) => unknown;
 
-/** The decide function of the brain at `path`, if it is an ordinary function; undefined otherwise. */
+/**
+ * The decide function of the brain at `path`, if it is an ordinary function; undefined otherwise.
+ */
 function readDecide(controller: object, path: string, issues: IssueList): Decide | undefined {
   const decide = readMember(controller, "decide", `${path}/decide`, issues);
   if (decide !== UNREAD && typeof decide !== "function")
@@ -149,6 +151,10 @@ function readBehaviors(
   const before = issues.count;
   const list = readList(copyAt(value, at, issues), at, BEHAVIORS, issues);
   const ids = (list ?? []).map((id, index) => readId(id, `${at}/${index}`, issues));
+  ids.forEach((id, index) => {
+    if (id !== undefined && ids.indexOf(id) < index)
+      issues.report(`${at}/${index}`, `"${id}" is declared twice: each behavior is declared once`);
+  });
   if (list === undefined || issues.count > before) return undefined;
   // Every entry is an identifier, since none was reported.
   return Object.freeze(ids as string[]);

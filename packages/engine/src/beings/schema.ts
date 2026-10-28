@@ -21,6 +21,9 @@ export function range(min: number, max: number): IntRange {
 /** The ticks: safe integers from 0. */
 export const TICKS = range(0, Number.MAX_SAFE_INTEGER);
 
+/** Every safe integer: for a reader that checks a type and leaves the bounds to another check. */
+export const SAFE_INTEGERS = range(Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+
 /** The message for a required member that is missing. */
 export const MISSING = "the member is missing";
 

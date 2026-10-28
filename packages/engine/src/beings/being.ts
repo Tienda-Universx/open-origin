@@ -196,7 +196,7 @@ function checkWalk(walk: Fields, sink: IssueSink): void {
 }
 
 /** The members of each activity, by kind. */
-const ACTIVITY_MEMBERS = Object.freeze({
+export const ACTIVITY_MEMBERS = Object.freeze({
   eat: Object.freeze(["bites", "kind", "start", "untilNutrition"]),
   idle: Object.freeze(["kind", "ms", "start"]),
   sleep: Object.freeze(["forced", "kind", "untilRest"]),
@@ -204,7 +204,7 @@ const ACTIVITY_MEMBERS = Object.freeze({
 });
 
 /** The members of each planned step, by kind. */
-const STEP_MEMBERS = Object.freeze({
+export const STEP_MEMBERS = Object.freeze({
   eat: Object.freeze(["kind", "untilNutrition"]),
   idle: Object.freeze(["kind", "ms"]),
   sleep: Object.freeze(["kind", "untilRest"]),
@@ -306,19 +306,22 @@ export function checkBehavior(value: unknown, path: string, sink: IssueSink): vo
   behavior.int("heading", BEING_BOUNDS.heading);
 }
 
+/** The members of an outcome; under beings@2, a meal's also holds the optional `units`. */
+export const OUTCOME_MEMBERS = Object.freeze({
+  required: Object.freeze(["reason", "result", "tick"]),
+  optional: Object.freeze(["units"]),
+});
+
 /** Reports every problem of an outcome at `value`; one of beings@2 may hold a meal's units. */
 function checkOutcome(value: unknown, path: string, rules: BeingsRules, sink: IssueSink): void {
-  const optional = rules.minds ? ["units"] : [];
-  const outcome = readFields(
-    value,
-    path,
-    { required: ["reason", "result", "tick"], optional },
-    sink,
-  );
+  const { required } = OUTCOME_MEMBERS;
+  const optional = rules.minds ? OUTCOME_MEMBERS.optional : [];
+  const outcome = readFields(value, path, { required, optional }, sink);
   if (outcome === undefined) return;
   outcome.choice("result", RESULTS);
   outcome.int("tick", TICKS);
-  outcome.int("units", BEING_BOUNDS.eaten);
+  // Read only where it is a member: under beings@1, it is reported as unknown, and only that.
+  if (rules.minds) outcome.int("units", BEING_BOUNDS.eaten);
   const reason = outcome.value("reason");
   if (typeof reason !== "string") {
     if (reason !== undefined) sink.report(outcome.at("reason"), "the reason must be a string");

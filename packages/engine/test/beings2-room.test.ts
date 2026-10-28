@@ -90,8 +90,8 @@ function idle(ms = 6_000_000): beings.Intention {
 }
 
 /**
- * A brain that, at its first decision, walks one step east from the edge or west from beside it, and
- * idles otherwise: every crossing of these tests starts at tick 2 and arrives at ARRIVAL.
+ * A brain that, at its first decision, walks one step east from the edge or west from beside it,
+ * and idles otherwise: every crossing of these tests starts at tick 2 and arrives at ARRIVAL.
  */
 const crosser = brain2((senses) => {
   const first = senses.self.outcome.result === "none";
@@ -329,6 +329,41 @@ describe("the contest for room", () => {
     });
   });
 
+  test("keeps a loser's forced sleep: exhausted at its arrival, it sleeps where it started", () => {
+    // The walker's rest reaches 0 at the tick its walk arrives, re-anchored at tick 1 as its health
+    // is in the test above: awake from tick 0 to 1, walking from then on.
+    const arrival = ARRIVAL - 1;
+    const { awake, walking } = SPECIES.needs.rest;
+    const fallen = (rate: beings.Ratio, ticks: number) =>
+      Math.floor((rate.num * 12 * ticks) / rate.den);
+    const rest = fallen(walking, arrival - 1) + fallen(awake, 1);
+    const walker = being2(2, [EDGE, row(1)], { needs: { nutrition: 900_000, rest } });
+    const world = beings2World({
+      controllers: { s1: crosser },
+      life: life2With(undefined, 1),
+      chunks: chunksOf([being2(1, [EDGE + 2, row(0)]), walker]),
+    });
+    const events = runTo(world, arrival + 1);
+    const of = (tick: number) =>
+      events
+        .filter((event) => event.tick === tick && (event.payload as { id: number }).id === 2)
+        .map(({ type, payload }) => [type, payload]);
+    expect(of(arrival)).toEqual([
+      ["being.exhausted", { id: 2 }],
+      ["being.started", { id: 2, activity: "sleep" }],
+      ["being.finished", crowded(2)],
+    ]);
+    // Exactly one exhaustion across the arrival and the next tick: the being sleeps, as its record says.
+    expect(of(arrival + 1)).toEqual([]);
+    expect(beingOf(world, 2)).toMatchObject({
+      cell: [EDGE, row(1)],
+      activity: { kind: "sleep", forced: true, untilRest: beings.NEED_MAX },
+      plan: [],
+      wakeWhen: {},
+      outcome: { result: "failed", tick: arrival, reason: "crowded" },
+    });
+  });
+
   test("leaves the events of a being that wins its room as they were, in order", () => {
     const at = (capacity: number) => {
       const world = roomWorld(capacity);
@@ -400,7 +435,9 @@ const CROWDED = life2With(
   3,
 );
 
-/** Every problem of the chunks of `world` at its tick: over capacity, or a being outside its chunk. */
+/**
+ * Every problem of the chunks of `world` at its tick: over capacity, or a being outside its chunk.
+ */
 function roomIssues(world: BeingsWorld): string[] {
   const view = readView(world);
   const issues: string[] = [];

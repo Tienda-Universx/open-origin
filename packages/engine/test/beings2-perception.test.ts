@@ -2,8 +2,8 @@
  * Perception and the senses of beings@2 (ADR 0024, docs/architecture/mind.md "Perception"): other
  * beings within sight, by day or dim by the light against `perception.dimBelow`; attention, the K
  * nearest by Chebyshev distance, then id; only C0 members of each; the state at the start of the
- * tick, after its commands and before any being moves; nothing heard until T5-6; and the view of the
- * mind, built by mind.viewOf, which no taint and no C3 kind or bit ever reaches.
+ * tick, after its commands and before any being moves; nothing heard until T5-6; and the view of
+ * the mind, built by mind.viewOf, which no taint and no C3 kind or bit ever reaches.
  */
 import { describe, expect, test } from "bun:test";
 import { type beings, type Command, mind, worldgen } from "../src/index.ts";

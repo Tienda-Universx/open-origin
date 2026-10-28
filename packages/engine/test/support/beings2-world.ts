@@ -179,8 +179,8 @@ export const NEUTRAL_TRAITS = Object.freeze({
 });
 
 /**
- * A being of beings@2 as a spawn at tick `born` makes it, on `cell`, with `traits` and `held` as its
- * mind: a record to place in the initial chunks of a world, which a spawn never could.
+ * A being of beings@2 as a spawn at tick `born` makes it, on `cell`, with `traits` and `held` as
+ * its mind: a record to place in the initial chunks of a world, which a spawn never could.
  */
 export function being2(
   id: number,

@@ -62,6 +62,11 @@ describe("the capture of a brain of beings@2", () => {
       'a value of type string is not an identifier: 1 to 32 characters, a lowercase letter first, then lowercase letters, digits, ".", "_", or "-"',
     ],
     ["rest", "/controllers/s1/behaviors", "the value must be an array, not a string"],
+    [
+      ["rest", "eat", "rest"],
+      "/controllers/s1/behaviors/2",
+      '"rest" is declared twice: each behavior is declared once',
+    ],
   ])("refuses behaviors %p", (behaviors, path, message) => {
     expect(
       captureIssues({ s1: { brain: "a@1", decide: idle, behaviors, concepts: "a1" } }),

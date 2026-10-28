@@ -40,8 +40,10 @@ function arrivalsOf(env: BeingsEnv, works: readonly Work[]): Arrival[] {
  * the being keeps nothing of a decision it made at this tick (mind.md, "The tick of beings@2"): a
  * walk whose last step arrived already ended in the second phase, where the being decided again,
  * and that intention is discarded with what it started, its plan, behavior, wake conditions, and
- * cooldowns. Its mind is the one it had at the start of the tick: the system shares it, never writes
- * it. It decides again at the next tick from the cell it is in.
+ * cooldowns. Its mind is the one it had at the start of the tick: the system shares it, never
+ * writes it. It decides again at the next tick from the cell it is in, unless its body put it into
+ * a forced sleep at this tick, a fact of its body that it keeps there, with no plan and no wake
+ * conditions; its record then matches the events of its body it keeps.
  */
 function crowd(env: BeingsEnv, work: Work): void {
   env.emit("being.finished", {
@@ -58,11 +60,20 @@ function crowd(env: BeingsEnv, work: Work): void {
   >;
   work.cell = restored.cell;
   work.outcome = { result: "failed", tick: env.tick, reason: "crowded" };
-  work.activity = { kind: "idle", start: env.tick, ms: 1 };
   work.plan = [];
   work.behavior = restored.behavior;
-  work.wakeWhen = restored.wakeWhen;
   work.cooldowns = restored.cooldowns;
+  if (isForcedSleep(work)) {
+    work.wakeWhen = {};
+    return;
+  }
+  work.activity = { kind: "idle", start: env.tick, ms: 1 };
+  work.wakeWhen = restored.wakeWhen;
+}
+
+/** Whether `work` sleeps by force: exhaustion, a fact of its body, which a contest never undoes. */
+export function isForcedSleep(work: Work): boolean {
+  return work.activity.kind === "sleep" && work.activity.forced;
 }
 
 /** Resolves the arrivals in one chunk, sorted by id, against its free places; adds its losers. */

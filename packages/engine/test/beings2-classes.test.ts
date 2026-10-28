@@ -7,7 +7,11 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import { ACTIVITY_MEMBERS, OUTCOME_MEMBERS, STEP_MEMBERS } from "../src/beings/being.ts";
 import { copyAllowed, copySensed } from "../src/beings/classes.ts";
+import { MIND_SHAPES } from "../src/beings/minds.ts";
+import { perceiveBeings } from "../src/beings/perception.ts";
+import { BEINGS2_RULES } from "../src/beings/rules.ts";
 import { beings, mind } from "../src/index.ts";
 import { being2, gateMind, idler2 } from "./support/beings2-world.ts";
 import {
@@ -107,6 +111,7 @@ const FULL_BEINGS: beings.Being2[] = [
     ],
     wakeWhen: { nutritionBelow: 1, restBelow: 1, lightBelow: 1, lightAbove: 2 },
     cooldowns: [{ cell: [1, 1], until: 9 }],
+    outcome: { result: "done", tick: 1, reason: "", units: 25 },
   },
   {
     ...being2(2, [0, 0]),
@@ -227,6 +232,92 @@ describe("the classification registry", () => {
       p: foodAt(1, 1),
       band: 1,
     });
+  });
+
+  test("classifies every member the validators of beings@2 accept, optional ones included", () => {
+    const node = (name: string) => memberOf(BEING_CLASSES, name) as ClassNode;
+    const missing: string[] = [];
+    const expectIn = (where: ClassNode | undefined, names: readonly string[], at: string) => {
+      for (const name of names)
+        if (memberOf(where ?? { class: "C1" }, name) === undefined) missing.push(`${at}/${name}`);
+    };
+    const kindOf = (where: ClassNode, kind: string) =>
+      where.kinds?.find((entry) => entry.kind === kind)?.node;
+    expectIn(BEING_CLASSES, BEINGS2_RULES.members, "");
+    expectIn(node("traits"), BEINGS2_RULES.traitMembers, "/traits");
+    for (const [kind, names] of Object.entries(ACTIVITY_MEMBERS))
+      expectIn(kindOf(node("activity"), kind), names, `/activity(${kind})`);
+    for (const [kind, names] of Object.entries(STEP_MEMBERS))
+      expectIn(kindOf(node("plan").each as ClassNode, kind), names, `/plan(${kind})`);
+    expectIn(
+      node("outcome"),
+      [...OUTCOME_MEMBERS.required, ...OUTCOME_MEMBERS.optional],
+      "/outcome",
+    );
+    const held = node("mind");
+    const store = (name: string) => memberOf(held, name)?.each as ClassNode;
+    const all = (shape: { required: readonly string[]; optional: readonly string[] }) => [
+      ...shape.required,
+      ...shape.optional,
+    ];
+    expectIn(held, all(MIND_SHAPES.mind), "/mind");
+    for (const [kind, shape] of Object.entries(MIND_SHAPES.episodes))
+      expectIn(kindOf(store("episodes"), kind), all(shape), `/mind/episodes(${kind})`);
+    expectIn(store("beliefs"), all(MIND_SHAPES.belief), "/mind/beliefs");
+    expectIn(store("relations"), all(MIND_SHAPES.relationship), "/mind/relations");
+    expectIn(store("inbox"), all(MIND_SHAPES.message), "/mind/inbox");
+    expectIn(memberOf(held, "quota"), all(MIND_SHAPES.quota), "/mind/quota");
+    expect(missing).toEqual([]);
+    // Not vacuous: every kind of activity, step, and episode was cross-checked.
+    expect(Object.keys(ACTIVITY_MEMBERS).sort()).toEqual(["eat", "idle", "sleep", "walk"]);
+    expect(Object.keys(MIND_SHAPES.episodes).length).toBe(6);
+  });
+
+  test("lets the view of a mind hold only what the registry classes below C3", () => {
+    const view = mind.viewOf(FULL_MIND, {
+      moment: { tick: 9, secondsPerTick: 12 },
+      laws: mind.defaultMindLaws(),
+      retention: 1000,
+    });
+    const node = memberOf(BEING_CLASSES, "mind") as ClassNode;
+    // The view's transforms keep the registry's names: ticks become ages, familiarity is shown as
+    // it stands, the kind external is shown as heard, and src loses the evidence bit 8.
+    expect(unclassified(node, view)).toEqual([]);
+    expect(secretPaths(node, view)).toEqual([]);
+    expect(view.episodes.map(({ kind }) => kind)).not.toContain("external");
+    expect(view.beliefs.every(({ src }) => (src & 8) === 0)).toBe(true);
+  });
+
+  test("lets a perceived being hold only members the registry classes C0", () => {
+    const walking = {
+      ...being2(2, [1, 0]),
+      activity: { kind: "walk" as const, start: 1, dirs: "02", ms: [10, 20], done: 1 },
+    };
+    const chunk = {
+      beings: [being2(1, [0, 0]), walking, being2(3, [0, 1])],
+      depletion: [],
+      due: 1,
+    };
+    const seen = perceiveBeings(
+      [{ coord: [0, 0], chunk }],
+      { id: 1, cell: [0, 0] },
+      { sight: 4, attention: 8 },
+    );
+    expect(seen.length).toBe(2);
+    for (const perceived of seen) {
+      for (const name of Object.keys(perceived)) {
+        // activity is the kind of the activity, and direction the step of a walk it is on: both C0
+        // by beings.md, the one a member of every kind, the other derived from dirs and done.
+        if (name === "activity" || name === "direction") continue;
+        expect([name, memberOf(BEING_CLASSES, name)?.class]).toEqual([name, "C0"]);
+      }
+    }
+    const activity = memberOf(BEING_CLASSES, "activity") as ClassNode;
+    for (const { node } of activity.kinds ?? []) expect(memberOf(node, "kind")?.class).toBe("C0");
+    expect(seen.map((perceived) => Object.keys(perceived).sort())).toEqual([
+      ["activity", "cell", "direction", "id", "species"],
+      ["activity", "cell", "id", "species"],
+    ]);
   });
 
   test("classifies every event the beings layer emits, and no event it does not", () => {

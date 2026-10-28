@@ -19,7 +19,7 @@ import {
   SPECIES_MEMBERS,
   type Species,
 } from "./laws.ts";
-import { type Fields, type IntRange, range, readFields } from "./schema.ts";
+import { type Fields, type IntRange, range, readFields, SAFE_INTEGERS } from "./schema.ts";
 
 /** The version of the laws of life@2: their schema, bounds, and meaning. */
 export const LIFE2_VERSION = "life@2";
@@ -68,7 +68,7 @@ const LIFE2_BOUNDS = Object.freeze({
 });
 
 /** Any safe integer: the reader checks the type, and the mind layer the bounds. */
-const SAFE = range(Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+const SAFE = SAFE_INTEGERS;
 
 /** A member of a part of the laws: an integer within `bounds`, or a part of its own. */
 type LawEntry = {

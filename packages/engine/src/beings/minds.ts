@@ -8,10 +8,10 @@
 import type { IssueSink } from "../canonical/value.ts";
 import { IssueList } from "../errors.ts";
 import { checkMind, checkProposition, type Mind } from "../mind/index.ts";
-import { type Fields, range, readFields, readInt, readList } from "./schema.ts";
+import { type Fields, range, readFields, readInt, readList, SAFE_INTEGERS } from "./schema.ts";
 
 /** Any safe integer: this reader checks the type, and the mind layer the bounds. */
-const SAFE = range(Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+const SAFE = SAFE_INTEGERS;
 /** Any length: the mind layer bounds each store, and the capacity of a chunk bounds the rest. */
 const ANY = range(0, Number.MAX_SAFE_INTEGER);
 
@@ -70,6 +70,16 @@ const MIND = shape(
   ["exposure", "next"],
 );
 
+/** Every shape this reader accepts, which the classification registry must cover. */
+export const MIND_SHAPES = Object.freeze({
+  mind: MIND,
+  episodes: EPISODES,
+  belief: BELIEF,
+  relationship: RELATIONSHIP,
+  message: MESSAGE,
+  quota: QUOTA,
+});
+
 /** Reports what is not a cell: two integers. */
 function checkCell(value: unknown, path: string, sink: IssueSink): void {
   readList(value, path, range(2, 2), sink)?.forEach((axis, index) => {
@@ -77,7 +87,10 @@ function checkCell(value: unknown, path: string, sink: IssueSink): void {
   });
 }
 
-/** Reports every problem of a record of `shape`: its members, integers, cells, acts, and propositions. */
+/**
+ * Reports every problem of a record of `shape`: its members, integers, cells, acts, and
+ * propositions.
+ */
 function checkRecord(
   value: unknown,
   path: string,

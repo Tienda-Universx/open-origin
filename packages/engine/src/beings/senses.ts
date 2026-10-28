@@ -1,7 +1,7 @@
 /**
- * The senses of a being (ADR 0023): the square window of cells it perceives around itself, with
- * the duration of each step it could take and a banded cue of the food it eats. They are bounded:
- * a brain of beings@1 sees this window, and nothing else, at each decision. Terrain is read once per
+ * The senses of a being (ADR 0023): the square window of cells it perceives around itself, with the
+ * duration of each step it could take and a banded cue of the food it eats. They are bounded: a
+ * brain of beings@1 sees this window, and nothing else, at each decision. Terrain is read once per
  * window with sampleSurface; the chunks the window covers are read once each, without writing or
  * materializing anything, for the food beings took and, under beings@2, for the beings a decision
  * perceives (perception.ts), which reads no other chunk (ADR 0024).

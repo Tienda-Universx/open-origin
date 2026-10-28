@@ -73,7 +73,9 @@ export function* rings(stride: number, around: Cell): Generator<Cell> {
   }
 }
 
-/** The surface of chunk `chunk` of `prepared`: each cell's elevation and food, by index y·32 + x. */
+/**
+ * The surface of chunk `chunk` of `prepared`: each cell's elevation and food, by index y·32 + x.
+ */
 function surfaceOf(chunk: Cell, prepared: worldgen.PreparedGenesis = PREPARED) {
   const rect = { x: chunk[0] * SIDE, y: chunk[1] * SIDE, width: SIDE, height: SIDE };
   return worldgen.sampleSurface(prepared, rect, ACTIVE.diet.deposit);
@@ -101,8 +103,8 @@ function bestCell(chunk: Cell, prepared: worldgen.PreparedGenesis): Cell | undef
 }
 
 /**
- * The cells of `count` dispersed beings: the best cell of chunks two apart, in rings, on the terrain
- * `prepared`, the benchmark's own unless another is given.
+ * The cells of `count` dispersed beings: the best cell of chunks two apart, in rings, on the
+ * terrain `prepared`, the benchmark's own unless another is given.
  */
 export function dispersedCells(
   count: number,

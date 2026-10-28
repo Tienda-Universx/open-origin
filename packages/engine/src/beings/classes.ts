@@ -290,7 +290,9 @@ export const COMMAND_CLASSES: readonly { readonly type: string; readonly class: 
 /** A record whose members are read by name: values the engine built, never a host's. */
 type Members = { readonly [name: string]: unknown };
 
-/** A copy of the leaf `value`: a number, a string, a boolean, or a cell, whose numbers it copies. */
+/**
+ * A copy of the leaf `value`: a number, a string, a boolean, or a cell, whose numbers it copies.
+ */
 function copyLeaf(value: unknown): unknown {
   return Array.isArray(value) ? value.map((entry: unknown) => entry) : value;
 }
