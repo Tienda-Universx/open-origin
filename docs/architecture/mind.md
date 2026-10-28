@@ -630,11 +630,11 @@ for its next decision.
 
 An intention or operation that fails validation is a rejection, the being's experience: `malformed`,
 `mind_malformed`, `unknown_record`, `premise_order`, `depth_exceeded`, `talk_unseen`,
-`talk_out_of_range`, `talk_asleep`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies brain output with
-`copyCanonicalReported`, which refuses accessors and reads a Proxy only through its own data
-properties, refusing one that throws; it reads every length once and bounds it before iterating,
-refusing one that misreports a length, and requires exact members, NFC strings, and the grammars
-above.
+`talk_out_of_range`, `talk_asleep`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies
+brain output with `copyCanonicalReported`, which refuses accessors and reads a Proxy only through
+its own data properties, refusing one that throws; it reads every length once and bounds it before
+iterating, refusing one that misreports a length, and requires exact members, NFC strings, and the
+grammars above.
 
 ## Classification
 
