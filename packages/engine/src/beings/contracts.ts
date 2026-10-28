@@ -5,6 +5,7 @@
  * `behavior`, which the engine stores in the being and hands back. A brain of beings@2 (ADR 0024)
  * also declares its behaviors and the namespace of its concepts, and senses others and its mind.
  */
+import type { MindView } from "../mind/index.ts";
 import type { DeepReadonly } from "../world/contracts.ts";
 import type {
   Activity,
@@ -17,6 +18,7 @@ import type {
   Traits2,
   WakeConditions,
 } from "./being.ts";
+import type { PerceivedBeing } from "./perception.ts";
 
 /**
  * The 8 directions, by index: 0 E, 1 NE, 2 N, 3 NW, 4 W, 5 SW, 6 S, 7 SE, counterclockwise from
@@ -88,9 +90,19 @@ export interface Controller {
   decide(senses: DeepReadonly<Senses>): Intention;
 }
 
-/** What a brain of beings@2 receives at a decision: the senses of T4 with the six traits. */
+/**
+ * What a brain of beings@2 receives at a decision (ADR 0024, docs/architecture/mind.md
+ * "Perception"): the senses of T4, `self` with its six traits and copied by the allowlist of
+ * classes.ts; the beings it perceives; what it hears, which speech fills in T5-6 and which is empty
+ * until then; and the view of its mind, which never holds a taint.
+ */
 export type Senses2 = Omit<Senses, "self"> & {
   readonly self: Omit<Senses["self"], "traits"> & { readonly traits: Traits2 };
+  readonly perceived: {
+    readonly beings: readonly PerceivedBeing[];
+    readonly heard: readonly never[];
+  };
+  readonly mind: MindView;
 };
 
 /**

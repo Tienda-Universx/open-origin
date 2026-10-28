@@ -25,6 +25,15 @@ export {
 export { type Body, bodyAt } from "./body.ts";
 export { type BeingsChunk, beingsChunkIssues, CHUNK_BOUNDS, dueOf } from "./chunk.ts";
 export {
+  BEING_CLASSES,
+  type ClassKind,
+  type ClassMember,
+  type ClassNode,
+  COMMAND_CLASSES,
+  type DataClass,
+  EVENT_CLASSES,
+} from "./classes.ts";
+export {
   type Controller,
   type Controller2,
   DIRECTIONS,
@@ -76,6 +85,7 @@ export {
 export { type LightClock, type LightWatch, nextLightTick } from "./light.ts";
 export { minimumSteps, type StepGeometry, stepDuration } from "./locomotion.ts";
 export { insertOccupied, OCCUPANCY_BOUNDS, occupancyIssues, pruneOccupancy } from "./occupancy.ts";
+export { type PerceivedBeing, perceiveBeings, sightOf } from "./perception.ts";
 export {
   ceilDiv,
   levelAt,

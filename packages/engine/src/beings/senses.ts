@@ -1,9 +1,10 @@
 /**
  * The senses of a being (ADR 0023): the square window of cells it perceives around itself, with
- * the duration of each step it could take and a banded cue of the food it eats. They are bounded,
- * and they are not T5's perception: a brain sees this window, and nothing else, at each decision.
- * Terrain is read once per window with sampleSurface; the food beings took is read from the chunks
- * the window covers, without writing or materializing anything.
+ * the duration of each step it could take and a banded cue of the food it eats. They are bounded:
+ * a brain of beings@1 sees this window, and nothing else, at each decision. Terrain is read once per
+ * window with sampleSurface; the chunks the window covers are read once each, without writing or
+ * materializing anything, for the food beings took and, under beings@2, for the beings a decision
+ * perceives (perception.ts), which reads no other chunk (ADR 0024).
  */
 import { simSeconds } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
@@ -65,15 +66,22 @@ type Ground = {
 /** The square window and the part of it inside the world. */
 type Frame = { readonly origin: Cell; readonly side: number; readonly area: Clip };
 
-/** The ground of the window from one sample of the clipped rectangle. */
-function readGround(input: SenseInput, origin: Cell, side: number): Ground {
+/** A chunk a window covers, as it was read once, and its coordinates. */
+export type CoveredChunk = { readonly coord: Cell; readonly chunk: BeingsChunk };
+
+/** The ground of the window and the chunks it covers, from one sample of the clipped rectangle. */
+function readGround(
+  input: SenseInput,
+  origin: Cell,
+  side: number,
+): { readonly ground: Ground; readonly chunks: readonly CoveredChunk[] } {
   const ground = {
     inside: new Uint8Array(side * side),
     elevation: new Float64Array(side * side),
     food: new Float64Array(side * side),
   };
   const area = clip(origin, side);
-  if (area === undefined) return ground;
+  if (area === undefined) return { ground, chunks: [] };
   const surface = sampleSurface(input.prepared, area, input.species.diet.deposit);
   for (let row = 0; row < area.height; row += 1) {
     for (let column = 0; column < area.width; column += 1) {
@@ -84,19 +92,33 @@ function readGround(input: SenseInput, origin: Cell, side: number): Ground {
       ground.food[to] = surface.deposit[from] as number;
     }
   }
+  const chunks = coveredChunks(input, area);
   const frame = { origin, side, area };
-  for (let cy = chunkOfCell(area.y); cy <= chunkOfCell(area.y + area.height - 1); cy += 1) {
-    for (let cx = chunkOfCell(area.x); cx <= chunkOfCell(area.x + area.width - 1); cx += 1) {
-      subtractTaken(input, frame, [cx, cy], ground.food);
-    }
-  }
-  return ground;
+  for (const covered of chunks) subtractTaken(input, frame, covered, ground.food);
+  return { ground, chunks };
 }
 
-/** Subtracts from `food` what beings took in the chunk `chunk` and has not regrown yet. */
-function subtractTaken(input: SenseInput, frame: Frame, chunk: Cell, food: Float64Array): void {
-  const [cx, cy] = chunk;
-  for (const entry of input.view.readChunk(`${cx},${cy}`)?.depletion ?? []) {
+/** The materialized chunks that `area` covers, by row then column, each read once. */
+function coveredChunks(input: SenseInput, area: Clip): CoveredChunk[] {
+  const chunks: CoveredChunk[] = [];
+  for (let cy = chunkOfCell(area.y); cy <= chunkOfCell(area.y + area.height - 1); cy += 1) {
+    for (let cx = chunkOfCell(area.x); cx <= chunkOfCell(area.x + area.width - 1); cx += 1) {
+      const chunk = input.view.readChunk(`${cx},${cy}`);
+      if (chunk !== undefined) chunks.push({ coord: [cx, cy], chunk });
+    }
+  }
+  return chunks;
+}
+
+/** Subtracts from `food` what beings took in the chunk `covered` and has not regrown yet. */
+function subtractTaken(
+  input: SenseInput,
+  frame: Frame,
+  covered: CoveredChunk,
+  food: Float64Array,
+): void {
+  const [cx, cy] = covered.coord;
+  for (const entry of covered.chunk.depletion) {
     const offset = entry.cell % CHUNK_CELLS;
     const column = chunkFirstCell(cx) + offset - frame.origin[0];
     const row = chunkFirstCell(cy) + (entry.cell - offset) / CHUNK_CELLS - frame.origin[1];
@@ -153,10 +175,21 @@ function cueOf(food: number, cue: Species["diet"]["cue"]): number {
  * it passes between is. Reads terrain and chunks; writes nothing.
  */
 export function senseWindow(input: SenseInput): SensedWindow {
+  return senseWindowAndChunks(input).window;
+}
+
+/**
+ * senseWindow, and the materialized chunks the window covers inside the world, each read once,
+ * which perception reads again from these values instead of from the world.
+ */
+export function senseWindowAndChunks(input: SenseInput): {
+  readonly window: SensedWindow;
+  readonly chunks: readonly CoveredChunk[];
+} {
   const radius = input.species.senses.radius;
   const side = 2 * radius + 1;
   const origin: Cell = [input.center[0] - radius, input.center[1] - radius];
-  const ground = readGround(input, origin, side);
+  const { ground, chunks } = readGround(input, origin, side);
   const level = liquidLevel(genesisOf(input.prepared));
   const edges = { side, ground, level, species: input.species };
   const edgeMs = new Int32Array(side * side * 8);
@@ -169,7 +202,17 @@ export function senseWindow(input: SenseInput): SensedWindow {
   for (let index = 0; index < side * side; index += 1) {
     for (let d = 1; d < 8; d += 2) edgeMs[index * 8 + d] = diagonalEdge(edges, edgeMs, index, d);
   }
-  return { origin, side, edgeMs, foodCue };
+  return { window: { origin, side, edgeMs, foodCue }, chunks };
+}
+
+/** A copy of `window` that shares nothing with it, for a brain that may write to its senses. */
+export function copyWindow(window: SensedWindow): SensedWindow {
+  return {
+    origin: [window.origin[0], window.origin[1]],
+    side: window.side,
+    edgeMs: window.edgeMs.slice(),
+    foodCue: window.foodCue.slice(),
+  };
 }
 
 /**
