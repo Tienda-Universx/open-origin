@@ -12,12 +12,14 @@ import type { BeingsRules } from "./rules.ts";
 import { range, readId, readList } from "./schema.ts";
 
 /**
- * A brain as the ruleset captured it: its version, the behaviors a brain of beings@2 declared,
- * and its decision, which returns what the brain proposed, for the engine to judge.
+ * A brain as the ruleset captured it: its version, the behaviors and the namespace of concepts a
+ * brain of beings@2 declared, and its decision, which returns what the brain proposed, for the
+ * engine to judge.
  */
 export type Brain = {
   readonly brain: string;
   readonly behaviors: readonly string[] | undefined;
+  readonly concepts: string | undefined;
   readonly decide: (senses: object) => unknown;
 };
 
@@ -58,6 +60,7 @@ function captureOne(
   return Object.freeze({
     brain,
     behaviors: undefined,
+    concepts: undefined,
     decide: (senses: object) => decide.call(controller, senses),
   });
 }
@@ -85,6 +88,7 @@ function mindful(brain: string, decide: Decide, declared: Declared, path: string
   return Object.freeze({
     brain,
     behaviors: declared.behaviors,
+    concepts: declared.concepts,
     decide: (senses: object) => {
       // A plain call passes no receiver, so the brain cannot reach its controller through `this`.
       const result = decide(senses);

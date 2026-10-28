@@ -323,6 +323,29 @@ no operation applies; what step 1 did stays, because it is a law, not a proposal
 | A belief citing a belief of a higher or equal id, or a `revise` with nothing new | `premise_order` |
 | Deeper than `mind.depth` | `depth_exceeded` |
 
+How the engine reads and applies them (T5-5a):
+
+- **Order of the checks.** Before the intention is copied, every list and record of its `mind` is
+  bounded from its length: more than 256 entries in all, or a string or key longer than 64
+  characters, is `mind_malformed`, since no legal operations hold that much. Then a value that is
+  not canonical, or a body of the wrong shape, is `malformed`; operations of the wrong shape, count,
+  bound, or grammar, `mind_malformed`; then `walk_not_first` and `walk_blocked`; and last, as the
+  operations apply, `unknown_record`, `premise_order`, `depth_exceeded`, and the `mind_malformed`
+  of a citation repeated or of ids run out.
+- **Percepts.** `{ being: i }` is the i-th being perceived, in the order attention keeps them;
+  `{ heard: i }` the i-th message heard, none until speech (T5-6); `{ food: [x, y] }` a cell of the
+  window, which a cell outside the world never is; and `{ outcome: true }` a `failed` episode when
+  the outcome's result is `failed`, whose reasons are exactly those a `failed` episode indexes, an
+  `ate` episode when the outcome holds `units`, 0 included, and no percept otherwise. An episode
+  happens at the tick of the decision, one of the outcome at the outcome's tick; `r` is now, and `w`
+  is the brain's, within the pins. Anything else the episode holds the engine copies from what it
+  perceived, never from the brain.
+- **Grammars.** `rule` is an identifier, as a behavior is: 1 to 32 characters, a lowercase letter
+  first, then lowercase letters, digits, `.`, `_`, or `-`. A brain forms only concepts of the
+  namespace it declares, or `obs.` followed by an id of the catalog of observables. `recall` may
+  name an episode more than once, each time refreshing it; a percept that does not exist is
+  `unknown_record`, checked before whether ids have run out.
+
 A brain of `beings@2` declares, besides its version and its `decide`, `behaviors`, the 1 to 16
 identifiers its `behavior.kind` may take, and `concepts`, the namespace of its concepts; the capture
 refuses one without them. `utility@1` runs on `beings@2` as the mindless baseline through a test
@@ -467,7 +490,14 @@ runs of the survival child, which already runs them. Every T4 test runs unchange
 | `mind.provenance` | C3 | `{ id, records, exposure }`: the `tn`, `ex`, and evidence of each record created or revised, and the being's exposure |
 | `mind.injected` | C3 | `{ id }`, for an accepted `mind.inject` |
 
-A decision with changes to a mind emits one `mind.changed` and one `mind.provenance`. A delivery
+A decision with changes to a mind emits one `mind.changed` and one `mind.provenance`. A decision
+changed a mind when the mind it leaves is not the one it held, a recall alone included, which
+changes `w` and `r`; both events are emitted then, even when every list is empty. `forgot` lists,
+each with the beliefs that lost it, every record that left the mind but by `drop`: those that faded
+at step 1, by increasing id, then those a full store evicted, in the order of the operations.
+`mind.provenance` lists `{ id, tn, ex, ev }` for each live record the decision created, revised, or
+tainted downstream, by increasing id, an episode with `ev: []`, and `exposure` after the decision.
+A delivery
 emits `speech.delivered`, and a `mind.provenance` when it changes an exposure; an accepted
 injection emits `mind.injected` and a `mind.provenance`. Every change of a mind is therefore in the
 ledger.

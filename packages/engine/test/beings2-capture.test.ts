@@ -198,11 +198,14 @@ describe("a decision of beings@2", () => {
     expect(beingOf(declared, 1).behavior).toEqual({ kind: "rest", since: 2, heading: 0 });
   });
 
-  test("rejects as malformed an intention with a mind member, which arrives in a later batch", () => {
-    const early = brain2(() => ({ ...idle(), mind: { remember: [] } }) as never);
+  test("accepts an intention with a mind member, whose operations beings2-mind-ops.test.ts covers", () => {
+    const early = brain2(() => ({ ...idle(), mind: { remember: [] } }));
     const world = beings2World({ controllers: { s1: early } });
     runTo(world, 2, [spawn(1, { species: "s1", cell: [5, 5] })]);
-    expect(beingOf(world, 1).outcome).toEqual({ result: "rejected", tick: 2, reason: "malformed" });
+    expect(beingOf(world, 1)).toMatchObject({
+      outcome: { result: "none", tick: 1, reason: "" },
+      activity: { kind: "idle", start: 2 },
+    });
   });
 
   test("gives the brain senses it may keep: writing to them changes nothing", () => {

@@ -263,7 +263,8 @@ export const BEING_CLASSES: ClassNode = Object.freeze({
 
 /**
  * The class of every event the beings layer emits: C0 what an observer could see happen, C1 the
- * being's own experience and body.
+ * being's own experience and body, and C3 what only operations and research may read: the
+ * provenance of a mind, its taints and exposure. The class of an event is that of its payload.
  */
 export const EVENT_CLASSES: readonly { readonly type: string; readonly class: DataClass }[] =
   Object.freeze(
@@ -279,6 +280,8 @@ export const EVENT_CLASSES: readonly { readonly type: string; readonly class: Da
         ["being.recovered", "C1"],
         ["being.spawned", "C0"],
         ["being.started", "C0"],
+        ["mind.changed", "C1"],
+        ["mind.provenance", "C3"],
       ] as const
     ).map(([type, cls]) => Object.freeze({ type, class: cls })),
   );

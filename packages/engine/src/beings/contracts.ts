@@ -5,7 +5,7 @@
  * `behavior`, which the engine stores in the being and hands back. A brain of beings@2 (ADR 0024)
  * also declares its behaviors and the namespace of its concepts, and senses others and its mind.
  */
-import type { MindView } from "../mind/index.ts";
+import type { LocalId, MindView, Proposition } from "../mind/index.ts";
 import type { DeepReadonly } from "../world/contracts.ts";
 import type {
   Activity,
@@ -106,6 +106,39 @@ export type Senses2 = Omit<Senses, "self"> & {
 };
 
 /**
+ * The mental operations a brain of beings@2 proposes (docs/architecture/mind.md, "Beliefs"), at
+ * most `mind.ops` in all: episodes the engine copies from percepts of this decision, by reference;
+ * recalls; and beliefs formed, revised, and dropped, citing live records by their local ids. A
+ * record created in the same decision is cited by the id the brain predicts from `next`.
+ */
+export type MindIntention = {
+  readonly remember?: readonly {
+    readonly percept:
+      | { readonly being: number }
+      | { readonly heard: number }
+      | { readonly food: Cell }
+      | { readonly outcome: true };
+    readonly w: number;
+  }[];
+  readonly recall?: readonly LocalId[];
+  readonly believe?: readonly {
+    readonly p: Proposition;
+    readonly cr: number;
+    readonly ev: readonly LocalId[];
+    readonly rule: string;
+  }[];
+  readonly revise?: readonly {
+    readonly id: LocalId;
+    readonly cr: number;
+    readonly ev: readonly LocalId[];
+  }[];
+  readonly drop?: readonly LocalId[];
+};
+
+/** What a brain of beings@2 proposes: an intention of T4, and optionally mental operations. */
+export type Intention2 = Intention & { readonly mind?: MindIntention };
+
+/**
  * A brain of beings@2: its version; the 1 to 16 identifiers its `behavior.kind` may take, so that
  * no other value hides information there; the namespace of its concepts, the first segment of the
  * concept ids it may form; and its decision, called without `this`.
@@ -114,5 +147,5 @@ export interface Controller2 {
   readonly brain: string;
   readonly behaviors: readonly string[];
   readonly concepts: string;
-  decide(senses: DeepReadonly<Senses2>): Intention;
+  decide(senses: DeepReadonly<Senses2>): Intention2;
 }

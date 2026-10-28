@@ -2,8 +2,9 @@
  * The second phase of the beings system (ADR 0023): one being, due at this tick, brought to the
  * tick. Its body follows its rates in closed form; physiology may incapacitate it, kill it, or force
  * it to sleep; its activity advances; and when it is free, or a condition its brain asked for holds,
- * its brain decides from its senses and the engine judges the intention (judgment.ts). Nothing is
- * written here: the result is a Work that the third phase resolves and applies.
+ * its brain decides from its senses and the engine judges the intention (judgment.ts), which under
+ * beings@2 may change its mind; those changes are emitted last among the being's events of this
+ * phase. Nothing is written here: the result is a Work that the third phase resolves and applies.
  */
 import { copyCanonical } from "../canonical/copy.ts";
 import type { Mind } from "../mind/index.ts";
@@ -27,8 +28,9 @@ import {
 import { type Body, bodyAt } from "./body.ts";
 import { DIRECTIONS } from "./contracts.ts";
 import type { BeingsEnv } from "./env.ts";
-import { judge } from "./judgment.ts";
+import { judge, judge2 } from "./judgment.ts";
 import type { Species } from "./laws.ts";
+import { type MindLedger, mindChanged, mindProvenance } from "./mental.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
 
 /** How long a being idles after its brain proposed something the engine refused, in ms. */
@@ -62,11 +64,17 @@ export type Work = {
   claim: Claim | undefined;
   died: boolean;
   /**
-   * The mind of a being of beings@2, the very value its chunk holds, which the engine reads and
-   * never writes: never copied at a wake, so that an unchanged mind is the same value in the
-   * record the tick writes.
+   * The mind of a being of beings@2 at the start of the tick, the very value its chunk holds,
+   * which the engine reads and never writes.
    */
-  readonly mind: Mind | undefined;
+  readonly held: Mind | undefined;
+  /**
+   * The mind the tick writes: `held` itself, never copied at a wake, unless the being decided and
+   * its mind changed, so that an unchanged mind is the same value in the record the tick writes.
+   */
+  mind: Mind | undefined;
+  /** What the being's decision at this tick changed in its mind, for the ledger. */
+  ledger: MindLedger | undefined;
 };
 
 /** The members of `being` but its mind, which a wake never copies. */
@@ -98,7 +106,9 @@ function workOf(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Being>): Wor
     jumped: false,
     claim: undefined,
     died: false,
+    held: mindful?.mind,
     mind: mindful?.mind,
+    ledger: undefined,
   };
 }
 
@@ -290,7 +300,7 @@ function addCooldowns(
  */
 function decide(env: BeingsEnv, work: Work): void {
   work.cooldowns = activeCooldowns(env, work.cooldowns);
-  const judged = judge(env, work);
+  const judged = env.rules.minds ? judge2(env, work) : judge(env, work);
   if (judged.kind === "rejected") {
     refuse(env, work, judged.reason);
     return;
@@ -335,7 +345,19 @@ export function advance(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Bein
   physiology(env, work);
   // A forced sleep that began now leaves nothing else to do at this tick.
   if (!work.died && (work.activity.kind !== "sleep" || before === "sleep")) carryOn(env, work);
+  emitMind(env, work);
   return work;
+}
+
+/**
+ * Emits the ledger of the being's decision at this tick when it changed the mind, after the
+ * being's other events of this phase: `mind.changed`, then `mind.provenance`.
+ */
+function emitMind(env: BeingsEnv, work: Work): void {
+  const { ledger, mind } = work;
+  if (ledger === undefined || mind === undefined || mind === work.held) return;
+  env.emit("mind.changed", mindChanged(work.old.id, ledger));
+  env.emit("mind.provenance", mindProvenance(work.old.id, ledger, mind));
 }
 
 /**

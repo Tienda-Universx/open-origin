@@ -33,7 +33,7 @@ export const CONCEPTS = "t1";
 
 /** A brain of beings@2 of version `version` deciding with `decide`, with the test behaviors. */
 export function brain2(
-  decide: (senses: Senses2) => beings.Intention,
+  decide: (senses: Senses2) => beings.Intention2,
   version = "script@2",
 ): beings.Controller2 {
   return { brain: version, behaviors: BEHAVIORS, concepts: CONCEPTS, decide };
