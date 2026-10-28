@@ -241,6 +241,35 @@ describe("forgetting", () => {
     expect(after.beliefs[0]).toMatchObject({ ev: [2], lost: 1 });
   });
 
+  test("stays when the intention is malformed, and its operations are never read", () => {
+    const brain = brain2((senses) =>
+      isFirst(senses)
+        ? { steps: [{ kind: "walk", dirs: "0000" }], wakeWhen: {}, behavior: behavior("travel") }
+        : { ...idling(LONG, { recall: [2] }), steps: [] },
+    );
+    const world = beings2World({
+      controllers: { s1: brain },
+      life: quick,
+      chunks: chunksOf([being2(1, CELL, { mind: fading })]),
+    });
+    const events = runTo(world, 40);
+    const [rejected] = eventsOf(events, "being.intention_rejected", 1);
+    if (rejected === undefined) throw new Error("the intention was not rejected");
+    expect(rejected.payload).toEqual({ id: 1, reason: "malformed" });
+    const forgot = [{ id: 1, beliefs: [3] }];
+    expect(eventsAt(events, rejected.tick).slice(-3)).toEqual([
+      ["being.intention_rejected", { id: 1, reason: "malformed" }],
+      [
+        "mind.changed",
+        { id: 1, encoded: [], formed: [], revised: [], dropped: [], forgot, related: [] },
+      ],
+      ["mind.provenance", { id: 1, records: [], exposure: 0 }],
+    ]);
+    const after = (beingOf(world, 1) as beings.Being2).mind;
+    // Forgotten, and the recall of the pinned episode never applied: its anchor is still 0.
+    expect(after.episodes).toEqual([fading.episodes[1] as mind.Episode]);
+  });
+
   test("leaves the mind of a wake that does not decide the very value the state held", () => {
     const seen: Committed[] = [];
     const walker = brain2((senses) =>
