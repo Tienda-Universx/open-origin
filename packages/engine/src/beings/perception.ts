@@ -29,7 +29,7 @@ export function sightOf(perception: Perception, light: number): number {
 }
 
 /** The Chebyshev distance between two cells: the steps of a walk between them. */
-function distance(a: Cell, b: Cell): number {
+export function distance(a: Cell, b: Cell): number {
   const dx = a[0] - b[0];
   const dy = a[1] - b[1];
   return greatest(dx < 0 ? -dx : dx, dy < 0 ? -dy : dy);

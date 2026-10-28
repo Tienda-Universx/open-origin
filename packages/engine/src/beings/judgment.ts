@@ -4,9 +4,9 @@
  * proposes. Under beings@2 a decision first perceives the beings in sight, then applies step 1, a
  * law: it forgets what has faded by now, updates familiarity and creates relationships, and
  * consumes the inbox; the senses add the beings it perceives, the messages it hears, and the view
- * of its mind after that step; and the mental operations of an accepted intention apply
- * (mental.ts), atomic with the rest of it. The new mind and the decision's ledger are left in the
- * Work, which the third phase writes.
+ * of its mind after that step; the mental operations of an accepted intention apply (mental.ts),
+ * atomic with the rest of it; and a talk is judged last, against the mind they leave (speech.ts).
+ * The new mind and the decision's ledger are left in the Work, which the third phase writes.
  */
 import { copyCanonical } from "../canonical/copy.ts";
 import { type Mind, type MindContext, viewOf } from "../mind/index.ts";
@@ -18,12 +18,19 @@ import { copySensed } from "./classes.ts";
 import type { SensedWindow, Senses, Senses2 } from "./contracts.ts";
 import { type BeingsEnv, integrity } from "./env.ts";
 import { heardMessage } from "./hearing.ts";
-import { type Accepted, acceptIntention, type Refused } from "./intention.ts";
+import { type Accepted, acceptIntention, type Refused, type Talking } from "./intention.ts";
 import type { Species2 } from "./life2.ts";
 import { applyOperations, type Percepts, type StepOne, stepOne } from "./mental.ts";
 import { type MindGrammar, NO_OPERATIONS } from "./operations.ts";
 import { copyPerceived, type PerceivedBeing, perceiveBeings, sightOf } from "./perception.ts";
-import { copyWindow, type SenseInput, senseWindow, senseWindowAndChunks } from "./senses.ts";
+import {
+  type CoveredChunk,
+  copyWindow,
+  type SenseInput,
+  senseWindow,
+  senseWindowAndChunks,
+} from "./senses.ts";
+import { type Speaking, speak } from "./speech.ts";
 
 /** What sensing the window of the being at this tick needs. */
 function senseInput(env: BeingsEnv, work: Work): SenseInput {
@@ -86,12 +93,19 @@ function mindContext(env: BeingsEnv, work: Work): MindContext {
   };
 }
 
-/** What the being of beings@2 perceives of the world at a decision: its window and the beings. */
-type Perceived = { readonly window: SensedWindow; readonly beings: readonly PerceivedBeing[] };
+/**
+ * What the being of beings@2 perceives of the world at a decision: its window, the chunks it read,
+ * and the beings.
+ */
+type Perceived = {
+  readonly window: SensedWindow;
+  readonly chunks: readonly CoveredChunk[];
+  readonly beings: readonly PerceivedBeing[];
+};
 
 /**
- * The window of the being of beings@2 at this tick, and the beings it perceives from the chunks
- * that window read, the nearest its attention keeps, in that order.
+ * The window of the being of beings@2 at this tick, the chunks that window read, and the beings it
+ * perceives from them, the nearest its attention keeps, in that order.
  */
 function perceivedBy(env: BeingsEnv, work: Work): Perceived {
   // validateGlobal accepted laws of life@2.
@@ -101,7 +115,8 @@ function perceivedBy(env: BeingsEnv, work: Work): Perceived {
     sight: sightOf(species.perception, env.light()),
     attention: species.perception.attention,
   };
-  return { window, beings: perceiveBeings(chunks, { id: work.old.id, cell: work.cell }, limits) };
+  const beings = perceiveBeings(chunks, { id: work.old.id, cell: work.cell }, limits);
+  return { window, chunks, beings };
 }
 
 /**
@@ -159,13 +174,49 @@ function grammarOf(env: BeingsEnv, work: Work, brain: Brain): MindGrammar {
 export function judge(env: BeingsEnv, work: Work): Accepted | Refused {
   const { window, senses } = sensesOf(env, work);
   const brain = env.controller(work.species.id);
-  return acceptIntention(brain.decide(senses), {
+  const judged = acceptIntention(brain.decide(senses), {
     tick: env.tick,
     window,
     activities: env.rules.activities,
     behaviors: brain.behaviors,
   });
+  // The kinds of activity of beings@1 are T4's, which no talk is among, so none is accepted.
+  return judged.kind === "talk" ? { kind: "rejected", reason: "malformed" } : judged;
 }
+
+/** Where and when the being of `work` judges a talk at this tick, having perceived `beings`. */
+function speakingOf(env: BeingsEnv, work: Work, beings: readonly PerceivedBeing[]): Speaking {
+  return {
+    cell: work.cell,
+    tick: env.tick,
+    seconds: env.now,
+    secondsPerTick: env.sps,
+    dayLength: env.dayLength,
+    // validateGlobal accepted laws of life@2.
+    species: work.species as Species2,
+    perceived: beings,
+  };
+}
+
+/**
+ * The talk `judged` proposed, judged against `mind`, the mind its operations left: an accepted
+ * intention that starts it, with that mind counting it, or the reason it is refused.
+ */
+function judgeTalk(
+  env: BeingsEnv,
+  work: Work,
+  judged: Talking,
+  decided: { readonly mind: Mind; readonly beings: readonly PerceivedBeing[] },
+): Decided | Refused {
+  const spoken = speak(judged.talk, decided.mind, speakingOf(env, work, decided.beings));
+  if (typeof spoken === "string") return { kind: "rejected", reason: spoken };
+  const { talk: _proposed, kind: _talking, ...rest } = judged;
+  const accepted: Accepted = { ...rest, kind: "accepted", activity: spoken.activity, plan: [] };
+  return { kind: "decided", accepted, mind: spoken.mind };
+}
+
+/** An accepted intention, and the mind the decision leaves. */
+type Decided = { readonly kind: "decided"; readonly accepted: Accepted; readonly mind: Mind };
 
 /**
  * A decision of beings@2 (mind.md, "Beliefs"): step 1 forgets what has faded by now, updates
@@ -197,7 +248,12 @@ export function judge2(env: BeingsEnv, work: Work): Accepted | Refused {
   if (judged.kind === "rejected") return judged;
   const applied = applyOperations(step1, judged.mind ?? NO_OPERATIONS, percepts, ctx);
   if (applied.kind === "rejected") return applied;
-  work.mind = applied.mind;
+  const talked: Decided | Refused =
+    judged.kind === "talk"
+      ? judgeTalk(env, work, judged, { mind: applied.mind, beings: perceived.beings })
+      : { kind: "decided", accepted: judged, mind: applied.mind };
+  if (talked.kind === "rejected") return talked;
+  work.mind = talked.mind;
   work.ledger = applied.ledger;
-  return judged;
+  return talked.accepted;
 }

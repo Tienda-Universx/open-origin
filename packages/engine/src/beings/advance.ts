@@ -4,13 +4,15 @@
  * it to sleep; its activity advances; and when it is free, or a condition its brain asked for holds,
  * its brain decides from its senses and the engine judges the intention (judgment.ts), which under
  * beings@2 may change its mind; those changes are emitted last among the being's events of this
- * phase. Nothing is written here: the result is a Work that the third phase resolves and applies.
+ * phase, but for the utterance of a talk that ended, which follows them. Forced sleep, incapacity,
+ * and death cut a talk short; nothing else interrupts it, not even a wake condition or a message.
+ * Nothing is written here: the result is a Work that the third phase resolves and applies.
  */
 import { copyCanonical } from "../canonical/copy.ts";
 import type { Mind } from "../mind/index.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import type { DeepReadonly } from "../world/contracts.ts";
-import { arrivedSteps, bitesDue, idleEnd } from "./activity.ts";
+import { arrivedSteps, bitesDue, idleEnd, talkEnd } from "./activity.ts";
 import {
   type Activity,
   BEING_BOUNDS,
@@ -34,6 +36,7 @@ import type { Species } from "./laws.ts";
 import type { Species2 } from "./life2.ts";
 import { type MindLedger, mindChanged, mindProvenance } from "./mental.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
+import { type Talk, type Utterance, utteranceOf, utteredPayload } from "./speech.ts";
 
 /** How long a being idles after its brain proposed something the engine refused, in ms. */
 export const REFUSED_IDLE_MS = 60_000;
@@ -77,6 +80,8 @@ export type Work = {
   mind: Mind | undefined;
   /** What the being's decision at this tick changed in its mind, for the ledger. */
   ledger: MindLedger | undefined;
+  /** What the being said, when a talk of its ended at this tick without being cut short. */
+  spoken: Utterance | undefined;
 };
 
 /** The members of `being` but its mind, which a wake never copies. */
@@ -111,6 +116,7 @@ function workOf(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Being>): Wor
     held: mindful?.mind,
     mind: mindful?.mind,
     ledger: undefined,
+    spoken: undefined,
   };
 }
 
@@ -167,7 +173,8 @@ function condition(env: BeingsEnv, work: Work): void {
   }
   work.condition = "incapacitated";
   env.emit("being.incapacitated", { id: work.old.id });
-  if (work.activity.kind === "walk") interrupt(env, work, "incapacitated");
+  const { kind } = work.activity;
+  if (kind === "walk" || kind === "talk") interrupt(env, work, "incapacitated");
 }
 
 /** Moves the being along the steps of its walk that arrived by this tick; true when it ended. */
@@ -184,9 +191,10 @@ function walk(env: BeingsEnv, work: Work, activity: Extract<Activity, { kind: "w
   return arrived === activity.dirs.length;
 }
 
-/** Whether a wake condition the brain asked for holds at this tick. */
+/** Whether a wake condition the brain asked for holds at this tick; none interrupts a talk. */
 function wakeConditionHolds(env: BeingsEnv, work: Work): boolean {
   if (work.activity.kind === "sleep" && work.activity.forced) return false;
+  if (work.activity.kind === "talk") return false;
   const { nutritionBelow, restBelow } = work.wakeWhen;
   if (nutritionBelow !== undefined && work.body.nutrition <= nutritionBelow) return true;
   if (restBelow !== undefined && work.body.rest <= restBelow) return true;
@@ -211,6 +219,7 @@ function progress(env: BeingsEnv, work: Work): boolean {
   if (activity.kind === "walk") return walk(env, work, activity);
   if (activity.kind === "idle") return idleEnd(activity, env.sps) <= env.tick;
   if (activity.kind === "sleep") return work.body.rest >= activity.untilRest;
+  if (activity.kind === "talk") return talkEnd(activity, actMsOf(work), env.sps) <= env.tick;
   const due = bitesDue(activity, env.tick, {
     simSecondsPerTick: env.sps,
     biteMs: work.species.diet.biteMs,
@@ -231,14 +240,36 @@ function start(env: BeingsEnv, work: Work, step: PlanStep, arrivals: readonly nu
   if (step.kind === "eat" && env.foodAt(work.cell, work.species) <= 0)
     return fail(env, work, "no_food");
   if (step.kind === "walk")
-    work.activity = { kind: "walk", start: env.tick, dirs: step.dirs, ms: [...arrivals], done: 0 };
+    begin(env, work, {
+      kind: "walk",
+      start: env.tick,
+      dirs: step.dirs,
+      ms: [...arrivals],
+      done: 0,
+    });
   else if (step.kind === "eat")
-    work.activity = { kind: "eat", start: env.tick, untilNutrition: step.untilNutrition, bites: 0 };
+    begin(env, work, {
+      kind: "eat",
+      start: env.tick,
+      untilNutrition: step.untilNutrition,
+      bites: 0,
+    });
   else if (step.kind === "sleep")
-    work.activity = { kind: "sleep", untilRest: step.untilRest, forced: false };
-  else work.activity = { kind: "idle", start: env.tick, ms: step.ms };
-  env.emit("being.started", { id: work.old.id, activity: work.activity.kind });
+    begin(env, work, { kind: "sleep", untilRest: step.untilRest, forced: false });
+  else begin(env, work, { kind: "idle", start: env.tick, ms: step.ms });
   return true;
+}
+
+/** Starts `activity` at this tick. */
+function begin(env: BeingsEnv, work: Work, activity: Activity): void {
+  work.activity = activity;
+  env.emit("being.started", { id: work.old.id, activity: activity.kind });
+}
+
+/** How long an act of speech of the being of `work` lasts, in milliseconds. */
+function actMsOf(work: Work): number {
+  // Only a being of beings@2 talks, and validateGlobal accepted laws of life@2 for it.
+  return (work.species as Species2).speech.actMs;
 }
 
 /** The step could not start: the being idles briefly and its outcome says why. */
@@ -313,14 +344,20 @@ function decide(env: BeingsEnv, work: Work): void {
   work.wakeWhen = pending(env, work, judged.wakeWhen);
   if (judged.cooldowns !== undefined)
     work.cooldowns = addCooldowns(env, work.cooldowns, judged.cooldowns);
+  if (judged.activity.kind === "talk") {
+    // A talk is the only step of its intention, and starts with no precondition.
+    work.plan = [];
+    begin(env, work, judged.activity);
+    return;
+  }
   const [first, ...rest] = [stepOf(judged.activity), ...judged.plan];
   work.plan = rest;
   if (first !== undefined)
     start(env, work, first, judged.activity.kind === "walk" ? judged.activity.ms : []);
 }
 
-/** The planned step an accepted activity came from. */
-function stepOf(activity: Activity): PlanStep {
+/** The planned step an accepted activity other than a talk came from. */
+function stepOf(activity: Exclude<Activity, Talk>): PlanStep {
   if (activity.kind === "walk") return { kind: "walk", dirs: activity.dirs };
   if (activity.kind === "eat") return { kind: "eat", untilNutrition: activity.untilNutrition };
   if (activity.kind === "sleep") return { kind: "sleep", untilRest: activity.untilRest };
@@ -348,6 +385,8 @@ export function advance(env: BeingsEnv, from: ChunkKey, being: DeepReadonly<Bein
   // A forced sleep that began now leaves nothing else to do at this tick.
   if (!work.died && (work.activity.kind !== "sleep" || before === "sleep")) carryOn(env, work);
   emitMind(env, work);
+  if (work.spoken !== undefined)
+    env.emit("speech.uttered", utteredPayload(work.old.id, work.spoken));
   return work;
 }
 
@@ -391,7 +430,7 @@ function carryOn(env: BeingsEnv, work: Work): void {
   // Read before the activity advances: hearing wakes only a being that was idle.
   const heard = heardNow(env, work);
   const ended = progress(env, work);
-  if (ended && work.activity.kind !== "idle") finish(env, work, "done");
+  if (ended) end(env, work);
   const woken = wakeConditionHolds(env, work);
   const wakes = woken || heard;
   if (wakes && !ended) {
@@ -402,4 +441,13 @@ function carryOn(env: BeingsEnv, work: Work): void {
   }
   if (wakes) decide(env, work);
   else if (ended) next(env, work);
+}
+
+/**
+ * Ends the activity that reached its end at this tick; an idle has nothing to end. A talk says what
+ * it captured first; the being then decides, as at the end of any activity.
+ */
+function end(env: BeingsEnv, work: Work): void {
+  if (work.activity.kind === "talk") work.spoken = utteranceOf(work.activity, work.cell);
+  if (work.activity.kind !== "idle") finish(env, work, "done");
 }

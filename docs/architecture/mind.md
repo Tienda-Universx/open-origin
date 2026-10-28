@@ -413,9 +413,47 @@ captured content lives in the activity as a C3 member the senses never copy. The
 conversation, which ends after a pause longer than `speech.gap`; after a full one, the pair keeps
 `speech.cooldown` before the being addresses that hearer again. A failed quota or condition is the
 rejection `talk_unseen` (the hearer was not perceived in this decision), `talk_out_of_range`,
-`talk_unheld` (no such belief), `talk_quota`, or `ask_concept` (a concept the species does not
-perceive). Hearing does not interrupt a being that is talking: its inbox waits for the decision at
-the end of the act, which every act reaches.
+`talk_asleep` (the hearer sleeps), `talk_unheld` (no such belief), `talk_quota`, or `ask_concept`
+(a concept the species does not perceive). Hearing does not interrupt a being that is talking: its
+inbox waits for the decision at the end of the act, which every act reaches.
+
+How the engine applies it (T5-6):
+
+- **The step.** A talk is the only step of its intention: one with any other step is `malformed`,
+  so its conditions are judged where the act starts, and its content is captured when it starts.
+  `to` is an entity id; `act` one of `greet`, `ask`, `tell`, and `unknown`; and `about` the local id
+  of the belief a tell tells, the concept id an ask names, and absent for the other two acts; any
+  other shape is `malformed`. The concept a species perceives is `obs.deposit.<k>`, the observable
+  of the deposit its diet eats. An ask carries no content: its concept is the one its species
+  perceives, so its message holds none, and a hearer hears the act.
+- **The judgment.** It comes after the mental operations, against the mind they leave and the
+  beings perceived in the decision, so a brain may tell a belief it forms in the same decision, by
+  the id it predicts from `next`, and the captured `ex` holds the exposure those operations grew.
+  The checks run in this order, and the first that fails is the reason, which rejects the whole
+  intention, its operations included: `talk_unseen`; `talk_out_of_range`, by Chebyshev distance;
+  `talk_asleep`, when the hearer's perceived activity is `sleep`; `talk_unheld`, for a tell of a
+  record that is not a belief the mind holds, or `ask_concept`; and `talk_quota`.
+- **The quotas.** An accepted act counts at once: one more in `quota.said`, in the day of the
+  decision, and, in the relationship with the hearer, `talk` set to the tick of the decision and
+  `turns` to the act's place in its conversation: 1 when the being never addressed that being or
+  paused longer than `speech.gap`, or when `speech.cooldown` has passed, at least, since a full
+  conversation; `turns + 1` otherwise; and while a full conversation cools down, the act is
+  `talk_quota`. So is an act beyond `speech.perDay`, and one to a being the mind holds no
+  relationship with, which happens only once ids have run out. An act counts whether or not it is
+  later cut short or heard.
+- **The activity.** `{ kind: "talk", start, to, act, captured }`, where `captured` is
+  `{ p?, band?, tn, ex }`, a tell's content and taints, and `{ tn: 0, ex: 0 }` for the other acts.
+  `talk` comes last in the list of kinds of activity of `beings@2`, after those of T4, whose index
+  a `being` episode holds. A plan never holds a talk. A chunk is invalid if a talk captured content
+  its act cannot carry: a tell without a proposition and a band, or another act with any content
+  or taint.
+- **The end.** The act ends at `start + ⌈actMs / (seconds per tick · 1,000)⌉`; at that tick the
+  being says what it captured, `speech.uttered`, and decides. Physiology comes first at every tick,
+  so forced sleep, incapacity, or death at that tick, or before it, cut the talk short:
+  `being.finished` with the result `interrupted` and the reason `exhausted` or `incapacitated`, or
+  only `being.died`. Becoming incapacitated cuts a talk as it cuts a walk; an incapacitated being
+  may still start one, since incapacity, as in T4, stops only locomotion. No wake condition
+  interrupts a talk.
 
 Delivery, when the act ends at tick t:
 
@@ -512,7 +550,7 @@ runs of the survival child, which already runs them. Every T4 test runs unchange
 
 | Event | Class | Payload |
 |---|---|---|
-| `speech.uttered` | C0 | `{ id, to, act, p?, band?, cell }`, when an act ends without being cut short |
+| `speech.uttered` | C0 | `{ id, to, act, p?, band?, cell }`, when an act ends without being cut short: the speaker, the hearer, the act, a tell's proposition and band, and the speaker's cell |
 | `speech.delivered` | C1, the hearer's | `{ id, to }` |
 | `speech.unheard` | C3, because its reason tells the hearer's condition | `{ id, to, reason }`: `range`, `asleep`, `gone`, `full`, or `condition` |
 | `mind.changed` | C1 | `{ id, encoded, formed, revised, dropped, forgot, related }`: ids, with each formed belief's rule and each forgotten record's citing beliefs |
@@ -565,7 +603,7 @@ for its next decision.
 
 An intention or operation that fails validation is a rejection, the being's experience: `malformed`,
 `mind_malformed`, `unknown_record`, `premise_order`, `depth_exceeded`, `talk_unseen`,
-`talk_out_of_range`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies brain output with
+`talk_out_of_range`, `talk_asleep`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies brain output with
 `copyCanonicalReported`, which refuses accessors and reads a Proxy only through its own data
 properties, refusing one that throws; it reads every length once and bounds it before iterating,
 refusing one that misreports a length, and requires exact members, NFC strings, and the grammars
@@ -575,7 +613,7 @@ above.
 
 | Class | What T5 adds |
 |---|---|
-| C0 | The `talk` activity and its hearer; `speech.uttered` |
+| C0 | The `talk` activity, its hearer, and its act; `speech.uttered` |
 | C1 | Episodes, beliefs, and relationships without their taints; the inbox; the three traits; `mind.quota`; `mind.changed`, `speech.delivered` |
 | C3 | `tn`, `ex`, `exposure`; the episode kind `external` and the evidence bit 8; the captured content of a talk in progress; `speech.unheard`, `mind.provenance`, `mind.injected`, `mind.inject`; the laws of `life@2`; reference truth |
 

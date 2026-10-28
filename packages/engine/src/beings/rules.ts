@@ -21,8 +21,8 @@ export const CONTEST_STREAM = "beings.contest";
 export const CROWD_STREAM = "beings.crowd";
 export const SPEECH_STREAM = "beings.speech";
 
-/** A kind of activity of T4. */
-export type ActivityKind = "eat" | "idle" | "sleep" | "walk";
+/** A kind of activity: those of T4, and `talk`, which beings@2 adds with speech. */
+export type ActivityKind = "eat" | "idle" | "sleep" | "walk" | "talk";
 
 /** What differs between the versions of the beings ruleset. */
 export type BeingsRules = {
@@ -36,8 +36,13 @@ export type BeingsRules = {
   readonly traitMembers: readonly string[];
   /** The members of a being, by name. */
   readonly members: readonly string[];
-  /** The kinds of activity a being may do and a brain may plan. */
+  /**
+   * The kinds of activity a being may do and an intention may start, in the order whose index a
+   * `being` episode holds.
+   */
   readonly activities: readonly ActivityKind[];
+  /** The kinds of step a plan may hold after the first: never a talk, the only step it is in. */
+  readonly steps: readonly ActivityKind[];
   /** The streams the beings system declares. */
   readonly streams: readonly string[];
   /** How many beings a chunk may hold, whatever its laws: its validator cannot see them. */
@@ -75,8 +80,10 @@ const MEMBERS = Object.freeze([
   "wakeWhen",
 ]);
 
-/** The kinds of activity of T4; beings@2 adds `talk` with speech (T5-6). */
+/** The kinds of activity of T4. */
 const ACTIVITIES: readonly ActivityKind[] = Object.freeze(["eat", "idle", "sleep", "walk"]);
+/** The kinds of activity of beings@2: talk comes last, so the index of T4's kinds stays theirs. */
+const ACTIVITIES2: readonly ActivityKind[] = Object.freeze([...ACTIVITIES, "talk"]);
 
 /** `names`, sorted by UTF-16 code units, in a frozen copy. */
 function byName(names: readonly string[]): readonly string[] {
@@ -91,6 +98,7 @@ export const BEINGS_RULES: BeingsRules = Object.freeze({
   traitMembers: byName(TRAITS),
   members: MEMBERS,
   activities: ACTIVITIES,
+  steps: ACTIVITIES,
   streams: Object.freeze([BRAIN_STREAM, CONTEST_STREAM]),
   chunkBeings: range(0, 0x1_0000),
   minds: false,
@@ -103,7 +111,8 @@ export const BEINGS2_RULES: BeingsRules = Object.freeze({
   traits: TRAITS2,
   traitMembers: byName(TRAITS2),
   members: byName([...MEMBERS, "mind"]),
-  activities: ACTIVITIES,
+  activities: ACTIVITIES2,
+  steps: ACTIVITIES,
   streams: Object.freeze([BRAIN_STREAM, CONTEST_STREAM, CROWD_STREAM, SPEECH_STREAM]),
   chunkBeings: range(0, 1024),
   minds: true,

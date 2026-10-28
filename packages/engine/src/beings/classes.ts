@@ -76,9 +76,39 @@ function kinds(cls: DataClass, byKind: readonly (readonly [string, ClassNode])[]
   });
 }
 
+/** A proposition of prop@1 of class `cls`: its concept, terms, value, and negation. */
+function proposition(cls: DataClass): ClassNode {
+  const of = leaf(cls);
+  return record(cls, [
+    [
+      "a",
+      list(
+        cls,
+        record(cls, [
+          ["c", of],
+          ["e", of],
+          ["n", of],
+        ]),
+      ),
+    ],
+    ["neg", of],
+    ["p", of],
+    ["v", of],
+  ]);
+}
+
+/** What a talk under way captured to say: C3, so that no sense ever copies it (mind.md). */
+const CAPTURED = record("C3", [
+  ["band", C3],
+  ["ex", C3],
+  ["p", proposition("C3")],
+  ["tn", C3],
+]);
+
 /**
  * The activity: its kind is C0, as the direction of the current step of a walk, which observers
- * derive from `dirs` and `done`; the remaining route, its schedule, and the targets are C1.
+ * derive from `dirs` and `done`, and the hearer and act of a talk; the remaining route, its
+ * schedule, and the targets are C1; what a talk captured to say is C3.
  */
 const ACTIVITY = kinds("C0", [
   [
@@ -107,6 +137,16 @@ const ACTIVITY = kinds("C0", [
     ]),
   ],
   [
+    "talk",
+    record("C0", [
+      ["act", C0],
+      ["captured", CAPTURED],
+      ["kind", C0],
+      ["start", C1],
+      ["to", C0],
+    ]),
+  ],
+  [
     "walk",
     record("C0", [
       ["dirs", C1],
@@ -126,13 +166,8 @@ const PLAN_STEP = kinds("C1", [
   ["walk", internal(["dirs", "kind"])],
 ]);
 
-/** A proposition of prop@1: its concept, terms, value, and negation, as the record holding it. */
-const PROPOSITION = record("C1", [
-  ["a", list("C1", internal(["c", "e", "n"]))],
-  ["neg", C1],
-  ["p", C1],
-  ["v", C1],
-]);
+/** A proposition of prop@1 a mind holds, of the class of the record holding it. */
+const PROPOSITION = proposition("C1");
 
 /** What an episode of every kind holds; its taints, of a message, are C3. */
 const EPISODE = kinds("C1", [
@@ -293,6 +328,7 @@ export const EVENT_CLASSES: readonly { readonly type: string; readonly class: Da
         ["mind.changed", "C1"],
         ["mind.injected", "C3"],
         ["mind.provenance", "C3"],
+        ["speech.uttered", "C0"],
       ] as const
     ).map(([type, cls]) => Object.freeze({ type, class: cls })),
   );

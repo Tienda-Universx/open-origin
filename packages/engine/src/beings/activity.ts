@@ -1,7 +1,7 @@
 /**
  * The schedules of activities (ADR 0023): when the steps of a walk arrive, when the bites of a meal
- * fall due, and when a rest ends, from the activity's start tick and its exact durations in
- * simulated milliseconds. Several steps or bites may fall in one tick.
+ * fall due, and when a rest or an act of speech ends, from the activity's start tick and its exact
+ * durations in simulated milliseconds. Several steps or bites may fall in one tick.
  */
 import type { Tick } from "../time/tick.ts";
 import type { Activity } from "./being.ts";
@@ -10,6 +10,7 @@ import { ceilDiv } from "./rates.ts";
 type Walk = Extract<Activity, { kind: "walk" }>;
 type Eat = Extract<Activity, { kind: "eat" }>;
 type Idle = Extract<Activity, { kind: "idle" }>;
+type Talk = Extract<Activity, { kind: "talk" }>;
 
 /** The tick at which a moment `ms` simulated milliseconds after the start of `start` is reached. */
 function tickAtMs(start: Tick, ms: number, simSecondsPerTick: number): Tick {
@@ -52,4 +53,9 @@ export function nextBite(eat: Eat, input: { simSecondsPerTick: number; biteMs: n
 /** The tick at which `idle` ends. */
 export function idleEnd(idle: Idle, simSecondsPerTick: number): Tick {
   return tickAtMs(idle.start, idle.ms, simSecondsPerTick);
+}
+
+/** The tick at which `talk`, an act that lasts `actMs`, ends. */
+export function talkEnd(talk: Talk, actMs: number, simSecondsPerTick: number): Tick {
+  return tickAtMs(talk.start, actMs, simSecondsPerTick);
 }

@@ -2,13 +2,22 @@
  * A being (ADR 0023): its identity, cell, body, what it is doing, and what its brain stored, as it
  * lives in the chunk of its cell. What an observer inside the world could see is C0; the rest is C1
  * (docs/architecture/beings.md). A being of beings@2 also has three more traits and a mind (ADR
- * 0024), whose classes classes.ts records. The validator checks shapes and bounds by the rules of
- * its version; the laws a being follows are checked where they apply, because a chunk's validator
- * cannot see the global value.
+ * 0024), whose classes classes.ts records, and may talk, an activity that holds what it captured to
+ * say. The validator checks shapes and bounds by the rules of its version; the laws a being follows
+ * are checked where they apply, because a chunk's validator cannot see the global value.
  */
 import type { IssueSink } from "../canonical/value.ts";
 import { type Issue, IssueList } from "../errors.ts";
-import type { Mind } from "../mind/index.ts";
+import {
+  ACTS,
+  type Act,
+  checkProposition,
+  INT31_MAX,
+  isConceptId,
+  MIND_BOUNDS,
+  type Mind,
+  type Proposition,
+} from "../mind/index.ts";
 import type { Tick } from "../time/tick.ts";
 import type { EntityId } from "../world/contracts.ts";
 import { MAX_CELL, MIN_CELL } from "../worldgen/index.ts";
@@ -27,6 +36,18 @@ import { type Fields, range, readFields, readId, readInt, readList, TICKS } from
 /** An absolute cell, `[x, y]`. */
 export type Cell = readonly [number, number];
 
+/**
+ * What a talk captured when the being decided to speak (docs/architecture/mind.md, "Speech"): for a
+ * tell, the belief's proposition, its confidence band, its lineage, and its exposure united with
+ * the speaker's; for any other act, no content and no taint. C3: the senses never copy it.
+ */
+export type Captured = {
+  readonly p?: Proposition;
+  readonly band?: number;
+  readonly tn: number;
+  readonly ex: number;
+};
+
 /** What a being is doing; `ms` of a walk holds the cumulative milliseconds of each arrival. */
 export type Activity =
   | { readonly kind: "idle"; readonly start: Tick; readonly ms: number }
@@ -43,7 +64,25 @@ export type Activity =
       readonly untilNutrition: number;
       readonly bites: number;
     }
-  | { readonly kind: "sleep"; readonly untilRest: number; readonly forced: boolean };
+  | { readonly kind: "sleep"; readonly untilRest: number; readonly forced: boolean }
+  | {
+      readonly kind: "talk";
+      readonly start: Tick;
+      readonly to: EntityId;
+      readonly act: Act;
+      readonly captured: Captured;
+    };
+
+/**
+ * A step a brain proposes to talk to the being `to`: an act, and what it is about, a belief's local
+ * id for a tell, and a concept for an ask. It is the only step of its intention.
+ */
+export type TalkStep = {
+  readonly kind: "talk";
+  readonly to: EntityId;
+  readonly act: Act;
+  readonly about?: number | string;
+};
 
 /** A step a brain plans: the activities it may ask for. */
 export type PlanStep =
@@ -200,8 +239,76 @@ export const ACTIVITY_MEMBERS = Object.freeze({
   eat: Object.freeze(["bites", "kind", "start", "untilNutrition"]),
   idle: Object.freeze(["kind", "ms", "start"]),
   sleep: Object.freeze(["forced", "kind", "untilRest"]),
+  talk: Object.freeze(["act", "captured", "kind", "start", "to"]),
   walk: Object.freeze(["dirs", "done", "kind", "ms", "start"]),
 });
+
+/** The members of what a talk captured: the content of a tell is optional for the other acts. */
+export const CAPTURED_MEMBERS = Object.freeze({
+  required: Object.freeze(["ex", "tn"]),
+  optional: Object.freeze(["band", "p"]),
+});
+
+/** The members of a talk step: what it is about is a member of a tell's and an ask's only. */
+export const TALK_STEP_MEMBERS = Object.freeze({
+  required: Object.freeze(["act", "kind", "to"]),
+  optional: Object.freeze(["about"]),
+});
+
+/** The local ids of a mind, which a tell names its belief by. */
+const LOCAL_IDS = range(1, INT31_MAX - 1);
+
+/**
+ * Reports what a talk captured that its act cannot carry: a tell without its proposition and band,
+ * or another act with any content or taint.
+ */
+function checkCaptured(captured: Fields, act: Act | undefined, sink: IssueSink): void {
+  const tn = captured.int("tn", MIND_BOUNDS.taints) ?? 0;
+  const ex = captured.int("ex", MIND_BOUNDS.taints) ?? 0;
+  const band = captured.int("band", MIND_BOUNDS.band);
+  const p = captured.value("p");
+  if (p !== undefined) checkProposition(p, captured.at("p"), sink);
+  if (act === "tell" && (p === undefined || band === undefined))
+    sink.report(captured.path, "a tell captures the proposition and the band of a belief");
+  else if (act !== "tell" && act !== undefined && carries(p, band, tn | ex))
+    sink.report(captured.path, `the act ${act} carries no content, so it captures no taint`);
+}
+
+/** Whether a talk captured a proposition, a band, or a taint. */
+function carries(p: unknown, band: number | undefined, taints: number): boolean {
+  return p !== undefined || band !== undefined || taints !== 0;
+}
+
+/** Reports every problem of a talk: its start, its hearer, its act, and what it captured. */
+function checkTalk(talk: Fields, sink: IssueSink): void {
+  talk.int("start", TICKS);
+  talk.int("to", BEING_BOUNDS.id);
+  const act = talk.choice("act", ACTS);
+  const captured = readFields(talk.value("captured"), talk.at("captured"), CAPTURED_MEMBERS, sink);
+  if (captured !== undefined) checkCaptured(captured, act, sink);
+}
+
+/**
+ * Reports every problem of a talk step at `value`: the hearer an entity id, the act one of speech@1,
+ * and `about` the belief a tell names, the concept an ask names, and absent for the other acts. That
+ * the belief is held and the concept perceived is judged at the decision (speech.ts).
+ */
+function checkTalkStep(value: unknown, path: string, sink: IssueSink): void {
+  const step = readFields(value, path, TALK_STEP_MEMBERS, sink);
+  if (step === undefined) return;
+  step.int("to", BEING_BOUNDS.id);
+  const act = step.choice("act", ACTS);
+  const about = step.value("about");
+  if (act === "tell") {
+    if (about === undefined) sink.report(step.at("about"), "a tell names the belief it tells");
+    else readInt(about, step.at("about"), LOCAL_IDS, sink);
+  } else if (act === "ask") {
+    if (typeof about !== "string" || !isConceptId(about))
+      sink.report(step.at("about"), "an ask names a concept id");
+  } else if (act !== undefined && about !== undefined) {
+    sink.report(step.at("about"), `the act ${act} is about nothing`);
+  }
+}
 
 /** The members of each planned step, by kind. */
 export const STEP_MEMBERS = Object.freeze({
@@ -250,6 +357,10 @@ function checkActivity(
     checkWalk(activity, sink);
     return;
   }
+  if (kind === "talk") {
+    checkTalk(activity, sink);
+    return;
+  }
   if (kind === "sleep") {
     activity.int("untilRest", BEING_BOUNDS.level);
     activity.boolean("forced");
@@ -263,7 +374,10 @@ function checkActivity(
   }
 }
 
-/** Reports every problem of one planned step at `value`, of one of the kinds `kinds`. */
+/**
+ * Reports every problem of one step at `value`, of one of the kinds `kinds`: a step a plan holds, or
+ * the talk an intention of beings@2 may propose.
+ */
 export function checkPlanStep(
   value: unknown,
   path: string,
@@ -271,6 +385,10 @@ export function checkPlanStep(
   kinds: readonly ActivityKind[],
 ): void {
   const kind = kindIn(value, path, kinds, sink);
+  if (kind === "talk") {
+    checkTalkStep(value, path, sink);
+    return;
+  }
   const step =
     kind === undefined
       ? undefined
@@ -412,7 +530,7 @@ export function checkBeing(
   being.int("anchor", TICKS);
   checkActivity(being.value("activity"), being.at("activity"), rules.activities, sink);
   const step = (entry: unknown, at: string, inner: IssueSink) =>
-    checkPlanStep(entry, at, inner, rules.activities);
+    checkPlanStep(entry, at, inner, rules.steps);
   checkEach(being.value("plan"), being.at("plan"), { count: BEING_BOUNDS.plan, entry: step }, sink);
   checkBehavior(being.value("behavior"), being.at("behavior"), sink);
   checkWakeConditions(being.value("wakeWhen"), being.at("wakeWhen"), sink);

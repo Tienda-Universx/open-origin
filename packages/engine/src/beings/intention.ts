@@ -20,6 +20,7 @@ import {
   checkPlanStep,
   checkWakeConditions,
   type PlanStep,
+  type TalkStep,
   type WakeConditions,
 } from "./being.ts";
 import { DIRECTIONS, MAX_INTENTION_STEPS, type SensedWindow } from "./contracts.ts";
@@ -52,8 +53,19 @@ export type Accepted = {
 export type Refused = { readonly kind: "rejected"; readonly reason: string };
 
 /**
+ * An intention of beings@2 whose one step is a talk, accepted by its shape: what the talk says, and
+ * to whom, is judged against the decision's percepts and mind once its mental operations applied
+ * (speech.ts), and then it starts or is refused.
+ */
+export type Talking = Omit<Accepted, "kind" | "activity" | "plan"> & {
+  readonly kind: "talk";
+  readonly talk: TalkStep;
+};
+
+/**
  * When an intention is judged, the window the brain sensed then, centered on the being; the kinds
- * of activity the ruleset's version knows, those of T4 when it is not given; and, for a brain of
+ * of activity the ruleset's version knows, those of T4 when it is not given, among which `talk`
+ * lets a talk be its only step; and, for a brain of
  * beings@2, the behaviors it declared, which `behavior.kind` must name, and the grammar of its
  * mental operations, without which an intention may carry none.
  */
@@ -67,7 +79,7 @@ export type IntentionContext = {
 
 /** The intention's own members, once its copy passed every check. */
 type Valid = {
-  readonly steps: readonly PlanStep[];
+  readonly steps: readonly (PlanStep | TalkStep)[];
   readonly wakeWhen: WakeConditions;
   readonly behavior: Behavior;
   readonly cooldowns?: readonly CooldownRequest[];
@@ -177,6 +189,21 @@ function route(window: SensedWindow, dirs: string): number[] | undefined {
   return arrivals;
 }
 
+/** `intention` as a talk, when its talk is its only step, `first`; `malformed` otherwise. */
+function talking(intention: Valid, first: PlanStep | TalkStep): Talking | Refused {
+  if (intention.steps.length > 1 || first.kind !== "talk")
+    return { kind: "rejected", reason: "malformed" };
+  const { wakeWhen, behavior, cooldowns, mind } = intention;
+  return {
+    kind: "talk",
+    talk: first,
+    wakeWhen,
+    behavior,
+    ...(cooldowns === undefined ? {} : { cooldowns }),
+    ...(mind === undefined ? {} : { mind }),
+  };
+}
+
 /** The activity the first step of an accepted intention starts at `tick`. */
 function activityOf(step: PlanStep, tick: Tick, arrivals: number[]): Activity {
   if (step.kind === "walk")
@@ -189,18 +216,24 @@ function activityOf(step: PlanStep, tick: Tick, arrivals: number[]): Activity {
 
 /**
  * Judges `raw`, what a brain returned, at `context`: the accepted activity, plan, cooldowns to
- * add, and mental operations, or a refusal with one of the reasons `malformed` (not an intention of
- * the right shape and bounds, or a behavior the brain did not declare), `mind_malformed` (mental
- * operations of the wrong shape, count, bounds, or grammar), `walk_not_first` (a walk is the first
- * step or none), and `walk_blocked` (a step of the walk cannot be taken), in that order. Never
- * throws: the canonical copy reads each member once through its own descriptor, so an accessor, or
- * a Proxy whose traps throw, is refused.
+ * add, and mental operations, or a talk to judge further, or a refusal with one of the reasons
+ * `malformed` (not an intention of the right shape and bounds, a behavior the brain did not
+ * declare, or a talk that is not the only step), `mind_malformed` (mental operations of the wrong
+ * shape, count, bounds, or grammar), `walk_not_first` (a walk is the first step or none), and
+ * `walk_blocked` (a step of the walk cannot be taken), in that order. Never throws: the canonical
+ * copy reads each member once through its own descriptor, so an accessor, or a Proxy whose traps
+ * throw, is refused.
  */
-export function acceptIntention(raw: unknown, context: IntentionContext): Accepted | Refused {
+export function acceptIntention(
+  raw: unknown,
+  context: IntentionContext,
+): Accepted | Talking | Refused {
   const intention = readIntention(raw, context);
   if (typeof intention === "string") return { kind: "rejected", reason: intention };
   const [first, ...rest] = intention.steps;
   if (first === undefined) return { kind: "rejected", reason: "malformed" };
+  if (first.kind === "talk" || rest.some((step) => step.kind === "talk"))
+    return talking(intention, first);
   if (rest.some((step) => step.kind === "walk"))
     return { kind: "rejected", reason: "walk_not_first" };
   const arrivals = first.kind === "walk" ? route(context.window, first.dirs) : [];
@@ -208,7 +241,8 @@ export function acceptIntention(raw: unknown, context: IntentionContext): Accept
   const accepted: Accepted = {
     kind: "accepted",
     activity: activityOf(first, context.tick, arrivals),
-    plan: rest,
+    // No step after the first is a talk, which would have been the only one.
+    plan: rest.filter((step): step is PlanStep => step.kind !== "talk"),
     wakeWhen: intention.wakeWhen,
     behavior: intention.behavior,
     ...(intention.mind === undefined ? {} : { mind: intention.mind }),

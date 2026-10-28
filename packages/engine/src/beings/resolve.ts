@@ -9,7 +9,7 @@
 import { compareCodeUnits } from "../canonical/order.ts";
 import { simSeconds, type Tick } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
-import { idleEnd, nextArrival, nextBite } from "./activity.ts";
+import { idleEnd, nextArrival, nextBite, talkEnd } from "./activity.ts";
 import { hearingOf, outcomeOf, type Work } from "./advance.ts";
 import type { Being } from "./being.ts";
 import {
@@ -26,6 +26,7 @@ import { type BeingsEnv, CONTEST_STREAM, integrity } from "./env.ts";
 import type { Depletion } from "./food.ts";
 import { takenAt } from "./food.ts";
 import { hearingWakes } from "./hearing.ts";
+import type { Species2 } from "./life2.ts";
 import { nextLightTick } from "./light.ts";
 import { isOccupied, mergeOccupied, pruneOccupancy } from "./occupancy.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
@@ -151,6 +152,9 @@ function activityTick(env: BeingsEnv, work: Work): Tick | undefined {
   if (activity.kind === "eat")
     return nextBite(activity, { simSecondsPerTick: env.sps, biteMs: work.species.diet.biteMs });
   if (activity.kind === "idle") return idleEnd(activity, env.sps);
+  // Only a being of beings@2 talks, and validateGlobal accepted laws of life@2 for it.
+  if (activity.kind === "talk")
+    return talkEnd(activity, (work.species as Species2).speech.actMs, env.sps);
   // A sleep whose target rest already holds ends at the next tick; otherwise its level ends it.
   return work.body.rest >= activity.untilRest ? env.tick + 1 : undefined;
 }
