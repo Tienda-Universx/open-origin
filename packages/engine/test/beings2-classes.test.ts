@@ -16,7 +16,7 @@ import {
   STEP_MEMBERS,
   WAKE_MEMBERS,
 } from "../src/beings/being.ts";
-import { copyAllowed, copySensed } from "../src/beings/classes.ts";
+import { copyAllowed, copyHeard, copySensed } from "../src/beings/classes.ts";
 import { MIND_SHAPES } from "../src/beings/minds.ts";
 import { perceiveBeings } from "../src/beings/perception.ts";
 import { BEINGS2_RULES } from "../src/beings/rules.ts";
@@ -213,6 +213,37 @@ describe("the classification registry", () => {
       outcome: { result: "none", tick: 0, reason: "" },
     });
     expect(copy.cell).not.toBe(self.cell);
+  });
+
+  test("lets a brain hear of a message its sensed members, as a copy that shares nothing with it", () => {
+    const message = {
+      who: 4,
+      t: 9,
+      cell: [2, 3],
+      act: "tell",
+      p: { p: "t1.food", a: [{ c: [5, 6] }, { e: 7 }, { n: 8 }], v: 1, neg: true },
+      band: 2,
+      tn: 2,
+      ex: 1,
+    };
+    const heard = copyHeard(message);
+    // Neither the tick nor the taints: what the brain hears never tells it when or how tainted.
+    expect(heard).toEqual({
+      who: 4,
+      cell: [2, 3],
+      act: "tell",
+      p: { p: "t1.food", a: [{ c: [5, 6] }, { e: 7 }, { n: 8 }], v: 1, neg: true },
+      band: 2,
+    });
+    const shared = (copy: unknown, held: unknown): boolean =>
+      typeof copy === "object" &&
+      copy !== null &&
+      (copy === held ||
+        Object.entries(copy).some(([name, member]) =>
+          shared(member, (held as Record<string, unknown>)[name]),
+        ));
+    expect(shared(heard, message)).toBe(false);
+    expect(shared(message, message)).toBe(true);
   });
 
   test("lets an allowlist copy of a mind hold no taint, exposure, or C3 kind, and all the rest", () => {
