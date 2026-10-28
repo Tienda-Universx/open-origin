@@ -162,7 +162,8 @@ class Operations {
 
 /**
  * Relates, half the time, a perceived being, citing the episode it remembers of it and, half of
- * those times, one of its beliefs too, which may carry taints into the relationship.
+ * those times, one of its beliefs too, which may carry taints into the relationship; a quarter of
+ * those times, it relates the same being again in the decision.
  */
 function relateSeen(ops: Operations, senses: Senses2, random: Sfc32): void {
   const seen = senses.perceived.beings;
@@ -175,6 +176,7 @@ function relateSeen(ops: Operations, senses: Senses2, random: Sfc32): void {
   const also =
     beliefs.length > 0 && random.below(2) === 0 ? [beliefs[random.below(beliefs.length)]?.id] : [];
   ops.add("relate", { who, aff: change(), tr: change(), because: [id, ...also] });
+  if (random.below(4) === 0) ops.add("relate", { who, tr: change(), because: [id] });
 }
 
 /** Believes what it hears, citing the message it remembers. */
@@ -614,6 +616,24 @@ type Ledgered = {
 /** The ids `cited` without `gone`. */
 const without = (cited: readonly number[], gone: number) => cited.filter((id) => id !== gone);
 
+/** Whether `ids` name each record once, by increasing id. */
+const increasing = (ids: readonly number[]) =>
+  ids.every((id, index) => index === 0 || (ids[index - 1] as number) < id);
+
+/**
+ * Why the lists of an event of the ledger that mind.md orders by increasing id, `related` and the
+ * records of `mind.provenance`, are not in that order: they name each record once, by increasing id.
+ */
+function orderProblems(type: string, payload: unknown): string[] {
+  if (type === "mind.changed") {
+    const { related } = payload as MindChanged;
+    return increasing(related) ? [] : [`related ${related.join(",")} is not by increasing id`];
+  }
+  if (type !== "mind.provenance") return [];
+  const ids = (payload as Provenance).records.map(({ id }) => id);
+  return increasing(ids) ? [] : [`records ${ids.join(",")} are not by increasing id`];
+}
+
 /** Reports each belief of `ledgered` that does not contain the taints of what it cites. */
 function checkClosure(ledgered: Ledgered, report: Report): void {
   for (const [id, known] of ledgered.records) {
@@ -646,6 +666,8 @@ export class LedgerOracle {
   read(events: readonly EngineEvent[]): string[] {
     const problems: string[] = [];
     for (const { type, payload, tick } of events) {
+      for (const problem of orderProblems(type, payload))
+        problems.push(`tick ${tick}, being ${(payload as { id: number }).id}: ${problem}`);
       if (type === "mind.changed") this.#changed(payload as MindChanged);
       if (type !== "mind.provenance") continue;
       const event = payload as Provenance;

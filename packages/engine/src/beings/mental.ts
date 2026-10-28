@@ -281,9 +281,14 @@ function encode(
   return { mind: current, encoded, displaced };
 }
 
-/** The ids of `a` and `b`, each once, by increasing id. */
+/**
+ * The ids of `a` and `b`, each once, by increasing id, even when either repeats one, as two `relate`
+ * operations on one being do.
+ */
 function unionOf(a: readonly LocalId[], b: readonly LocalId[]): LocalId[] {
-  return [...a, ...b.filter((id) => !a.includes(id))].sort((x, y) => x - y);
+  const union: LocalId[] = [];
+  for (const id of [...a, ...b]) if (!union.includes(id)) union.push(id);
+  return union.sort((x, y) => x - y);
 }
 
 /**

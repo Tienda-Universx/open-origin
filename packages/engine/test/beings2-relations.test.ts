@@ -288,6 +288,36 @@ describe("relate", () => {
     expect(being.mind.relations[0]).toMatchObject({ aff: 1000, tr: 0 });
   });
 
+  test("twice on one being in a decision applies both, and the ledger names the relationship once", () => {
+    const { being, events } = relateOnce({
+      relate: [
+        { who: 40, aff: 100, because: [1] },
+        { who: 40, tr: -100, because: [3, 1] },
+      ],
+    });
+    expect(being.outcome.result).not.toBe("rejected");
+    expect(being.mind.relations).toEqual([relationship(4, 40, { aff: 200, tr: 500, tn: 2 })]);
+    const mindEvents = eventsAt(events, 1).filter(([type]) => type.startsWith("mind."));
+    expect(mindEvents).toEqual([
+      [
+        "mind.changed",
+        { id: 1, encoded: [], formed: [], revised: [], dropped: [], forgot: [], related: [4] },
+      ],
+      [
+        "mind.provenance",
+        {
+          id: 1,
+          records: [
+            { id: 4, tn: 2, ex: 0, ev: [1, 3] },
+            { id: 5, tn: 2, ex: 0, ev: [4] },
+            { id: 6, tn: 2, ex: 0, ev: [5] },
+          ],
+          exposure: 0,
+        },
+      ],
+    ]);
+  });
+
   test("is the last kind of operation: it may cite a belief formed in the same decision", () => {
     const { being } = relateOnce({
       believe: [{ p: { p: "t1.kind", a: [{ e: 40 }] }, cr: 700, ev: [3], rule: "told" }],
