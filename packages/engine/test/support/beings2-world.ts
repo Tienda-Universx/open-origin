@@ -1,4 +1,11 @@
-import { beings, type CanonicalValue, createWorld, mind, type Seed } from "../../src/index.ts";
+import {
+  beings,
+  type CanonicalValue,
+  createWorld,
+  mind,
+  type Seed,
+  worldgen,
+} from "../../src/index.ts";
 import { type BeingsWorld, behavior, testGenesis } from "./beings-world.ts";
 
 /**
@@ -208,11 +215,14 @@ export function being2(
   };
 }
 
-/** The chunks that hold `placed`, each in the chunk of its cell, by id, with their `due`. */
-export function chunksOf(placed: readonly beings.Being2[]): { [key: string]: beings.BeingsChunk } {
+/**
+ * The chunks that hold `placed`, beings of either version, each in the chunk of its cell, by id,
+ * with their `due`: initial chunks for createWorld.
+ */
+export function chunksOf(placed: readonly beings.Being[]): { [key: string]: beings.BeingsChunk } {
   const chunks: { [key: string]: beings.BeingsChunk } = {};
   for (const being of [...placed].sort((a, b) => a.id - b.id)) {
-    const key = `${Math.floor(being.cell[0] / 32)},${Math.floor(being.cell[1] / 32)}`;
+    const key = `${worldgen.chunkOfCell(being.cell[0])},${worldgen.chunkOfCell(being.cell[1])}`;
     chunks[key] ??= { beings: [], depletion: [], due: beings.MAX_TICK };
     chunks[key].beings.push(being);
   }

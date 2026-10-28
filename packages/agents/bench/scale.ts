@@ -73,10 +73,10 @@ export function* rings(stride: number, around: Cell): Generator<Cell> {
   }
 }
 
-/** The surface of chunk `chunk`: each cell's elevation and food, by index y·32 + x. */
-function surfaceOf(chunk: Cell) {
+/** The surface of chunk `chunk` of `prepared`: each cell's elevation and food, by index y·32 + x. */
+function surfaceOf(chunk: Cell, prepared: worldgen.PreparedGenesis = PREPARED) {
   const rect = { x: chunk[0] * SIDE, y: chunk[1] * SIDE, width: SIDE, height: SIDE };
-  return worldgen.sampleSurface(PREPARED, rect, ACTIVE.diet.deposit);
+  return worldgen.sampleSurface(prepared, rect, ACTIVE.diet.deposit);
 }
 
 /** The cell of chunk `chunk` at index `index`. */
@@ -85,23 +85,34 @@ const cellAt = (chunk: Cell, index: number): Cell => [
   chunk[1] * SIDE + Math.floor(index / SIDE),
 ];
 
-/** The dry cell of `chunk` with the most food, the lowest index on a tie; undefined when none is dry. */
-function bestCell(chunk: Cell): Cell | undefined {
-  const { elevation, deposit } = surfaceOf(chunk);
+/**
+ * The dry cell of `chunk` of `prepared` with the most food, the lowest index on a tie; undefined
+ * when none is dry.
+ */
+function bestCell(chunk: Cell, prepared: worldgen.PreparedGenesis): Cell | undefined {
+  const { elevation, deposit } = surfaceOf(chunk, prepared);
+  const level = prepared === PREPARED ? LEVEL : worldgen.liquidLevel(worldgen.genesisOf(prepared));
   let best = -1;
   for (let index = 0; index < SIDE * SIDE; index += 1) {
-    if ((elevation[index] as number) < LEVEL) continue;
+    if ((elevation[index] as number) < level) continue;
     if (best < 0 || (deposit[index] as number) > (deposit[best] as number)) best = index;
   }
   return best < 0 ? undefined : cellAt(chunk, best);
 }
 
-/** The cells of `count` dispersed beings: the best cell of chunks two apart, in rings. */
-export function dispersedCells(count: number, around: Cell): Cell[] {
+/**
+ * The cells of `count` dispersed beings: the best cell of chunks two apart, in rings, on the terrain
+ * `prepared`, the benchmark's own unless another is given.
+ */
+export function dispersedCells(
+  count: number,
+  around: Cell,
+  prepared: worldgen.PreparedGenesis = PREPARED,
+): Cell[] {
   const cells: Cell[] = [];
   for (const chunk of rings(2, around)) {
     if (cells.length === count) break;
-    const cell = bestCell(chunk);
+    const cell = bestCell(chunk, prepared);
     if (cell !== undefined) cells.push(cell);
   }
   return cells;
