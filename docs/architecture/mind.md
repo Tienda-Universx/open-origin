@@ -99,7 +99,7 @@ prompt, because they reveal the kernel's randomness.
 
 | Law | Meaning | Default | Validated |
 |---|---|---|---|
-| `perception.sight.day`, `.dim` | Cells seen in light and in dim light | 12, 4 | 0 to the window radius R |
+| `perception.sight.day`, `.dim` | Cells seen in light and in dim light | 24, 4 | 0 to the window radius R |
 | `perception.dimBelow` | The radiance below which sight is dim; the default genesis goes from 40 at night to 1,000 at its peak | 150 | 0 to 2^20 |
 | `perception.attention` | Beings perceived per decision | 6 | 0 to 8 |
 | `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | Capacities | 8, 8, 6, 2 | 0–16, 0–16, 0–12, 0–4 |
@@ -116,7 +116,8 @@ prompt, because they reveal the kernel's randomness.
 | `capacity` | Beings per chunk: a law of `life@2` itself, beside `deathEnabled`, not of a species | 64 | 1 to 1,024 |
 | `traits` | The trait bounds of T4, now for six traits: also `sociability`, `credulity`, and `retention` | [800, 1,200] each | the rule of T4 |
 
-The defaults are where calibration starts (T5-7); the values frozen after it replace them here.
+The defaults were where calibration started (T5-7); the table holds the values it froze, which
+[Calibration](#calibration) records: it raised `perception.sight.day` from 12 to 24.
 Durations of 75,600 s are one day of the default genesis, written as data, because each world has
 its own day.
 
@@ -749,7 +750,7 @@ reachable cell nearest the believed cell, by Chebyshev distance, then by the sho
 that is where the being stands, it forgets the belief and searches instead. Approaching walks to the
 reachable cell within `speech.range` of the being, not its cell, by the shortest route, toward the
 nearest perceived being it would greet, awake and not walking, beyond `speech.range` and within
-`⌊8 · sociability / 1000⌋` cells; never twice in a row.
+`⌊24 · sociability / 1000⌋` cells; never twice in a row.
 
 **Speech** (`mind/social.ts`). The brain senses neither the tick nor its quota, so it keeps every
 quota by a budget it counts in its relationships. With the talk window `W = max(speech.gap + 1,
@@ -770,7 +771,7 @@ not asleep, and held in a relationship. The acts:
 - a **greet**, when sated and as it wills, of the nearest being it meets or meets again: one it never
   addressed, or not within `W`.
 
-It wills an act when `draws[1] mod 1000` is below `min(1000, ⌊800 · sociability / 1000⌋)`. It tells
+It wills an act when `draws[1] mod 1000` is below `min(1000, sociability)`. It tells
 a belief that no operation of the same decision changes or evicts.
 
 ## Preregistration
@@ -882,6 +883,72 @@ Expressed in the world's day L, with neutral traits:
   live records; (b) `decide` again with only the records it cites, and every input that is not a
   record: an operation with the same proposition and the same citations is among the result.
   Confidence, and believe against revise, are not compared.
+
+## Calibration
+
+The laws of `life@2` and the parameters of `mind@1` were calibrated together on the four T5
+calibration labels only, as the preregistration requires, and frozen together; no simulation ran
+on the default label or any held-out label. `bun packages/agents/bench/mind-calibration.ts
+[1 2 3 4] [--ticks N] [--spawn K] [--mindless]` reruns it: 63,000 ticks (10 days) of the T5
+scenario of each label, audit off, with T4's acceptance items for every being, the items of the
+mind, the share of awake time each being spent talking, the targets the laws decide alone, and,
+with `--mindless`, the mindless baseline instead of `mind@1`. It reads its arguments with T4's
+bench, so it refuses the default and held-out labels in any spelling, every argument it does not
+know, and a variant of the laws, with exit code 2. `packages/agents/test/mind-freeze.test.ts` pins
+the freeze: the seal of the default `life@2`, `e69ab5b7506e43a3e1f2680b91707f43`, and the digest
+of every parameter of `mind@1` by name, `9d94ca01b278b56f5285a086a93fda9c`.
+
+**The targets the laws decide alone** (`mind-targets.test.ts`, with the engine's laws and neutral
+traits): an episode of importance 500, never recalled, is forgotten 3 L + 31,704 s, 3.42 L, after
+it happened; one day of continuous co-presence gives familiarity 1000; ten days of absence leave
+500, a half. None of these laws changed.
+
+**What changed.** With the defaults, a day's sight of 12 cells, and `mind@1` willing an unprompted
+act at `⌊800 · sociability / 1000⌋` and walking at most `⌊8 · sociability / 1000⌋` cells to greet,
+five beings of `calibration/2` and `/4` missed greeting or being greeted (run 02). One sociable
+being of `calibration/4` had another in sight at only five of its decisions in ten days, 6 to 12
+cells away, beyond its reach of 7 or with a draw above its will; with a will of all its sociability
+and a reach of 12, one of `calibration/3` never perceived another being, its nearest 13 to 74
+cells away whenever it was sampled, while the others moved west in pairs. That run left three
+beings out (run 05). A day's sight of 24 cells, the
+window's radius, the largest the law allows, with a reach of `⌊24 · sociability / 1000⌋`, met
+every item on every label (run 06):
+
+| Law or parameter | Default | Frozen |
+|---|---|---|
+| `perception.sight.day` | 12 | 24 |
+| `SPEAK_WILL` of `mind@1` | 800 | 1000 |
+| `APPROACH_REACH` of `mind@1` | 8 | 24 |
+
+Every other law of `life@2` and parameter of `mind@1` kept its value.
+
+**Runs.** Each run is 10 days of the four labels unless noted, on the Codespace with Bun 1.4.4 at
+`nice -n 19`, one at a time. A row gives, over its labels, the least of T4's items over the eight
+beings, the beings that missed an item of the mind, and the population's counts.
+
+| Run | Laws, brain | T4's acceptance | Beings missing an item of the mind | Population, by label | Integrity |
+|---|---|---|---|---|---|
+| 01 | defaults; `calibration/1`, 1 day | not judged in 1 day; no rejection | five not greeted | conversations 2 | 0 rejected, 0 prior-suspect, 0 rule problems |
+| 02 | defaults | every item on every label; lowest nutrition 0, health 741,270 (`/2`, being 8) | `/2`: 3, 8; `/4`: 1, 3, 4 | conversations 29, 9, 33, 24; revised down 20, 14, 14, 18; from testimony 28, 5, 29, 29; trust checked 6, 1, 10, 4 | 0, 0, 0 |
+| 03 | defaults; mindless baseline, `/2` | every item; being 8 the same as in run 02 | (no mind) | — | 0 rejected |
+| 04 | defaults; `/2`, with counts of seeking | as run 02 | as run 02 | no walk to believed food: being 8 searched with no belief, spawned out of sight of food | 0, 0, 0 |
+| 05 | will 1000, reach 12 | every item; lowest nutrition 0 (`/2`, being 8) | `/2`: 6, 8; `/3`: 7 | conversations 49, 14, 31, 36 | 0, 0, 0 |
+| 06 | sight 24, will 1000, reach 24 | every item on every label; lowest nutrition 420,855; health never fell | none | conversations 48, 60, 52, 36; revised down 16, 16, 17, 13; from testimony 75, 73, 61, 53; trust checked 15, 10, 19, 14 | 0, 0, 0; diverse on every label |
+| 07 | as 06, `--spawn 1` | every item; lowest nutrition 408,629; health never fell | none | conversations 63, 52, 48, 41 | 0, 0, 0 |
+| 08 | as 06, `--spawn 2` | every item; lowest nutrition 0, health 881,905 (`/2`, being 5) | `/2`: 5 | conversations 63, 57, 62, 35 | 0, 0, 0 |
+| 09 | as 06; mindless baseline, `/2`, `--spawn 2` | every item; being 5 the same as in run 08 | (no mind) | — | 0 rejected |
+
+In every run with `mind@1`, no being spent more than 1‰ of its awake time talking, against a
+target of at most 5%, since its budget allows two acts in a talk window of 18,900 s. A run of 10
+days of one label took 11.8 to 20.7 s of wall time, against 8.9 to 9.3 s under the mindless
+baseline, with 13.5 to 21.7 decisions per being and day against 12.6 to 12.9. Calibration used about 8 minutes of compute.
+
+**A declared limit.** The spawn draws `--spawn 1` and `/2` are no registered scenario, only checks
+on the same terrain. On `calibration/2` with `--spawn 2`, being 5 spawned out of sight of food and
+of every other being, searched 1,550 cells away, reached nutrition 0, and never met anyone: the
+mindless baseline lives exactly the same life (run 09), so no brain that perceives only its window
+can greet a being it never sees. The evaluation's item "every being greeted and was greeted" fails
+on a label that places a being so.
 
 ## Cost
 

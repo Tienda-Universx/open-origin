@@ -9,7 +9,13 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { beings, mind } from "@open-origin/engine";
-import { BEING_W, SEEN_CR, SPEAK_WILL, WAIT_MS } from "../src/brain/mind/parameters.ts";
+import {
+  APPROACH_REACH,
+  BEING_W,
+  SEEN_CR,
+  SPEAK_WILL,
+  WAIT_MS,
+} from "../src/brain/mind/parameters.ts";
 import { foodAt } from "../src/brain/mind/rules.ts";
 import { speechBudget, talkWindow } from "../src/brain/mind/social.ts";
 import { mindController } from "../src/brain/mind.ts";
@@ -118,7 +124,7 @@ describe("greeting", () => {
   });
 
   test("greets as its sociability wills: a draw below its will to speak", () => {
-    // The will to speak is SPEAK_WILL felt through sociability: 640 at 800, 800 at 1000.
+    // The will to speak is SPEAK_WILL felt through sociability: 800 at 800, all of it at 1000.
     const will = (sociability: number) => Math.floor((SPEAK_WILL * sociability) / 1000);
     const at = (sociability: number, draw: number) =>
       decide(meeting([2, 0], {}, { social: { sociability }, draws: [0, draw] })).steps;
@@ -135,7 +141,8 @@ describe("greeting", () => {
     );
     expect(decide(meeting([2, 0], {}, { mind: { next: 10 } })).steps).toEqual(base);
     expect(decide(meeting([2, 3])).steps).toEqual([talk(5, "greet")]);
-    expect(decide(meeting([2, 4], {}, { social: { sociability: 400 } })).steps).toEqual(base);
+    // Out of reach of speech, and of the walk its sociability of 100 gives: two cells.
+    expect(decide(meeting([2, 4], {}, { social: { sociability: 100 } })).steps).toEqual(base);
   });
 
   test("greets again only after the talk window, never in the pause of a past conversation", () => {
@@ -145,9 +152,13 @@ describe("greeting", () => {
     expect(decide(meeting([2, 0], { talk: W, turns: 3 })).steps).toEqual([talk(5, "greet")]);
     // Nor in reply: a greet or an ask heard in that pause opens no new conversation.
     for (const act of ["greet", "ask"] as const) {
-      const heard = meeting([2, 0], { talk: speech.gap + 1, turns: 1 }, {
-        heard: [{ who: 5, cell: [2, 0], act }],
-      });
+      const heard = meeting(
+        [2, 0],
+        { talk: speech.gap + 1, turns: 1 },
+        {
+          heard: [{ who: 5, cell: [2, 0], act }],
+        },
+      );
       expect(decide(heard).steps).toEqual(base);
     }
   });
@@ -196,6 +207,7 @@ describe("telling and asking", () => {
   });
 
   test("tells a being that answered its greet the food it believes, as it wills", () => {
+    // A sociability of 800 wills an act at a draw below 800.
     const answered = (draw: number) =>
       meeting(
         [2, 0],
@@ -203,11 +215,12 @@ describe("telling and asking", () => {
         {
           heard: [{ who: 5, cell: [2, 0], act: "greet" }],
           mind: { next: 10, beliefs, relations: [relationView(2, 5, { talk: 24, turns: 1 })] },
+          social: { sociability: 800 },
           draws: [0, draw],
         },
       );
-    expect(decide(answered(0)).steps).toEqual([talk(5, "tell", 3)]);
-    expect(decide(answered(999)).steps).toEqual(utility.decide(answered(999)).steps);
+    expect(decide(answered(799)).steps).toEqual([talk(5, "tell", 3)]);
+    expect(decide(answered(800)).steps).toEqual(utility.decide(answered(800)).steps);
   });
 
   test("asks for food when hungry with none in sight and none it believes in", () => {
@@ -298,13 +311,13 @@ describe("waiting, seeking, and approaching", () => {
       steps: [{ kind: "walk", dirs: "000" }],
       behavior: behavior("approach"),
     });
-    // The reach is APPROACH_REACH felt through sociability: 6 cells at 800, 9 at 1200.
-    expect(decide(meeting([7, 0], {}, { social: { sociability: 800 } })).behavior.kind).toBe(
-      "rest",
-    );
-    expect(decide(meeting([9, 0], {}, { social: { sociability: 1200 } })).behavior.kind).toBe(
-      "approach",
-    );
+    // The reach is APPROACH_REACH felt through sociability: 19 cells at 800, 28 at 1200.
+    const reach = (sociability: number) => Math.floor((APPROACH_REACH * sociability) / 1000);
+    const at = (x: number, sociability: number) =>
+      decide(meeting([x, 0], {}, { social: { sociability } })).behavior.kind;
+    expect(at(reach(800), 800)).toBe("approach");
+    expect(at(reach(800) + 1, 800)).toBe("rest");
+    expect(at(R, 1200)).toBe("approach");
   });
 
   test("approaches no being that walks or sleeps, and never twice in a row", () => {

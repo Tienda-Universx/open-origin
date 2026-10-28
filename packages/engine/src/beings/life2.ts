@@ -257,7 +257,8 @@ export const LIFE2_RULES: LifeRules = Object.freeze({
 
 /**
  * The default laws of life@2: the default laws of life@1, every body law unchanged, with the
- * defaults of the table of mind.md for each law life@2 adds, where calibration starts (T5-7).
+ * values of the table of mind.md for each law life@2 adds, as the calibration of T5-7 froze them
+ * (mind-freeze.test.ts pins their seal): it raised the day's sight from 12 to 24.
  */
 export function defaultLife2(): LifeConfig2 {
   const life = defaultLife();
@@ -267,7 +268,7 @@ export function defaultLife2(): LifeConfig2 {
     capacity: 64,
     species: life.species.map((species) => ({
       ...species,
-      perception: { sight: { day: 12, dim: 4 }, dimBelow: 150, attention: 6 },
+      perception: { sight: { day: 24, dim: 4 }, dimBelow: 150, attention: 6 },
       ...defaultMindLaws(),
       speech: {
         range: 3,

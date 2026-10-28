@@ -68,7 +68,7 @@ export const TRUST_STEP = 100;
 export const WAIT_MS = 60_000;
 
 /** The will to speak, in permille, felt through sociability: the chance of an unprompted act. */
-export const SPEAK_WILL = 800;
+export const SPEAK_WILL = 1000;
 
 /** How many cells away a being walks to greet another, felt through sociability. */
-export const APPROACH_REACH = 8;
+export const APPROACH_REACH = 24;
