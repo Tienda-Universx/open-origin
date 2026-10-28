@@ -145,7 +145,8 @@ describe("the target of the false claim", () => {
     };
   }
 
-  test.each([[[0, 0]], [[40, -20]], [[-90, 75]]] as const)(
+  // From (−80, −300) the order matters: by x, then y, the target would be (−47, −266).
+  test.each([[[0, 0]], [[40, -20]], [[-90, 75]], [[-80, -300]]] as const)(
     "from %p is the nearest passable cell without food at distance 5 or more, then by y, then x",
     (from) => {
       const target = claimTarget(ground, from);
