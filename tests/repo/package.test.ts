@@ -77,10 +77,16 @@ function looselyPinned(dependencies: Record<string, string> = {}): string[] {
 const TSC_STEP = /^bunx --no-install --bun tsc --noEmit -p (\S+)$/;
 
 /**
- * The least time CI's test script gives a test that sets none of its own, about five times the
- * slowest such test on CI (5.7 s, 2026-10-28), where Bun's default of 5 s failed two of them.
+ * The least time CI's test script gives a test that sets none of its own: about six times the
+ * slowest such test measured on CI, 5.1 s, where Bun's default of 5 s failed it (2026-10-28).
  */
 const TEST_BUDGET_MS = 30_000;
+
+/**
+ * The most it may give: the largest budget a test sets itself. Above it the flag stops being a
+ * budget, and a test that hangs waiting would run until the CI job's own timeout stops the job.
+ */
+const TEST_BUDGET_MAX_MS = 60_000;
 
 /** CI's test script: the whole suite, one worker per core, with a time for tests that set none. */
 const TEST_SCRIPT = /^bun test --parallel --timeout (\d+)$/;
@@ -166,10 +172,11 @@ describe("package.json", () => {
     // argument, a path or an option such as --test-name-pattern, can narrow the suite CI runs.
     const script = manifest.scripts.test ?? "";
     expect(script).toMatch(TEST_SCRIPT);
-    // Under --parallel a test's wall time grows with the runner's load, about twice its time
-    // alone; the slowest tests on Bun's default of 5 s took up to 5.7 s on CI and failed it.
+    // Under --parallel a test's wall time varies with the runner's load: on CI the same test took
+    // from 1.8 to 5.0 s across seven runs, and Bun's default of 5 s failed two tests at 5.0 and 5.1 s.
     const [, timeout] = TEST_SCRIPT.exec(script) ?? [];
     expect(Number(timeout)).toBeGreaterThanOrEqual(TEST_BUDGET_MS);
+    expect(Number(timeout)).toBeLessThanOrEqual(TEST_BUDGET_MAX_MS);
   });
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {
