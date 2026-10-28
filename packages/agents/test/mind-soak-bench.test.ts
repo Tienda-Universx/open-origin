@@ -119,6 +119,34 @@ describe("the summary of the soak", () => {
     );
   });
 
+  test("compares the hungry spells only on labels where both brains closed one", () => {
+    const spells: [number[], number[]][] = [
+      [[], [40]],
+      [[10], []],
+      [[], []],
+      [[10, 30], [40]],
+      [[50], [40]],
+      [[40], [40]],
+    ];
+    const labels: LabelRuns[] = spells.map(([mind, amnesic], n) => ({
+      label: `l${n + 1}`,
+      mind: runOf({ spells: mind, testimony: [] }),
+      amnesic: runOf({ spells: amnesic }),
+      claim: runOf({ claim: { corrected: true } }),
+    }));
+    const summary = summarize(labels);
+    // Only l4, l5, and l6 closed a spell under both brains; on l4 alone mind@1's median is shorter.
+    expect(summary.memory).toEqual({ shorter: 1, of: 3 });
+    expect(summary.labels.map(({ medians }) => medians)).toEqual([
+      { mind: undefined, amnesic: 40 },
+      { mind: 10, amnesic: undefined },
+      { mind: undefined, amnesic: undefined },
+      { mind: 30, amnesic: 40 },
+      { mind: 50, amnesic: 40 },
+      { mind: 40, amnesic: 40 },
+    ]);
+  });
+
   test("does not hold the false claim's hypothesis on four labels of six", () => {
     const labels: LabelRuns[] = [1, 2, 3, 4, 5, 6].map((n) => ({
       label: `l${n}`,

@@ -11,7 +11,8 @@
  * - `mind@1` with the false claim injected at tick 6,300, followed for 2 L, 18,900 ticks.
  *
  * Then it prints the informative hypotheses, whatever they show: memory, the median hungry spell
- * under `mind@1` against the amnesic one, paired by label; the false claim, revised below 500 or
+ * under `mind@1` against the amnesic one, paired by label, on the labels where both brains closed a
+ * spell, since a median of none compares nothing; the false claim, revised below 500 or
  * dropped within 2 L on at least five of the six labels; and credulity, the Spearman correlation,
  * across the beings, of credulity with the share of their beliefs from testimony false one day
  * after they formed. Its last line is every number as JSON.
@@ -121,10 +122,12 @@ export type SoakSummary = {
     readonly label: string;
     readonly acceptance: Acceptance;
     readonly spells: { readonly mind: number[]; readonly amnesic: number[] };
-    readonly medians: { readonly mind: number; readonly amnesic: number };
+    /** The median spell under each brain; undefined where that brain closed none. */
+    readonly medians: { readonly mind: number | undefined; readonly amnesic: number | undefined };
     readonly claim: unknown;
     readonly ablation: unknown;
   }[];
+  /** The labels where mind@1's median spell is shorter, of those where both brains closed one. */
   readonly memory: { readonly shorter: number; readonly of: number };
   readonly falseClaim: { readonly corrected: number; readonly of: number; readonly holds: boolean };
   readonly credulity: { readonly beings: number; readonly rho: number };
@@ -144,6 +147,9 @@ function credulityPairs(runs: readonly LabelRuns[]): { x: number[]; y: number[] 
   return { x, y };
 }
 
+/** The median of `spells`, or undefined when there is none. */
+const medianOf = (spells: readonly number[]) => (spells.length === 0 ? undefined : median(spells));
+
 /** The summary of the soak's runs, with the hypotheses. */
 export function summarize(runs: readonly LabelRuns[]): SoakSummary {
   const labels = runs.map(({ label, mind, amnesic, claim }) => {
@@ -155,18 +161,22 @@ export function summarize(runs: readonly LabelRuns[]): SoakSummary {
       label,
       acceptance: acceptance(mind),
       spells,
-      medians: { mind: median(spells.mind), amnesic: median(spells.amnesic) },
+      medians: { mind: medianOf(spells.mind), amnesic: medianOf(spells.amnesic) },
       claim: claim.soak?.claim,
       ablation: mind.soak?.ablation,
     };
   });
+  // A label compares the brains only when each closed a spell: a median of none means nothing.
+  const comparable = labels.flatMap(({ medians: { mind, amnesic } }) =>
+    mind === undefined || amnesic === undefined ? [] : [{ mind, amnesic }],
+  );
   const corrected = runs.filter(({ claim }) => claim.soak?.claim?.corrected === true).length;
   const { x, y } = credulityPairs(runs);
   return {
     labels,
     memory: {
-      shorter: labels.filter(({ medians }) => medians.mind < medians.amnesic).length,
-      of: labels.length,
+      shorter: comparable.filter(({ mind, amnesic }) => mind < amnesic).length,
+      of: comparable.length,
     },
     falseClaim: { corrected, of: runs.length, holds: corrected >= 5 },
     credulity: { beings: x.length, rho: spearman(x, y) },
@@ -192,11 +202,11 @@ function print(summary: SoakSummary, runs: readonly LabelRuns[]): void {
     ];
     const ablation = run.mind.soak?.ablation;
     console.log(
-      `| ${row.label} | ${missing || "none"} | ${others.join(", ") || "none"} | ${row.medians.mind} (${row.spells.mind.length}) / ${row.medians.amnesic} (${row.spells.amnesic.length}) | ${JSON.stringify(row.claim)} | ${ablation === undefined ? "-" : `${ablation.decisions}, ${ablation.operations}, ${ablation.removable}, ${ablation.misses.length}`} |`,
+      `| ${row.label} | ${missing || "none"} | ${others.join(", ") || "none"} | ${row.medians.mind ?? "-"} (${row.spells.mind.length}) / ${row.medians.amnesic ?? "-"} (${row.spells.amnesic.length}) | ${JSON.stringify(row.claim)} | ${ablation === undefined ? "-" : `${ablation.decisions}, ${ablation.operations}, ${ablation.removable}, ${ablation.misses.length}`} |`,
     );
   });
   console.log(
-    `\nmemory: the median hungry spell is shorter under mind@1 on ${summary.memory.shorter} of ${summary.memory.of} labels`,
+    `\nmemory: the median hungry spell is shorter under mind@1 on ${summary.memory.shorter} of the ${summary.memory.of} labels where both brains closed one`,
   );
   console.log(
     `false claim: corrected within 2 L on ${summary.falseClaim.corrected} of ${summary.falseClaim.of} labels; the hypothesis (at least five) ${summary.falseClaim.holds ? "holds" : "does not hold"}`,
