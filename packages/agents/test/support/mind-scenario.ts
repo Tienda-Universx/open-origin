@@ -145,3 +145,24 @@ export function scenario2From(terrain: Terrain, options: Scenario2Options): Scen
 export function scenario2Of(label: string, options: Scenario2Options = {}): Scenario2 {
   return scenario2From(terrainOf(label), options);
 }
+
+/**
+ * The ruleset of the T5 scenario, which the determinism suite's resume child imports by its path:
+ * beings@2 with `mind@1` for the one species of the default laws of life@2, in a world of the
+ * default genesis, whose day lasts 75,600 seconds. Each call makes a fresh ruleset with a fresh
+ * brain; death being disabled is a law of the world's global value, not of the ruleset.
+ */
+export function scenario2Ruleset(): ReturnType<typeof beings.createBeingsRuleset> {
+  const species = beings.defaultLife2().species[0] as beings.Species2;
+  const dayLength = worldgen.defaultGenesis([0, 0, 0, 0, 0, 0, 0, 0]).laws.day.length;
+  return beings.createBeingsRuleset({
+    controllers: { [species.id]: mindController({ species, dayLength }) },
+    rules: "beings@2",
+  });
+}
+
+/** Where the determinism suite's resume child finds scenario2Ruleset. */
+export const SCENARIO2_RULESET = Object.freeze({
+  module: import.meta.resolve("./mind-scenario.ts"),
+  name: "scenario2Ruleset",
+});

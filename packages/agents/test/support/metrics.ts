@@ -22,6 +22,13 @@ export type RunInput = {
   readonly spawns: readonly Command[];
   readonly payloads: readonly SpawnPayload[];
   readonly prepared: worldgen.PreparedGenesis;
+  /** The commands of each tick after the first, none unless given. */
+  readonly commandsAt?: (tick: number) => readonly Command[];
+  /**
+   * The beings after the step `result`, by id, for a caller that reads them anyway; the runner
+   * reads them from the world when this is not given.
+   */
+  readonly beingsAfter?: (result: StepResult) => ReadonlyMap<number, beings.Being>;
 };
 
 /** What one being did over a run. */
@@ -132,7 +139,7 @@ function recordMeals(
   tracker: Tracker,
   tick: number,
   ate: readonly EngineEvent[],
-  now: Map<number, beings.Being>,
+  now: ReadonlyMap<number, beings.Being>,
 ): void {
   const eatenAt = new Map<string, number>();
   for (const event of ate) {
@@ -277,6 +284,14 @@ function recordFinal(tracker: Tracker, tick: number): void {
   }
 }
 
+/** The beings after the step `result`: the caller's, or read from the world. */
+const readAfter = (tracker: Tracker, result: StepResult): ReadonlyMap<number, beings.Being> =>
+  tracker.run.beingsAfter?.(result) ?? beingsNow(tracker);
+
+/** The commands of `run` at `tick`: its spawns at tick 1, and what `commandsAt` gives after. */
+const commandsOf = (run: RunInput, tick: number): readonly Command[] =>
+  tick === 1 ? run.spawns : (run.commandsAt?.(tick) ?? []);
+
 /**
  * Runs `run` to tick `ticks`, the spawns at tick 1, and records what its beings did. The
  * decisions are counted by `counted`, which the caller wraps around the brain. `onStep`, when
@@ -291,9 +306,11 @@ export function runScenario(
   const tracker = newTracker(run);
   const started = performance.now();
   for (let tick = 1; tick <= ticks; tick += 1) {
-    const result = step(run.world, tick === 1 ? run.spawns : []);
+    const result = step(run.world, commandsOf(run, tick));
     const { events } = result;
-    const now = events.some((event) => READ_FOR.has(event.type)) ? beingsNow(tracker) : undefined;
+    const now = events.some((event) => READ_FOR.has(event.type))
+      ? readAfter(tracker, result)
+      : undefined;
     for (const event of events) {
       const id = (event.payload as { id?: number }).id ?? 0;
       recordEvent(tracker, event, now?.get(id));
