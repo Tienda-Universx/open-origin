@@ -11,10 +11,12 @@ import { Sfc32 } from "../../engine/test/support/sfc32.ts";
 import {
   divergentTicks,
   type GateSample,
+  gateArguments,
   gateBeings,
   gateDraws,
   gateScene,
   gateTicks,
+  gateVerdict,
   gateWorld,
   pairedQuietNs,
   quietWakeNs,
@@ -135,7 +137,38 @@ describe("the statistics of the gate", () => {
     expect(TRIGGER_BYTES).toBe(1_048_576);
     expect(gateTicks([])).toBe(DAY_TICKS);
     expect(gateTicks(["--ticks", "30"])).toBe(30);
-    for (const argv of [["--ticks"], ["--ticks", "0"], ["--ticks", "1.5"], ["--tick", "3"], ["x"]])
-      expect(() => gateTicks(argv)).toThrow("usage: gate.ts [--ticks N]");
+    expect(gateArguments([])).toEqual({ ticks: DAY_TICKS, beings: 1_000 });
+    expect(gateArguments(["--beings", "10000", "--ticks", "300"])).toEqual({
+      ticks: 300,
+      beings: 10_000,
+    });
+    for (const argv of [
+      ["--ticks"],
+      ["--ticks", "0"],
+      ["--ticks", "1.5"],
+      ["--tick", "3"],
+      ["x"],
+      ["--beings", "0"],
+      ["--ticks", "3", "--ticks", "4"],
+      ["--beings", "10", "--beings", "20"],
+      ["--beings", "10", "--ticks", "3", "--beings", "20"],
+    ])
+      expect(() => gateArguments(argv)).toThrow("usage: gate.ts [--ticks N] [--beings N]");
+  });
+});
+
+describe("the verdict of the gate", () => {
+  test("decides on 1,000 dispersed beings, by the p99 hashed against 1 MB", () => {
+    expect(gateVerdict(TRIGGER_BYTES - 1, 1_000)).toBe("the entity section stays in T7");
+    expect(gateVerdict(TRIGGER_BYTES, 1_000)).toBe(
+      "stop: the capacities come down first, by the maintainer's decision",
+    );
+  });
+
+  test("decides nothing for any other count, which measures a ceiling", () => {
+    expect(gateVerdict(TRIGGER_BYTES * 2, 10_000)).toBe(
+      "a ceiling of 10000 beings, which decides nothing",
+    );
+    expect(gateVerdict(1, 999)).toBe("a ceiling of 999 beings, which decides nothing");
   });
 });

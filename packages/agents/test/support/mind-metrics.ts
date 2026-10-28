@@ -109,19 +109,25 @@ export class MindObserver {
     };
   }
 
-  /** Reads what the step `result` did. */
-  observe(result: StepResult): void {
+  /**
+   * Reads what the step `result` did; `minds` gives the beings after it, read from the world
+   * unless the caller already holds them.
+   */
+  observe(
+    result: StepResult,
+    minds: () => ReadonlyMap<number, beings.Being2> = () => mindsOf(this.#observed),
+  ): void {
     const { tick, events } = result;
     this.run.decisions += this.#pending.length;
     const changed = new Set(
       events.filter(({ type }) => type === "mind.changed").map(({ payload }) => idOf(payload)),
     );
-    const minds = changed.size > 0 ? mindsOf(this.#observed) : new Map<number, beings.Being2>();
+    const after = changed.size > 0 ? minds() : new Map<number, beings.Being2>();
     for (const decision of this.#pending.splice(0)) {
       const id = decision.senses.self.id;
       this.#walked(decision);
       if (decision.intention.mind !== undefined && changed.has(id))
-        this.#applied(decision, minds.get(id));
+        this.#applied(decision, after.get(id));
     }
     this.#speech(tick, events);
     for (const event of events) this.#event(tick, event);

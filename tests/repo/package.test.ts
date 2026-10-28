@@ -89,8 +89,20 @@ const TEST_BUDGET_MS = 30_000;
  */
 const TEST_BUDGET_MAX_MS = 60_000;
 
-/** CI's test script: the whole suite, one worker per core, with a time for tests that set none. */
-const TEST_SCRIPT = /^bun test --parallel --timeout (\d+)$/;
+/**
+ * CI's test script: the whole suite, one worker per core, with a time for tests that set none, but
+ * for the one file it then runs alone in a step of its own.
+ */
+const TEST_SCRIPT =
+  /^bun test --parallel --timeout (\d+) --path-ignore-patterns=(\S+) && bun test --timeout (\d+) (\S+)$/;
+
+/**
+ * The file CI's test script runs alone, after the rest: the preregistered evaluation of T5, whose
+ * two child processes run 63,000 ticks each. Among the other files under --parallel, it took 31 to
+ * 44 s of a suite that reached 76.1 s on CI, past the budget of 70 s (plan §11.4), which now holds
+ * for each step: a decision recorded in the tracker (L65).
+ */
+const SEQUENTIAL_TEST = "packages/agents/test/mind-evaluation.test.ts";
 
 describe("script checks", () => {
   const scripts = new Set(["lint", "typecheck"]);
@@ -160,7 +172,7 @@ describe("package.json", () => {
     expect(scripts.flatMap((script) => disallowedCommands(script, names))).toEqual([]);
   });
 
-  test("check, which CI runs, runs the typecheck, the lint and the whole test suite", () => {
+  test("check, which CI runs, runs the typecheck, the lint and the whole test suite", async () => {
     const check = manifest.scripts.check ?? "";
     expect(check).toMatch(FAIL_FAST_CHAIN);
     expect(commands(check)).toEqual(
@@ -169,15 +181,34 @@ describe("package.json", () => {
     expect(manifest.scripts.typecheck).toMatch(
       /^bunx --no-install --bun tsc (?=.*--noEmit)(?=.*-p tsconfig\.json)/,
     );
-    // Only --parallel, which runs every file on one worker per core, and --timeout: any other
-    // argument, a path or an option such as --test-name-pattern, can narrow the suite CI runs.
+    // Only --parallel, which runs every file on one worker per core, --timeout, and the one file the
+    // second step runs alone: any other argument, a path or an option such as --test-name-pattern,
+    // can narrow the suite CI runs.
     const script = manifest.scripts.test ?? "";
     expect(script).toMatch(TEST_SCRIPT);
+    const [, timeout, ignored, aloneTimeout, alone] = TEST_SCRIPT.exec(script) ?? [];
+    // What the first step leaves out is exactly what the second runs, so together they run all.
+    expect([ignored, alone]).toEqual([SEQUENTIAL_TEST, SEQUENTIAL_TEST]);
+    expect(await Bun.file(new URL(`../../${SEQUENTIAL_TEST}`, import.meta.url)).exists()).toBe(
+      true,
+    );
     // Under --parallel a test's wall time varies with the runner's load: on CI the same test took
     // from 1.8 to 5.0 s across seven runs, and Bun's default of 5 s failed two tests at 5.0 and 5.1 s.
-    const [, timeout] = TEST_SCRIPT.exec(script) ?? [];
-    expect(Number(timeout)).toBeGreaterThanOrEqual(TEST_BUDGET_MS);
-    expect(Number(timeout)).toBeLessThanOrEqual(TEST_BUDGET_MAX_MS);
+    for (const budget of [timeout, aloneTimeout]) {
+      expect(Number(budget)).toBeGreaterThanOrEqual(TEST_BUDGET_MS);
+      expect(Number(budget)).toBeLessThanOrEqual(TEST_BUDGET_MAX_MS);
+    }
+  });
+
+  test("leaves the file it runs alone out of the parallel step, as Bun reads the pattern", () => {
+    // Bun finds no file to run when the one the filter names is the one the pattern ignores, so
+    // the parallel step never runs the evaluation a second time.
+    const result = Bun.spawnSync(
+      ["bun", "test", `--path-ignore-patterns=${SEQUENTIAL_TEST}`, SEQUENTIAL_TEST],
+      { cwd: REPO_ROOT, timeout: 30_000 },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("did not match any test files");
   });
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {
