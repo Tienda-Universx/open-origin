@@ -62,7 +62,8 @@ function walkTo(
       best = { index, cost: value, ms };
   }
   if (best === undefined || best.index === center) return undefined;
-  return walkable(pathTo(paths, best.index) ?? "");
+  // pathTo is undefined only for a cell no walk reaches, and `best` was reached (ms ≥ 0).
+  return walkable(pathTo(paths, best.index) as string);
 }
 
 /** Food the being believes in beyond its window, the one it would walk to. */

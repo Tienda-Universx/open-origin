@@ -28,7 +28,7 @@ import {
 import { LABELS2, scenario2Of } from "../test/support/mind-scenario.ts";
 import { lawTargets } from "../test/support/mind-targets.ts";
 import { mindlessUtility } from "../test/support/mindless.ts";
-import { LABELS, SCENARIO_SPS } from "../test/support/scenario.ts";
+import { BEINGS, LABELS, SCENARIO_SPS } from "../test/support/scenario.ts";
 import { parseArguments as parseT4 } from "./calibration.ts";
 import { beingRows } from "./table.ts";
 
@@ -91,7 +91,7 @@ function calibrate(label: string, options: Arguments): void {
   const minds = observer.finish(options.ticks);
   const species = beings.defaultLife2().species[0] as beings.Species2;
   const talk = actTicks(species.speech.actMs, SCENARIO_SPS);
-  const perDay = (run.decisions * scenario.dayLength) / (options.ticks * SCENARIO_SPS * 8);
+  const perDay = (run.decisions * scenario.dayLength) / (options.ticks * SCENARIO_SPS * BEINGS);
   const spawnText = `${options.spawn === undefined ? "" : ` (spawn/${options.spawn})`}${options.brain === "mind" ? "" : " (mindless)"}`;
   console.log(
     `\n${label}${spawnText}: ${options.ticks} ticks, ${(run.wallMs / 1000).toFixed(2)} s, ${perDay.toFixed(1)} decisions per being and day, regrown and eaten: ${run.regrewAndEaten}`,
