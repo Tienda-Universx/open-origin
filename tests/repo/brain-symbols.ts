@@ -10,12 +10,15 @@
  * keeps.
  *
  * Every import from the engine names its symbols: a namespace import, a default import,
- * `export *`, and a type-level `import()` are refused, because they would hide which symbols a
- * file uses. A namespace of the engine (`beings`, `mind`, `worldgen`) is checked at each use of its
- * local name: a member access `ns.Member`, or a destructuring `{ Member } = ns`, names one of its
- * listed members; any other use, such as a computed member or the namespace passed on as a value,
- * is refused, since the scan could not tell which member it reaches. A key named like the
- * namespace (`{ beings: … }`) is not a use of it.
+ * `export *`, an `import … = require(…)`, and an `import()` of the engine, dynamic or type-level,
+ * its specifier quoted or a template, are refused, because they would hide which symbols a file
+ * uses. A namespace of the engine (`beings`, `mind`, `worldgen`) is never re-exported, under any
+ * alias or as a type, since the files that import it from a relative path are never read for it;
+ * and it is checked at each use of its local name: a member access `ns.Member`, or a destructuring
+ * `{ Member } = ns`, names one of its listed members; any other use, such as a computed member, a
+ * spread `{ ...ns }`, an `export { ns }`, or the namespace passed on as a value, is refused, since
+ * the scan could not tell which member it reaches. A key named like the namespace
+ * (`{ beings: … }`) is not a use of it.
  *
  * The scan is lexical, like engine-purity.ts: comments and the text of string literals are blanked
  * first, so neither counts as a use. A local binding that shadows an imported namespace is read as
@@ -134,8 +137,17 @@ const ENGINE_CLAUSE = new RegExp(
   "g",
 );
 
-/** A type-level or dynamic `import("@open-origin/engine")`. */
-const ENGINE_CALL = new RegExp(String.raw`${START}import\s*\(\s*["']${ENGINE_PATTERN}["']`, "g");
+/** A type-level or dynamic `import("@open-origin/engine")`, its specifier quoted or a template. */
+const ENGINE_CALL = new RegExp(
+  String.raw`${START}import\s*\(\s*["'\x60]${ENGINE_PATTERN}["'\x60]`,
+  "g",
+);
+
+/** `import name = require("@open-origin/engine")`, which binds the whole entry. */
+const ENGINE_EQUALS = new RegExp(
+  String.raw`${START}import\s+(?:type\s+)?[\w$]+\s*=\s*require\s*\(\s*["']${ENGINE_PATTERN}["']`,
+  "g",
+);
 
 type Finding = { index: number; message: string };
 
@@ -144,6 +156,8 @@ type Imported = { readonly name: string; readonly local: string };
 
 const forbidden = (symbol: string): string =>
   `"${symbol}" is not an engine symbol a brain may use: a brain reads the world only through its senses (ADR 0024)`;
+const reexported = (namespace: string): string =>
+  `re-exporting "${namespace}" hides the uses of its members from the scan: import it where it is used`;
 const hidden = (form: string): string =>
   `${form} hides which engine symbols a brain uses: import them by name`;
 
@@ -179,6 +193,17 @@ type Imports = {
   readonly spans: readonly (readonly [number, number])[];
 };
 
+/**
+ * Why a clause may not name `symbol`: it is not in BRAIN_SYMBOLS, or it is a namespace that an
+ * `export` clause re-exports, which would hide its uses in the files that import it. Undefined
+ * when it may.
+ */
+function symbolProblem(symbol: Imported, exported: boolean): string | undefined {
+  const allowed = BRAIN_SYMBOLS[symbol.name];
+  if (allowed === undefined) return forbidden(symbol.name);
+  return exported && allowed !== ANY ? reexported(symbol.name) : undefined;
+}
+
 /** The engine's clauses of `code`, each symbol checked against BRAIN_SYMBOLS. */
 function readImports(code: string): Imports {
   const findings: Finding[] = [];
@@ -192,14 +217,15 @@ function readImports(code: string): Imports {
       continue;
     }
     for (const symbol of read) {
-      const allowed = BRAIN_SYMBOLS[symbol.name];
-      if (allowed === undefined)
-        findings.push({ index: match.index, message: forbidden(symbol.name) });
-      else if (allowed !== ANY) namespaces.push(symbol);
+      const problem = symbolProblem(symbol, match[1] === "export");
+      if (problem !== undefined) findings.push({ index: match.index, message: problem });
+      else if (BRAIN_SYMBOLS[symbol.name] !== ANY) namespaces.push(symbol);
     }
   }
   for (const match of code.matchAll(ENGINE_CALL))
     findings.push({ index: match.index, message: hidden(`import("${ENGINE}")`) });
+  for (const match of code.matchAll(ENGINE_EQUALS))
+    findings.push({ index: match.index, message: hidden(`import … = require("${ENGINE}")`) });
   return { findings, namespaces, spans };
 }
 
@@ -213,6 +239,12 @@ function withoutSpans(code: string, spans: Imports["spans"]): string {
 
 /** An identifier. */
 const NAME = String.raw`[A-Za-z_$][\w$]*`;
+
+/**
+ * Before a use of a namespace: no part of a name, and no `.` of a property access, though the
+ * `...` of a spread, which passes the whole namespace on, is a use.
+ */
+const USE = String.raw`(?<![\w$])(?<!(?<!\.)\.)`;
 
 /**
  * Each destructuring `{ … } = ns` of the namespace bound to `local`: the index of the namespace's
@@ -258,9 +290,7 @@ function namespaceFindings(code: string, symbol: Imported): Finding[] {
     sources.push(at);
     for (const member of named) check(at, member);
   }
-  for (const match of code.matchAll(
-    new RegExp(String.raw`${START}${symbol.local}(?![\w$])`, "g"),
-  )) {
+  for (const match of code.matchAll(new RegExp(String.raw`${USE}${symbol.local}(?![\w$])`, "g"))) {
     const after = code.slice(match.index + symbol.local.length);
     const member = new RegExp(String.raw`^\s*\??\.\s*(${NAME})`).exec(after);
     if (member !== null) check(match.index, member[1] ?? "");

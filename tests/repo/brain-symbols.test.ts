@@ -20,6 +20,8 @@ const forbidden = (symbol: string) =>
   `"${symbol}" is not an engine symbol a brain may use: a brain reads the world only through its senses (ADR 0024)`;
 const hidden = (form: string) =>
   `${form} hides which engine symbols a brain uses: import them by name`;
+const reexported = (binding: string) =>
+  `re-exporting "${binding}" hides the uses of its members from the scan: import it where it is used`;
 const bare = (binding: string) =>
   `"${binding}" is used other than through a member: name the member, so that the scan can check it`;
 
@@ -98,6 +100,26 @@ describe("checkBrainSymbols", () => {
       content: 'export type T = import("@open-origin/engine").World;\n',
       message: hidden('import("@open-origin/engine")'),
     },
+    {
+      name: "an import-equals of the engine",
+      content: 'import engine = require("@open-origin/engine");\n',
+      message: hidden('import … = require("@open-origin/engine")'),
+    },
+    {
+      name: "a dynamic import() of a template literal",
+      content: "export const load = () => import(`@open-origin/engine`);\n",
+      message: hidden('import("@open-origin/engine")'),
+    },
+    {
+      name: "a re-export of a namespace under an alias",
+      content: 'export { mind as m } from "@open-origin/engine";\n',
+      message: reexported("mind"),
+    },
+    {
+      name: "a type-only re-export of a namespace",
+      content: 'export type { beings } from "@open-origin/engine";\n',
+      message: reexported("beings"),
+    },
   ])("rejects $name", ({ content, message }) => {
     expect(scan(content)).toEqual([{ file: FILE, line: 1, message }]);
   });
@@ -143,9 +165,31 @@ describe("checkBrainSymbols", () => {
       code: "export const pick = (c: boolean) => (c ? worldgen : undefined);",
       message: bare("worldgen"),
     },
+    {
+      name: "the namespace spread into an object",
+      code: "export function f(): unknown {\n  return { ...beings }.senseWindow;\n}",
+      message: bare("beings"),
+    },
+    {
+      name: "the namespace exported by a local clause",
+      code: "export { mind };",
+      message: bare("mind"),
+    },
   ])("rejects $name", ({ code, message }) => {
     const content = `import { beings, mind, worldgen } from "@open-origin/engine";\n${code}\n`;
-    expect(scan(content)).toEqual([{ file: FILE, line: 2, message }]);
+    // The use lies on the code's last line but one, or on its only line.
+    const line = 1 + Math.max(1, code.split("\n").length - 1);
+    expect(scan(content)).toEqual([{ file: FILE, line, message }]);
+  });
+
+  test("rejects re-exporting a namespace, which would hide its uses in the files that import it", () => {
+    // Re-exported, `beings` and `mind` would reach another brain file through a relative path,
+    // whose uses the scan would never see.
+    const content = 'export { beings, floorDiv, mind } from "@open-origin/engine";\n';
+    expect(scan(content)).toEqual([
+      { file: FILE, line: 1, message: reexported("beings") },
+      { file: FILE, line: 1, message: reexported("mind") },
+    ]);
   });
 
   test("checks a namespace by its local alias, and reports every problem in line order", () => {
