@@ -22,14 +22,13 @@ import {
   type Proposition,
   TAINTS,
 } from "../mind/index.ts";
-import { simSeconds } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
 import type { Command, ReadView, Rejection, TickContext } from "../world/contracts.ts";
 import { chunkOfCell, MAX_CELL, MIN_CELL } from "../worldgen/index.ts";
 import type { Being2, Cell } from "./being.ts";
 import { type BeingsChunk, dueOf } from "./chunk.ts";
 import type { BeingsGlobal } from "./env.ts";
-import { dayOf, delivered, hearingWakes } from "./hearing.ts";
+import { dayOfTick, delivered, hearingWakes } from "./hearing.ts";
 import type { LifeConfig2, Species2 } from "./life2.ts";
 import { range, readFields, readInt, readList } from "./schema.ts";
 
@@ -148,10 +147,7 @@ export function applyInject(
     ex: 0,
   };
   const mind = delivered(being.mind, message);
-  const day = dayOf(
-    simSeconds(ctx.tick, ctx.simSecondsPerTick),
-    ctx.readGlobal().genesis.laws.day.length,
-  );
+  const day = dayOfTick(ctx.tick, ctx.simSecondsPerTick, ctx.readGlobal().genesis.laws.day.length);
   const { wakesPerDay } = speciesOf(ctx, being).speech;
   const wakes = hearingWakes(mind, being.activity, { at: ctx.tick, day, wakesPerDay });
   const wake = wakes ? least(being.wake, ctx.tick + 1) : being.wake;

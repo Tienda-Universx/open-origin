@@ -132,7 +132,7 @@ A `beings@2` being adds `mind`, the three traits, and the units of a meal in its
 | `mind.next` | C1 | The next local id, from 1 to 2^31 − 1; local ids only grow and are never reused, each store keeps its records in increasing id, and a mind whose ids run out takes no new record |
 | `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | C1, their taints C3 | Below |
 | `mind.exposure` | C3 | The being's lifetime exposure: a taint mask that never shrinks |
-| `mind.quota` | C1 | `{ day, said, woken }`: acts said and wakes by hearing in that simulated day, counted as the daily prune of T4 counts it, `⌊seconds / day length⌋` |
+| `mind.quota` | C1 | `{ day, said, woken }`: acts said and wakes by hearing in that simulated day, counted as the daily prune of T4 counts it, `⌊seconds / day length⌋`; a wake counts in the day of the delivery that caused it |
 
 An **episode** is `{ id, kind, t, cell?, who?, v?, p?, act?, band?, tn?, ex?, w, r }`: its local id;
 its kind; the tick it happened; the cell, which an `external` episode does not have; the being it
@@ -430,8 +430,8 @@ Delivery, when the act ends at tick t:
 3. **Phase 4:** each message merges into the hearer's final record, found by binary search, in
    order of speaker id, before its chunk's `due` is computed; the hearer's chunk is written; its
    `exposure` grows; and it wakes at t + 1 only if its activity is `idle` and
-   `quota.woken < speech.wakesPerDay`. A hearer that walks, eats, or sleeps keeps the message for
-   its next decision: hearing interrupts no meal and no walk.
+   `quota.woken < speech.wakesPerDay` in the day of t. A hearer that walks, eats, or sleeps keeps
+   the message for its next decision: hearing interrupts no meal and no walk.
 
 The speaker learns nothing about whether it was heard, so a hearer's `condition` never leaks. The
 templates of `speech@1` (`packages/agents`, pure, versioned) render acts for logs and for T6's feed;
@@ -552,11 +552,16 @@ an inbox holding `mind.inbox` messages is `full`, so the injections of one tick 
 apply. The message is `{ t, act: "tell", p, tn, ex: 0 }`, `t` the tick and `tn` the declared taints
 with `human-external`; the being's exposure grows with it at once. The rule of a hearer, which
 speech (T5-6) shares: messages that reach the inbox at tick t wake the being at t + 1 when its
-activity is idle and its quota counts fewer than `speech.wakesPerDay` wakes by hearing in the day,
-an injection adding none; at t + 1 its idle is interrupted, `being.finished` with the reason
-`heard`, and it decides. The check holds at the delivery, for its wake, and at the end of t, for a
-being processed at t that did not decide then. A being that walks, eats, or sleeps keeps the
-message for its next decision.
+activity is idle and its quota counts fewer than `speech.wakesPerDay` wakes by hearing in the day
+of t; at t + 1 its idle is interrupted, `being.finished` with the reason `heard`, and it decides.
+The check holds at the delivery, for its wake, at the end of t, for a being processed at t that
+did not decide then, and at t + 1, where the being is woken; all three judge the day of t, the
+delivery's, even when t + 1 begins another. A wake by hearing counts one in `quota.woken`, in the
+day of t, when a message of a speaker reached the inbox at t; an injection's message wakes the
+being under the same check and counts nothing. Only a wake that interrupts the idle counts: a
+being whose idle ends at t + 1, or whose wake condition holds then, decides anyway, and the
+reason of its `being.finished` names that. A being that walks, eats, or sleeps keeps the message
+for its next decision.
 
 An intention or operation that fails validation is a rejection, the being's experience: `malformed`,
 `mind_malformed`, `unknown_record`, `premise_order`, `depth_exceeded`, `talk_unseen`,

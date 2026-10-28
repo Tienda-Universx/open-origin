@@ -28,7 +28,7 @@ import {
 import { type Body, bodyAt } from "./body.ts";
 import { DIRECTIONS } from "./contracts.ts";
 import type { BeingsEnv } from "./env.ts";
-import { dayOf, type Hearing, hearingWakes } from "./hearing.ts";
+import { dayOfTick, type Hearing, hearingWakes, wokenBy } from "./hearing.ts";
 import { judge, judge2 } from "./judgment.ts";
 import type { Species } from "./laws.ts";
 import type { Species2 } from "./life2.ts";
@@ -363,13 +363,13 @@ function emitMind(env: BeingsEnv, work: Work): void {
 }
 
 /**
- * What decides, at this tick, whether messages that reached the inbox of the being of `work` at the
- * tick `at` wake it (hearing.ts): the day of this tick and its species' `speech.wakesPerDay`.
+ * What decides whether messages that reached the inbox of the being of `work` at the tick `at` wake
+ * it (hearing.ts): the day of that tick, the delivery's, and its species' `speech.wakesPerDay`.
  */
 export function hearingOf(env: BeingsEnv, work: Work, at: number): Hearing {
   // validateGlobal accepted laws of life@2 for a world whose beings hold minds.
   const { speech } = work.species as Species2;
-  return { at, day: dayOf(env.now, env.dayLength), wakesPerDay: speech.wakesPerDay };
+  return { at, day: dayOfTick(at, env.sps, env.dayLength), wakesPerDay: speech.wakesPerDay };
 }
 
 /**
@@ -397,6 +397,8 @@ function carryOn(env: BeingsEnv, work: Work): void {
   if (wakes && !ended) {
     work.claim = undefined;
     finish(env, work, "interrupted", woken ? "wake_condition" : "heard");
+    // Hearing woke the being: the wake counts in the day of the delivery, at the previous tick.
+    if (!woken) work.mind = wokenBy(work.mind as Mind, hearingOf(env, work, env.tick - 1));
   }
   if (wakes) decide(env, work);
   else if (ended) next(env, work);
