@@ -5,6 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { mind } from "../src/index.ts";
+import { admitBelief } from "../src/mind/store.ts";
 import {
   belief,
   contextAt,
@@ -133,6 +134,15 @@ describe("believe", () => {
     expect(after.beliefs[0]?.u).toBe(75_600);
   });
 
+  test("refuses to adopt a proposition already held while citing nothing new", () => {
+    const subject = mindOf({
+      episodes: [own(1)],
+      beliefs: [belief(2, { p: foodAt(5, 5), ev: [1] })],
+    });
+    expect(reasonOf(subject, { believe: [believe([1], foodAt(5, 5))] })).toBe("premise_order");
+    expect(reasonOf(subject, { believe: [believe([], foodAt(5, 5))] })).toBe("premise_order");
+  });
+
   test("adopting a proposition already held revises the belief that holds it", () => {
     const subject = mindOf({
       episodes: [own(1), own(2)],
@@ -243,6 +253,56 @@ describe("a full store of beliefs", () => {
       contextAt(100, laws),
     );
     expect(byAge.mind.beliefs.map((held) => held.id)).toEqual([1, 3]);
+  });
+});
+
+describe("admitBelief", () => {
+  const ctx = contextAt(100, lawsWith({ beliefs: 2 }));
+  const idsOf = (subject: mind.Mind) => subject.beliefs.map((held) => held.id);
+
+  test("evicts the lowest salience, the new belief included", () => {
+    const subject = mindOf({
+      beliefs: [belief(1, { cr: 900, u: 100 }), belief(2, { cr: 700, u: 100 })],
+    });
+    const weakest = admitBelief(subject, belief(3, { cr: 600, u: 100 }), ctx);
+    expect(idsOf(weakest.mind)).toEqual([1, 2]);
+    expect(weakest.displaced).toEqual([{ id: 3, beliefs: [] }]);
+    // Certainty either way: cr 150 weighs 850, more than belief 2's 700.
+    expect(idsOf(admitBelief(subject, belief(3, { cr: 150, u: 100 }), ctx).mind)).toEqual([1, 3]);
+  });
+
+  test("evicts the oldest u, then the lowest id, among equal saliences", () => {
+    // Belief 2 was cited a second earlier, which leaves its salience at 800.
+    const older = mindOf({
+      beliefs: [belief(1, { cr: 800, u: 100 }), belief(2, { cr: 800, u: 99 })],
+    });
+    expect(idsOf(admitBelief(older, belief(3, { cr: 800, u: 100 }), ctx).mind)).toEqual([1, 3]);
+    const even = mindOf({
+      beliefs: [belief(1, { cr: 800, u: 100 }), belief(2, { cr: 200, u: 100 })],
+    });
+    expect(idsOf(admitBelief(even, belief(3, { cr: 800, u: 100 }), ctx).mind)).toEqual([2, 3]);
+  });
+
+  test("takes an evicted belief out of the beliefs that cite it, and reports the link", () => {
+    const subject = mindOf({
+      episodes: [own(1)],
+      beliefs: [
+        belief(2, { cr: 600, u: 100 }),
+        belief(3, { cr: 900, ev: [2, 1], dp: 2, src: 5, lost: 4, u: 100 }),
+      ],
+    });
+    const { mind: after, displaced } = admitBelief(subject, belief(4, { cr: 950, u: 100 }), ctx);
+    expect(idsOf(after)).toEqual([3, 4]);
+    expect(after.beliefs[0]).toMatchObject({ ev: [1], lost: 5 });
+    expect(displaced).toEqual([{ id: 2, beliefs: [3] }]);
+  });
+
+  test("admits without evicting while the store has room", () => {
+    const subject = mindOf({ beliefs: [belief(1)] });
+    expect(admitBelief(subject, belief(2, { cr: 0 }), ctx)).toEqual({
+      mind: { ...subject, beliefs: [belief(1), belief(2, { cr: 0 })] },
+      displaced: [],
+    });
   });
 });
 
