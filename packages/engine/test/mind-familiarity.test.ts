@@ -42,10 +42,10 @@ describe("perceive", () => {
   });
 
   test("credits the seconds since the last perception exactly, not the perceptions", () => {
-    const after = perceivedAt(mindOf(), 42, [0, 10, 25, 600]);
-    expect(after.relations[0]).toMatchObject({ f: 600, seen: 600 });
+    const after = perceivedAt(mindOf(), 42, [1, 11, 26, 601]);
+    expect(after.relations[0]).toMatchObject({ f: 600, seen: 601 });
     // Seconds, not ticks: three seconds per tick triple the credit.
-    const slow = [0, 10, 20].reduce(
+    const slow = [1, 11, 21].reduce(
       (current, tick) =>
         perceive(current, 42, contextAt(tick, undefined, { secondsPerTick: 3 })).mind,
       mindOf(),
@@ -57,33 +57,47 @@ describe("perceive", () => {
     const everyTick = perceivedAt(
       mindOf(),
       42,
-      Array.from({ length: 601 }, (_, tick) => tick),
+      Array.from({ length: 601 }, (_, tick) => tick + 1),
     );
     const everyMinute = perceivedAt(
       mindOf(),
       42,
-      Array.from({ length: 11 }, (_, minute) => minute * 60),
+      Array.from({ length: 11 }, (_, minute) => minute * 60 + 1),
     );
     expect(everyTick.relations).toEqual(everyMinute.relations);
     expect(everyTick.relations[0]?.f).toBe(600);
   });
 
   test("decays over a whole absence longer than the gap, and adds nothing for it", () => {
-    const known = mindOf({ relations: [relationship(1, 42, { f: 4000, seen: 0 })] });
+    const known = mindOf({ relations: [relationship(1, 42, { f: 4000, seen: 1 })] });
     // Exactly the gap is still co-presence; one more second is an absence.
-    expect(perceive(known, 42, contextAt(600)).mind.relations[0]?.f).toBe(4600);
-    const absent = perceive(known, 42, contextAt(601)).mind.relations[0];
-    expect(absent).toMatchObject({ f: 3999, seen: 601 });
+    expect(perceive(known, 42, contextAt(601)).mind.relations[0]?.f).toBe(4600);
+    const absent = perceive(known, 42, contextAt(602)).mind.relations[0];
+    expect(absent).toMatchObject({ f: 3999, seen: 602 });
     // One half-life of absence halves it; retention does not scale that half-life.
-    const half = perceive(known, 42, contextAt(756_000, undefined, { retention: 500 })).mind;
+    const half = perceive(known, 42, contextAt(756_001, undefined, { retention: 500 })).mind;
     expect(half.relations[0]?.f).toBe(2000);
   });
 
   test("saturates at ⌈1000 / rate⌉ seconds", () => {
     const laws = mind.defaultMindLaws();
     expect(familiaritySaturation(laws.relations.rate)).toBe(7200);
-    const near = mindOf({ relations: [relationship(1, 42, { f: 7000, seen: 0 })] });
+    const near = mindOf({ relations: [relationship(1, 42, { f: 7000, seen: 1 })] });
     expect(perceive(near, 42, contextAt(500)).mind.relations[0]?.f).toBe(7200);
+  });
+
+  test("credits nothing at the first perception of a being only heard, whose seen is 0", () => {
+    // A message created the relationship (mind.md, "Relationships"): no perception happened, so
+    // the seconds since then were never co-presence, however few they are.
+    const heard = mindOf({ relations: [relationship(1, 42)] });
+    for (const tick of [1, 10, 600, 601]) {
+      const met = perceive(heard, 42, contextAt(tick));
+      expect(met.mind.relations).toEqual([relationship(1, 42, { f: 0, seen: tick })]);
+      expect(met.created).toBeUndefined();
+    }
+    // From then on, the seconds since that first perception count as any others.
+    const after = perceivedAt(heard, 42, [10, 70]);
+    expect(after.relations[0]).toMatchObject({ f: 60, seen: 70 });
   });
 
   test("keeps the other relationships as they are", () => {
@@ -156,6 +170,64 @@ describe("a full store of relationships", () => {
     });
     const after = perceive(subject, 43, contextAt(1_512_000, laws)).mind;
     expect(after.relations.map((held) => held.id)).toEqual([2, 3]);
+  });
+
+  test("keeps a relationship its being addressed within the talk window, evicting another", () => {
+    // Being 42, the least familiar, was addressed 599 s ago, within a window of 600 s.
+    const subject = mindOf({
+      relations: [
+        relationship(1, 41, { f: 3600, seen: 1000 }),
+        relationship(2, 42, { f: 360, seen: 1000, talk: 401, turns: 3 }),
+      ],
+    });
+    const window = { talkWindow: 600 };
+    const kept = perceive(subject, 43, contextAt(1000, laws, window));
+    expect(kept.mind.relations.map(({ id, who }) => [id, who])).toEqual([
+      [2, 42],
+      [3, 43],
+    ]);
+    expect(kept.displaced).toEqual([{ id: 1, beliefs: [] }]);
+    // Addressed exactly the window ago, it is out of it, and goes first as the least familiar.
+    const out = mindOf({
+      relations: [
+        subject.relations[0] as mind.Relationship,
+        relationship(2, 42, { f: 360, seen: 1000, talk: 400 }),
+      ],
+    });
+    const evicted = perceive(out, 43, contextAt(1000, laws, window));
+    expect(evicted.mind.relations.map(({ id }) => id)).toEqual([1, 3]);
+    // A talk after now, which no world holds, as the gate's mind of tick 99,999,999, keeps nothing.
+    const future = mindOf({
+      relations: [
+        subject.relations[0] as mind.Relationship,
+        relationship(2, 42, { f: 360, seen: 1000, talk: 1001 }),
+      ],
+    });
+    expect(
+      perceive(future, 43, contextAt(1000, laws, window)).mind.relations.map(({ id }) => id),
+    ).toEqual([1, 3]);
+    // A being never addressed, talk 0, is never kept by the window.
+    const silent = perceive(
+      mindOf({ relations: [...out.relations] }),
+      43,
+      contextAt(1000, laws, { talkWindow: 2000 }),
+    );
+    expect(silent.mind.relations.map(({ id }) => id)).toEqual([2, 3]);
+  });
+
+  test("gives a newcomer none when every relationship is within the talk window", () => {
+    const subject = mindOf({
+      relations: [
+        relationship(1, 41, { f: 3600, seen: 1000, talk: 990, turns: 1 }),
+        relationship(2, 42, { f: 360, seen: 1000, talk: 999, turns: 2 }),
+      ],
+    });
+    const met = perceive(subject, 43, contextAt(1000, laws, { talkWindow: 600 }));
+    // Nothing is evicted, no id is taken, and the mind is the same value.
+    expect(met).toEqual({ mind: subject, displaced: [] });
+    expect(met.mind).toBe(subject);
+    // A message of a being it does not know leaves no relationship either.
+    expect(mind.hear(subject, 43, contextAt(1000, laws, { talkWindow: 600 })).mind).toBe(subject);
   });
 
   test("holds no relationship when the law gives no room, nor once ids have run out", () => {

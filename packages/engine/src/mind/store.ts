@@ -4,12 +4,14 @@
  * that cites it loses it: its id leaves `ev` and `lost` grows, while `tn`, `ex`, `src`, and `who`
  * stay; the links are reported for the ledger. A full store of episodes or beliefs evicts the record
  * with the lowest salience, the new one included, then the oldest, then the lowest id. A full store
- * of relationships always admits a being met for the first time, and evicts the other relationship
- * with the lowest familiarity, then the one seen longest ago, then the lowest id.
+ * of relationships admits a being met for the first time, and evicts, among the relationships whose
+ * being it did not address within the talk window, the one with the lowest familiarity, then the
+ * one seen longest ago, then the lowest id; when it addressed every one of them within the window,
+ * it admits none and keeps them all, since they hold the quotas of each pair.
  */
 import { least } from "../int.ts";
 import { INT31_MAX } from "./bounds.ts";
-import type { MindContext } from "./context.ts";
+import { type MindContext, secondsSince } from "./context.ts";
 import { familiarity } from "./familiarity.ts";
 import type { Belief, Episode, LocalId, Mind, Relationship } from "./records.ts";
 import { beliefSalience, episodeSalience } from "./salience.ts";
@@ -110,22 +112,36 @@ export function admitBelief(mind: Mind, belief: Belief, ctx: MindContext): Admit
 }
 
 /**
+ * Whether the being addressed the being of `relationship` within the context's talk window: at a
+ * tick `talk`, from 1 to now, less than that many seconds ago. `talk` 0 is no act, and a `talk`
+ * after now, which no world holds, is no act within the window either.
+ */
+function inTalkWindow(relationship: Relationship, ctx: MindContext): boolean {
+  const { talk } = relationship;
+  if (talk === 0 || talk > ctx.moment.tick) return false;
+  return secondsSince(talk, ctx.moment) < ctx.talkWindow;
+}
+
+/**
  * `mind` with the new relationship `relationship`, whose id it already took, which a store with
- * room for at least one always admits: when the store is full, the other relationship with the
- * lowest familiarity, then seen longest ago, then with the lowest id, leaves it first.
+ * room for at least one admits: when the store is full, the relationship out of the talk window
+ * with the lowest familiarity, then seen longest ago, then with the lowest id, leaves it first.
+ * Undefined when every relationship of a full store is within the window: none leaves, and the new
+ * one is not admitted.
  */
 export function admitRelationship(
   mind: Mind,
   relationship: Relationship,
   ctx: MindContext,
-): Admitted {
+): Admitted | undefined {
   const others = mind.relations;
-  const full = others.length >= ctx.laws.mind.relations;
-  const { mind: room, displaced } = full
-    ? evicted(
-        mind,
-        lowest(others, (record) => [familiarity(record, ctx), record.seen, record.id]),
-      )
-    : { mind, displaced: [] };
+  if (others.length < ctx.laws.mind.relations)
+    return { mind: { ...mind, relations: [...others, relationship] }, displaced: [] };
+  const leavable = others.filter((record) => !inTalkWindow(record, ctx));
+  if (leavable.length === 0) return undefined;
+  const { mind: room, displaced } = evicted(
+    mind,
+    lowest(leavable, (record) => [familiarity(record, ctx), record.seen, record.id]),
+  );
   return { mind: { ...room, relations: [...room.relations, relationship] }, displaced };
 }

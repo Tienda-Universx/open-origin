@@ -115,11 +115,11 @@ describe("familiarity", () => {
   });
 
   /**
-   * Being 1 holds a relationship with being 2 of `f` 3,600 seconds seen at tick 0, idles until
+   * Being 1 holds a relationship with being 2 of `f` 3,600 seconds seen at tick 1, idles until
    * `tick`, and then perceives being 2, under a gap of 600 s and a half-life of 600 s.
    */
   const afterAbsence = (tick: number) => {
-    const held = mindOf({ relations: [relationship(1, 2, { f: 3600, seen: 0 })] });
+    const held = mindOf({ relations: [relationship(1, 2, { f: 3600, seen: 1 })] });
     const first = {
       ...being2(1, A, { mind: held }),
       activity: { kind: "idle" as const, start: 0, ms: tick * 12_000 },
@@ -136,14 +136,34 @@ describe("familiarity", () => {
 
   test("credits an absence of at most relations.gap, exactly", () => {
     // 50 ticks of 12 s: 600 s, the gap itself.
-    expect(afterAbsence(50)).toMatchObject({ f: 3600 + 600, seen: 50 });
+    expect(afterAbsence(51)).toMatchObject({ f: 3600 + 600, seen: 51 });
   });
 
   test("decays over a longer absence and adds nothing: familiarity lost stays lost", () => {
     // 51 ticks: 612 s, one more tick than the gap.
-    expect(afterAbsence(51)).toMatchObject({ f: decayed(3600, 612, 600), seen: 51 });
+    expect(afterAbsence(52)).toMatchObject({ f: decayed(3600, 612, 600), seen: 52 });
     expect(decayed(3600, 612, 600)).toBe(1782);
-    expect(afterAbsence(200)).toMatchObject({ f: decayed(3600, 2400, 600), seen: 200 });
+    expect(afterAbsence(201)).toMatchObject({ f: decayed(3600, 2400, 600), seen: 201 });
+  });
+
+  test("adds nothing at the first perception of a being only heard before: seen 0", () => {
+    // A message left being 1 a relationship with being 2 and no perception (mind.md,
+    // "Relationships"); being 2 stands in sight when being 1 next decides, at tick 5.
+    const held = mindOf({ relations: [relationship(1, 2)] });
+    const first = {
+      ...being2(1, A, { mind: held }),
+      activity: { kind: "idle" as const, start: 0, ms: 5 * 12_000 },
+      wake: 5,
+    };
+    const world = beings2World({
+      controllers: { s1: brain2((s) => (s.self.id === 1 ? idling(1) : idling(LONG))) },
+      chunks: chunksOf([first, being2(2, B)]),
+    });
+    runTo(world, 5);
+    expect(relationsOf(world, 1)).toEqual([relationship(1, 2, { f: 0, seen: 5 })]);
+    // The next perception counts the seconds since that one: one tick, 12 s.
+    runTo(world, 6);
+    expect(relationsOf(world, 1)).toEqual([relationship(1, 2, { f: 12, seen: 6 })]);
   });
 });
 
@@ -182,7 +202,10 @@ describe("a relationship", () => {
 
   test("of a newcomer always enters a full store, which evicts the least familiar", () => {
     const held = mindOf({
-      relations: [relationship(1, 40, { f: 100 }), relationship(2, 41, { f: 50 })],
+      relations: [
+        relationship(1, 40, { f: 100, seen: 1 }),
+        relationship(2, 41, { f: 50, seen: 1 }),
+      ],
       beliefs: [belief(3, { ev: [2] })],
     });
     const world = beings2World({
@@ -213,10 +236,9 @@ describe("a relationship", () => {
 });
 
 /**
- * The speaker of a message in the inbox. Until speech (T5-6) delivers one, only a mind the host
- * placed holds such a message: a tell from being 41, which being 1 neither perceives nor knows,
- * tainted human-external and implementation-leak. The tick a relationship created from a message
- * records as `seen` is left to T5-6, which decides what it means without a perception.
+ * The speaker of a message in the inbox: a tell from being 41, which being 1 neither perceives nor
+ * knows, tainted human-external and implementation-leak, in a mind the host placed. A relationship
+ * created from a message records that no perception happened: `seen` 0 and `f` 0.
  */
 describe("the speaker of a message in the inbox", () => {
   const message: mind.InboxMessage = {
@@ -234,10 +256,29 @@ describe("the speaker of a message in the inbox", () => {
   test("gets a relationship at step 1, with only its creation in the ledger", () => {
     const { being, events } = relateOnce({}, { held });
     expect(being.mind.inbox).toEqual([]);
-    expect(being.mind.relations).toHaveLength(1);
-    expect(being.mind.relations[0]).toMatchObject({ id: 1, who: 41, f: 0, aff: 0, tr: 500, tn: 0 });
+    // No perception happened: seen is 0, which no tick a world computes can be.
+    expect(being.mind.relations).toEqual([relationship(1, 41, { f: 0, seen: 0 })]);
     const changed = eventsAt(events, 1).find(([type]) => type === "mind.changed");
     expect(changed?.[1]).toMatchObject({ related: [1] });
+  });
+
+  test("of a known speaker changes nothing: hearing is no co-presence, so step 1 only creates", () => {
+    // Being 1 last perceived being 41 at tick 1, and hears it at its decision at tick 5, 48 s on.
+    const known = relationship(1, 41, { f: 100, seen: 1, aff: 20, tr: 700 });
+    const hearer = {
+      ...being2(1, A, { mind: { ...held, next: 2, relations: [known] } }),
+      activity: { kind: "idle" as const, start: 0, ms: 5 * 12_000 },
+      wake: 5,
+    };
+    const world = beings2World({
+      controllers: { s1: brain2(() => idling(LONG)) },
+      chunks: chunksOf([hearer]),
+    });
+    const events = runTo(world, 5);
+    expect(relationsOf(world, 1)).toEqual([known]);
+    expect(beingOf(world, 1) as beings.Being2).toMatchObject({ mind: { inbox: [] } });
+    const changed = eventsAt(events, 5).find(([type]) => type === "mind.changed");
+    expect(changed?.[1]).toMatchObject({ related: [] });
   });
 
   test("leaves the message's taints on the heard episode a remember makes of it", () => {

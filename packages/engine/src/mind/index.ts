@@ -56,6 +56,7 @@ export {
   type LocalId,
   type Mind,
   type MindRecord,
+  NEVER_SEEN,
   newMind,
   type OwnEpisode,
   type Quota,
@@ -70,7 +71,7 @@ export {
   type Related,
   type RelateOperation,
 } from "./relate.ts";
-export { type Perceived, perceive, relationshipWith } from "./relations.ts";
+export { hear, type Perceived, perceive, relationshipWith } from "./relations.ts";
 export {
   beliefSalience,
   decay,

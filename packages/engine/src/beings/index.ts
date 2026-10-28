@@ -11,6 +11,7 @@ export {
   type Being,
   type Being2,
   beingIssues,
+  type Captured,
   type Cell,
   type Cooldown,
   type CooldownRequest,
@@ -18,6 +19,7 @@ export {
   type Outcome,
   type PlanStep,
   RESULTS,
+  type TalkStep,
   type Traits,
   type Traits2,
   type WakeConditions,
@@ -54,6 +56,7 @@ export {
   acceptIntention,
   type IntentionContext,
   type Refused,
+  type Talking,
 } from "./intention.ts";
 export {
   checkLife,
@@ -102,6 +105,7 @@ export {
   BEINGS2_RULESET_VERSION,
   type BeingsVersion,
   CROWD_STREAM,
+  SPEECH_STREAM,
 } from "./rules.ts";
 export {
   type Beings2RulesetOptions,

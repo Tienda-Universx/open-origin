@@ -29,6 +29,24 @@ export const CHUNK_BOUNDS = Object.freeze({
   taken: range(1, 0x10_0000),
 });
 
+/**
+ * The index of the being `id` among `beings`, which a chunk keeps in increasing id, found by binary
+ * search; undefined when they hold none.
+ */
+export function indexOfBeing(
+  beings: readonly { readonly id: number }[],
+  id: number,
+): number | undefined {
+  let low = 0;
+  let high = beings.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((beings[middle]?.id ?? id) < id) low = middle + 1;
+    else high = middle;
+  }
+  return beings[low]?.id === id ? low : undefined;
+}
+
 /** The earliest wake of `beings`, or MAX_TICK when there is none. */
 export function dueOf(beings: readonly { readonly wake: number }[]): number {
   let due = MAX_TICK;

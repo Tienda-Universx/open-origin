@@ -2,15 +2,16 @@
  * The beings system (ADR 0023): one run per tick, in three phases. It collects the beings due at
  * the tick from the chunks of the occupancy index, advances each in order of id (decisions
  * included), resolves the contests over food, and, under beings@2, the contest for room (ADR 0024),
- * whose losers keep nothing of their decision, nor its events, and writes what changed. Its work
- * grows with occupied chunks, beings due, decisions, and changed bytes, never with the size of the
- * world.
+ * whose losers keep nothing of their decision, nor its events, then the deliveries of speech, and
+ * writes what changed. Its work grows with occupied chunks, beings due, decisions, utterances, and
+ * changed bytes, never with the size of the world.
  */
 import type { CanonicalValue } from "../canonical/value.ts";
 import type { TickContext } from "../world/contracts.ts";
 import { advance, type Work } from "./advance.ts";
 import type { Controllers } from "./capture.ts";
 import type { BeingsChunk } from "./chunk.ts";
+import { deliver } from "./delivery.ts";
 import { type BeingsEnv, type BeingsGlobal, envOf } from "./env.ts";
 import { applyWorks, collectDue, hasId, resolveClaims } from "./resolve.ts";
 import { isForcedSleep, resolveRoom } from "./room.ts";
@@ -73,7 +74,8 @@ function holding(env: BeingsEnv, sink: Held[]): BeingsEnv {
  * its walk are dropped, and the crowded end of its walk, which the contest emits, stands for them;
  * the events of its body stay, the start of a forced sleep among them. Then the tick emits the
  * second phase's events by being id, in their order, then the third phase's: contests over food by
- * place, and for room by chunk.
+ * place, and for room by chunk; then the deliveries resolve and emit theirs, by hearer and speaker,
+ * and the last phase writes the records, a hearer's with what it heard.
  */
 function runBeings2(env: BeingsEnv): void {
   const held: Held[][] = [];
@@ -91,5 +93,5 @@ function runBeings2(env: BeingsEnv): void {
       if (!lost || kept(work, event)) env.emit(event.type, event.payload);
   });
   for (const { type, payload } of third) env.emit(type, payload);
-  applyWorks(env, works, takes);
+  applyWorks(env, works, takes, deliver(env, works));
 }

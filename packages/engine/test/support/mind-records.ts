@@ -102,12 +102,19 @@ export function lawsWith(change: Partial<mind.MindLaws["mind"]> = {}): mind.Mind
   return { ...laws, mind: { ...laws.mind, ...change } };
 }
 
-/** A context at `tick`, one second per tick, neutral retention, and `laws`. */
+/**
+ * A context at `tick`, one second per tick, neutral retention, and `laws`; a full store keeps no
+ * relationship for a talk unless `talkWindow` says for how many seconds after it.
+ */
 export function contextAt(
   tick: number,
   laws: mind.MindLaws = mind.defaultMindLaws(),
-  options: { readonly secondsPerTick?: number; readonly retention?: number } = {},
+  options: {
+    readonly secondsPerTick?: number;
+    readonly retention?: number;
+    readonly talkWindow?: number;
+  } = {},
 ): mind.MindContext {
-  const { secondsPerTick = 1, retention = 1000 } = options;
-  return { moment: { tick, secondsPerTick }, laws, retention };
+  const { secondsPerTick = 1, retention = 1000, talkWindow = 0 } = options;
+  return { moment: { tick, secondsPerTick }, laws, retention, talkWindow };
 }

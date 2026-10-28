@@ -10,6 +10,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import {
   ACTIVITY_MEMBERS,
   BEHAVIOR_MEMBERS,
+  CAPTURED_MEMBERS,
   COOLDOWN_MEMBERS,
   NEEDS_MEMBERS,
   OUTCOME_MEMBERS,
@@ -132,6 +133,21 @@ const FULL_BEINGS: beings.Being2[] = [
     plan: [{ kind: "walk", dirs: "1" }],
   },
   { ...being2(4, [0, 0], { mind: gateMind() }) },
+  {
+    ...being2(5, [0, 0]),
+    activity: {
+      kind: "talk",
+      start: 1,
+      to: 4,
+      act: "tell",
+      captured: {
+        p: { p: "t1.food", a: [{ c: [1, 2] }, { e: 3 }], v: 2, neg: true },
+        band: 1,
+        tn: 2,
+        ex: 5,
+      },
+    },
+  },
 ];
 
 describe("the classification registry", () => {
@@ -167,12 +183,44 @@ describe("the classification registry", () => {
     ]);
   });
 
+  test("classifies a talk's hearer and act as C0, and what it captured to say as C3, all of it", () => {
+    // A talk shows its hearer and its act, which an observer sees said (mind.md, "Classification").
+    const activity = memberOf(BEING_CLASSES, "activity") as ClassNode;
+    const talk = (activity.kinds ?? []).find(({ kind }) => kind === "talk")?.node as ClassNode;
+    expect(["to", "act"].map((name) => memberOf(talk, name)?.class)).toEqual(["C0", "C0"]);
+    const talking = FULL_BEINGS[4];
+    const paths = secretPaths(BEING_CLASSES, talking).filter((path) =>
+      path.startsWith("/activity"),
+    );
+    expect(paths.sort()).toEqual([
+      "/activity/captured",
+      "/activity/captured/band",
+      "/activity/captured/ex",
+      "/activity/captured/p",
+      "/activity/captured/p/a",
+      "/activity/captured/p/a/0",
+      "/activity/captured/p/a/0/c",
+      "/activity/captured/p/a/1",
+      "/activity/captured/p/a/1/e",
+      "/activity/captured/p/neg",
+      "/activity/captured/p/p",
+      "/activity/captured/p/v",
+      "/activity/captured/tn",
+    ]);
+  });
+
   test("classifies as C0 the identity, cell, and kind of activity that others perceive", () => {
     for (const name of ["id", "species", "stage", "born", "cell"])
       expect(memberOf(BEING_CLASSES, name)?.class).toBe("C0");
     const activity = memberOf(BEING_CLASSES, "activity");
     for (const kind of activity?.kinds ?? []) expect(memberOf(kind.node, "kind")?.class).toBe("C0");
-    expect(activity?.kinds?.map(({ kind }) => kind)).toEqual(["eat", "idle", "sleep", "walk"]);
+    expect(activity?.kinds?.map(({ kind }) => kind)).toEqual([
+      "eat",
+      "idle",
+      "sleep",
+      "talk",
+      "walk",
+    ]);
   });
 
   test("marks as sensed exactly the members of the senses of T4, none of them C3", () => {
@@ -213,6 +261,9 @@ describe("the classification registry", () => {
       outcome: { result: "none", tick: 0, reason: "" },
     });
     expect(copy.cell).not.toBe(self.cell);
+    // A talk under way: the senses copy its hearer and act, never what it captured.
+    const talking = { ...self, activity: (FULL_BEINGS[4] as beings.Being2).activity };
+    expect(copySensed(talking).activity).toEqual({ kind: "talk", start: 1, to: 4, act: "tell" });
   });
 
   test("lets a brain hear of a message its sensed members, as a copy that shares nothing with it", () => {
@@ -286,6 +337,12 @@ describe("the classification registry", () => {
     expectIn(node("traits"), BEINGS2_RULES.traitMembers, "/traits");
     for (const [kind, names] of Object.entries(ACTIVITY_MEMBERS))
       expectIn(kindOf(node("activity"), kind), names, `/activity(${kind})`);
+    const talk = kindOf(node("activity"), "talk");
+    expectIn(
+      talk === undefined ? undefined : memberOf(talk, "captured"),
+      [...CAPTURED_MEMBERS.required, ...CAPTURED_MEMBERS.optional],
+      "/activity(talk)/captured",
+    );
     for (const [kind, names] of Object.entries(STEP_MEMBERS))
       expectIn(kindOf(node("plan").each as ClassNode, kind), names, `/plan(${kind})`);
     expectIn(
@@ -312,7 +369,7 @@ describe("the classification registry", () => {
     expectIn(memberOf(held, "quota"), all(MIND_SHAPES.quota), "/mind/quota");
     expect(missing).toEqual([]);
     // Not vacuous: every kind of activity, step, and episode was cross-checked.
-    expect(Object.keys(ACTIVITY_MEMBERS).sort()).toEqual(["eat", "idle", "sleep", "walk"]);
+    expect(Object.keys(ACTIVITY_MEMBERS).sort()).toEqual(["eat", "idle", "sleep", "talk", "walk"]);
     expect(Object.keys(MIND_SHAPES.episodes).length).toBe(6);
   });
 
@@ -321,6 +378,7 @@ describe("the classification registry", () => {
       moment: { tick: 9, secondsPerTick: 12 },
       laws: mind.defaultMindLaws(),
       retention: 1000,
+      talkWindow: 18_900,
     });
     const node = memberOf(BEING_CLASSES, "mind") as ClassNode;
     // The view's transforms keep the registry's names: ticks become ages, familiarity is shown as

@@ -80,7 +80,8 @@ the tick:
 - **Its mind.** A view of its episodes, beliefs, and relationships, with ages in simulated seconds
   (saturating at 2^31 − 1) instead of ticks, familiarity as it stands at that moment, from 0 to
   1000, and `next`, so that a brain can cite a record it creates in the same decision. A
-  relationship's `talk` is left out of the view until the being first addresses that being. A
+  relationship's `seen` is left out of the view until the being first perceives that being, and
+  its `talk` until the being first addresses it. A
   research injection appears in it as a message whose speaker is not visible: the kind `external`
   and the evidence bit 8 are C3, and the view shows them as `heard` and as told. That a message came
   with no visible speaker is the one thing the being can tell, a declared limit.
@@ -131,7 +132,7 @@ A `beings@2` being adds `mind`, the three traits, and the units of a meal in its
 | `mind.next` | C1 | The next local id, from 1 to 2^31 − 1; local ids only grow and are never reused, each store keeps its records in increasing id, and a mind whose ids run out takes no new record |
 | `mind.episodes`, `.beliefs`, `.relations`, `.inbox` | C1, their taints C3 | Below |
 | `mind.exposure` | C3 | The being's lifetime exposure: a taint mask that never shrinks |
-| `mind.quota` | C1 | `{ day, said, woken }`: acts said and wakes by hearing in that simulated day, counted as the daily prune of T4 counts it, `⌊seconds / day length⌋` |
+| `mind.quota` | C1 | `{ day, said, woken }`: acts said and wakes by hearing in that simulated day, counted as the daily prune of T4 counts it, `⌊seconds / day length⌋`; a wake counts in the day of the delivery that caused it |
 
 An **episode** is `{ id, kind, t, cell?, who?, v?, p?, act?, band?, tn?, ex?, w, r }`: its local id;
 its kind; the tick it happened; the cell, which an `external` episode does not have; the being it
@@ -160,7 +161,8 @@ how many cited records it has lost, up to 2^31 − 1; its taints `tn` and `ex`; 
 
 A **relationship** is `{ id, who, f, seen, aff, tr, tn, talk, turns }`: its local id; the other
 being; `f`, its familiarity as seconds of co-presence, decayed by absences, as of the tick `seen` it
-was last perceived, saturating where it gives 1000; affinity from −1000 to 1000, starting at 0;
+was last perceived, saturating where it gives 1000; `seen` is 0, and `f` with it, while the being
+was only heard, never perceived; affinity from −1000 to 1000, starting at 0;
 trust in its claims from 0 to 1000, starting at 500; its taints; the tick the being last addressed
 it, 0 before it ever did, which no act can be, since the first tick a world computes is 1; and the
 acts addressed to it in the current conversation. A mind holds one relationship per being.
@@ -209,8 +211,13 @@ seconds, with `w = f`, the anchor `seen`, and `relations.halfLife`, which retent
   salience; they are displaced when their store is full.
 - A full store of episodes or beliefs evicts the record with the lowest salience, the new one
   included, then the oldest (an episode by `t`, a belief by `u`), then the lowest id. A full store
-  of relationships always admits a being met for the first time and evicts the other relationship
-  with the lowest familiarity, then the one seen longest ago, then the lowest id.
+  of relationships admits a being met for the first time and evicts the other relationship with
+  the lowest familiarity, then the one seen longest ago, then the lowest id, among those whose being
+  the mind has not addressed in the last `max(speech.gap + 1, speech.cooldown)` seconds: it never
+  evicts a relationship whose `talk` is a tick from 1 to now, less than that long ago, which holds
+  the quotas of a conversation that a pause of at most `gap` continues, or of its cooldown; a `talk` of 0, or after now, which no world holds,
+  keeps nothing. When every relationship it holds is within that window, the newcomer gets none,
+  and nothing is evicted.
 - A recall, or citing the episode as evidence, sets `w` to `min(1000, s + recall)` and `r` to now.
   At most `pins` episodes have `w ≥ pinLevel`: beyond that, a new importance is capped at
   `pinLevel − 1`.
@@ -284,7 +291,10 @@ At a decision, in this order:
 1. the engine forgets what has faded by now, and updates familiarity, creating a relationship for
    each perceived being and each speaker heard that has none (affinity 0, trust 500): first the
    perceived beings in the order attention keeps them, then the speakers of the inbox by increasing
-   id, each evicting by the rule above when the store is full;
+   id, each evicting by the rule above when the store is full, or getting none when that rule
+   keeps every relationship the store holds. Hearing is no co-presence: a
+   speaker's relationship records that no perception happened, `seen` 0, and hearing a speaker
+   the mind already knows changes nothing;
 2. the brain decides on the view of that mind;
 3. the operations apply in this order of kinds: `remember`, `recall`, `believe`, `revise`, `drop`,
    `relate`, each kind in the order given. New records take the ids `next`, `next + 1`, and so on in
@@ -371,12 +381,18 @@ namespace `none`, which defines no concept.
 Familiarity is a law. At each perception of `who`, if the seconds since `seen` are at most
 `relations.gap`, they are added to `f`, exactly, with no rounding; after a longer absence `f`
 decays over the whole absence and nothing is added; then `seen` becomes now. The first perception
-adds nothing. So a brain that decides every tick earns no more than one that decides every minute
-while the other stays in view, and familiarity lost to an absence stays lost. A relationship exists
-only after a percept or a message of that being. Affinity and trust change only by `relate`, by at most
-`relations.delta`, and the relationship takes the `tn` of what it cites. Knowing someone is
-familiarity; trusting its claims is a judgment the brain makes by checking its testimony against
-what it later sees.
+adds nothing, the first after a message included: a relationship a message created holds `seen` 0,
+and its first perception only sets `seen`, since the time since the message was never co-presence.
+A chunk is invalid if a relationship with `seen` 0 holds an `f` other than 0. A full store ranks
+such a relationship as seen longest ago. So a brain that decides every tick earns no more than one
+that decides every minute while the other stays in view, and familiarity lost to an absence stays
+lost. A relationship exists only after a percept or a message of that being. It also holds the
+quotas of speech to that being, `talk` and `turns`, so a full store never evicts one the mind
+addressed within `max(speech.gap + 1, speech.cooldown)` seconds ("Time, salience, and forgetting"):
+evicting it and meeting the being again would reset a conversation or its cooldown. Affinity and
+trust change only by `relate`, by at most `relations.delta`, and the relationship takes the `tn`
+of what it cites. Knowing someone is familiarity; trusting its claims is a judgment the brain makes
+by checking its testimony against what it later sees.
 
 How the engine applies them (T5-5b): `relate`'s `aff` and `tr` are signed changes, absent meaning
 0, and each result saturates at its bounds, −1000 to 1000 and 0 to 1000. The relationship's `tn`
@@ -406,9 +422,50 @@ captured content lives in the activity as a C3 member the senses never copy. The
 conversation, which ends after a pause longer than `speech.gap`; after a full one, the pair keeps
 `speech.cooldown` before the being addresses that hearer again. A failed quota or condition is the
 rejection `talk_unseen` (the hearer was not perceived in this decision), `talk_out_of_range`,
-`talk_unheld` (no such belief), `talk_quota`, or `ask_concept` (a concept the species does not
-perceive). Hearing does not interrupt a being that is talking: its inbox waits for the decision at
-the end of the act, which every act reaches.
+`talk_asleep` (the hearer sleeps), `talk_unheld` (no such belief), `talk_quota`, or `ask_concept`
+(a concept the species does not perceive). Hearing does not interrupt a being that is talking: its
+inbox waits for the decision at the end of the act, which every act reaches.
+
+How the engine applies it (T5-6):
+
+- **The step.** A talk is the only step of its intention: one with any other step is `malformed`,
+  so its conditions are judged where the act starts, and its content is captured when it starts.
+  `to` is an entity id; `act` one of `greet`, `ask`, `tell`, and `unknown`; and `about` the local id
+  of the belief a tell tells, the concept id an ask names, and absent for the other two acts; any
+  other shape is `malformed`. The concept a species perceives is `obs.deposit.<k>`, the observable
+  of the deposit its diet eats. An ask carries no content: its concept is the one its species
+  perceives, so its message holds none, and a hearer hears the act.
+- **The judgment.** It comes after the mental operations, against the mind they leave and the
+  beings perceived in the decision, so a brain may tell a belief it forms in the same decision, by
+  the id it predicts from `next`, and the captured `ex` holds the exposure those operations grew.
+  The checks run in this order, and the first that fails is the reason, which rejects the whole
+  intention, its operations included: `talk_unseen`; `talk_out_of_range`, by Chebyshev distance;
+  `talk_asleep`, when the hearer's perceived activity is `sleep`; `talk_unheld`, for a tell of a
+  record that is not a belief the mind holds, or `ask_concept`; and `talk_quota`.
+- **The quotas.** An accepted act counts at once: one more in `quota.said`, in the day of the
+  decision, and, in the relationship with the hearer, `talk` set to the tick of the decision and
+  `turns` to the act's place in its conversation: 1 when the being never addressed that being or
+  paused longer than `speech.gap`, or when `speech.cooldown` has passed, at least, since a full
+  conversation; `turns + 1` otherwise; and while a full conversation cools down, the act is
+  `talk_quota`. So is an act beyond `speech.perDay`, and one to a being the mind holds no
+  relationship with after step 1: ids ran out, a full store kept no room for it because the mind
+  addressed every being it holds within the window of the store's rule, or a later perception or
+  speaker of the same step 1 evicted it. An act counts whether or not it is later cut short or
+  heard.
+- **The activity.** `{ kind: "talk", start, to, act, captured }`, where `captured` is
+  `{ p?, band?, tn, ex }`, a tell's content and taints, and `{ tn: 0, ex: 0 }` for the other acts.
+  `talk` comes last in the list of kinds of activity of `beings@2`, after those of T4, whose index
+  a `being` episode holds. A plan never holds a talk. A chunk is invalid if a talk captured content
+  its act cannot carry: a tell without a proposition and a band, or another act with any content
+  or taint; if a plan follows a talk, which is the only step of its intention; or if a talk is
+  addressed to the being itself.
+- **The end.** The act ends at `start + ⌈actMs / (seconds per tick · 1,000)⌉`; at that tick the
+  being says what it captured, `speech.uttered`, and decides. Physiology comes first at every tick,
+  so forced sleep, incapacity, or death at that tick, or before it, cut the talk short:
+  `being.finished` with the result `interrupted` and the reason `exhausted` or `incapacitated`, or
+  only `being.died`. Becoming incapacitated cuts a talk as it cuts a walk; an incapacitated being
+  may still start one, since incapacity, as in T4, stops only locomotion. No wake condition
+  interrupts a talk.
 
 Delivery, when the act ends at tick t:
 
@@ -423,13 +480,43 @@ Delivery, when the act ends at tick t:
 3. **Phase 4:** each message merges into the hearer's final record, found by binary search, in
    order of speaker id, before its chunk's `due` is computed; the hearer's chunk is written; its
    `exposure` grows; and it wakes at t + 1 only if its activity is `idle` and
-   `quota.woken < speech.wakesPerDay`. A hearer that walks, eats, or sleeps keeps the message for
-   its next decision: hearing interrupts no meal and no walk.
+   `quota.woken < speech.wakesPerDay` in the day of t. A hearer that walks, eats, or sleeps keeps
+   the message for its next decision: hearing interrupts no meal and no walk.
+
+How the engine delivers it (T5-6):
+
+- **Phase 2.** The hearer is found by binary search among the beings of each chunk the window of
+  the speaker's decision at the end of its act read. It is not heard, with the first reason that
+  holds: `gone` when none of those chunks holds it, because it died before t or left them; `range`
+  beyond `speech.range`, by Chebyshev distance from the speaker's cell; `asleep`; `condition`.
+- **Phase 3.** A hearer that died at t is `gone` for the acts that reached it in phase 2. Its room
+  is its species' `mind.inbox` less the messages its mind holds at the end of t: a hearer that
+  decided at t consumed its inbox, and a loser of the contest for room holds the mind it started
+  the tick with. When no room is left, every message is `full`, without a draw.
+- **The message** is `{ who, t, cell, act, p?, band?, tn, ex }`: the speaker, the tick of the
+  delivery, the speaker's cell, and what its talk captured. A greet, an ask, and an unknown carry
+  no content and no taint.
+- **Phase 4.** A hearer processed at t takes its messages in its final record, whose wake follows
+  the rule of a hearer; the record of a hearer the tick did not process is written anew in its
+  chunk, with its messages and, when the rule wakes it, a wake at t + 1 at the latest. Its chunk is
+  among those the tick writes, and its `due` follows.
+- **Events.** After those of phase 3, for each hearer by increasing id and each of its speakers by
+  increasing id: `speech.delivered`, followed by `mind.provenance` `{ id, records: [], exposure }`
+  of the hearer when that message grew its exposure; or `speech.unheard` with its reason.
 
 The speaker learns nothing about whether it was heard, so a hearer's `condition` never leaks. The
 templates of `speech@1` (`packages/agents`, pure, versioned) render acts for logs and for T6's feed;
 a test checks that no template seeds a target topic (plan §K.4), which restricts what we inject, not
-what inhabitants think.
+what inhabitants think. `renderAct` writes an act as `speech.uttered` reports it, in English: the
+speaker and the hearer, as "being" and their id unless the caller names them; a greet, an ask for
+food, an "I do not know", or a tell with its confidence (sure, fairly sure, unsure, by band) and its
+claim. The claim is the food of a cell, or near it, only for a proposition of the shape the table
+of `prop@1` gives those concepts: one cell as its term, no negation, and a band from 0 to 2 as the
+value of `m1.food-at` and no value for `m1.food-near`; any other proposition is written as its
+concept id, its terms, and its value, negated when it is a negation. The audit renders every act,
+band, negation, and kind of term and
+finds no consciousness, creator, simulation, or external reality, nor AI, game, player, or server;
+an inhabitant's own concept, whatever it names, is written as it is.
 
 ## The tick of `beings@2`
 
@@ -505,8 +592,8 @@ runs of the survival child, which already runs them. Every T4 test runs unchange
 
 | Event | Class | Payload |
 |---|---|---|
-| `speech.uttered` | C0 | `{ id, to, act, p?, band?, cell }`, when an act ends without being cut short |
-| `speech.delivered` | C1, the hearer's | `{ id, to }` |
+| `speech.uttered` | C0 | `{ id, to, act, p?, band?, cell }`, when an act ends without being cut short: the speaker, the hearer, the act, a tell's proposition and band, and the speaker's cell |
+| `speech.delivered` | C1, the hearer's | `{ id, to }`: the speaker and the hearer |
 | `speech.unheard` | C3, because its reason tells the hearer's condition | `{ id, to, reason }`: `range`, `asleep`, `gone`, `full`, or `condition` |
 | `mind.changed` | C1 | `{ id, encoded, formed, revised, dropped, forgot, related }`: ids, with each formed belief's rule and each forgotten record's citing beliefs |
 | `mind.provenance` | C3 | `{ id, records, exposure }`: the `tn`, `ex`, and evidence of each record created, revised, or tainted downstream, and the being's exposure |
@@ -545,25 +632,30 @@ an inbox holding `mind.inbox` messages is `full`, so the injections of one tick 
 apply. The message is `{ t, act: "tell", p, tn, ex: 0 }`, `t` the tick and `tn` the declared taints
 with `human-external`; the being's exposure grows with it at once. The rule of a hearer, which
 speech (T5-6) shares: messages that reach the inbox at tick t wake the being at t + 1 when its
-activity is idle and its quota counts fewer than `speech.wakesPerDay` wakes by hearing in the day,
-an injection adding none; at t + 1 its idle is interrupted, `being.finished` with the reason
-`heard`, and it decides. The check holds at the delivery, for its wake, and at the end of t, for a
-being processed at t that did not decide then. A being that walks, eats, or sleeps keeps the
-message for its next decision.
+activity is idle and its quota counts fewer than `speech.wakesPerDay` wakes by hearing in the day
+of t; at t + 1 its idle is interrupted, `being.finished` with the reason `heard`, and it decides.
+The check holds at the delivery, for its wake, at the end of t, for a being processed at t that
+did not decide then, and at t + 1, where the being is woken; all three judge the day of t, the
+delivery's, even when t + 1 begins another. A wake by hearing counts one in `quota.woken`, in the
+day of t, when a message of a speaker reached the inbox at t; an injection's message wakes the
+being under the same check and counts nothing. Only a wake that interrupts the idle counts: a
+being whose idle ends at t + 1, or whose wake condition holds then, decides anyway, and the
+reason of its `being.finished` names that. A being that walks, eats, or sleeps keeps the message
+for its next decision.
 
 An intention or operation that fails validation is a rejection, the being's experience: `malformed`,
 `mind_malformed`, `unknown_record`, `premise_order`, `depth_exceeded`, `talk_unseen`,
-`talk_out_of_range`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies brain output with
-`copyCanonicalReported`, which refuses accessors and reads a Proxy only through its own data
-properties, refusing one that throws; it reads every length once and bounds it before iterating,
-refusing one that misreports a length, and requires exact members, NFC strings, and the grammars
-above.
+`talk_out_of_range`, `talk_asleep`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies
+brain output with `copyCanonicalReported`, which refuses accessors and reads a Proxy only through
+its own data properties, refusing one that throws; it reads every length once and bounds it before
+iterating, refusing one that misreports a length, and requires exact members, NFC strings, and the
+grammars above.
 
 ## Classification
 
 | Class | What T5 adds |
 |---|---|
-| C0 | The `talk` activity and its hearer; `speech.uttered` |
+| C0 | The `talk` activity, its hearer, and its act; `speech.uttered` |
 | C1 | Episodes, beliefs, and relationships without their taints; the inbox; the three traits; `mind.quota`; `mind.changed`, `speech.delivered` |
 | C3 | `tn`, `ex`, `exposure`; the episode kind `external` and the evidence bit 8; the captured content of a talk in progress; `speech.unheard`, `mind.provenance`, `mind.injected`, `mind.inject`; the laws of `life@2`; reference truth |
 

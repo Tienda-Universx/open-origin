@@ -104,7 +104,7 @@ export type Relationship = {
   readonly who: number;
   /** Familiarity, as seconds of co-presence as of `seen`, decayed by absences. */
   readonly f: number;
-  /** The tick `who` was last perceived. */
+  /** The tick `who` was last perceived; NEVER_SEEN when it was only heard. */
   readonly seen: number;
   readonly aff: number;
   readonly tr: number;
@@ -114,6 +114,12 @@ export type Relationship = {
   /** The acts addressed to `who` in the current conversation. */
   readonly turns: number;
 };
+
+/**
+ * The `seen` of a relationship whose being was heard and never perceived: tick 0, which no
+ * perception can be, since the first tick a world computes is 1. Its `f` is 0.
+ */
+export const NEVER_SEEN = 0;
 
 /** A message waiting for the being's next decision; an injection's has no `who` and no `cell`. */
 export type InboxMessage = {

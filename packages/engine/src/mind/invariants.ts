@@ -3,7 +3,8 @@
  * without seeing the laws: every value within MIND_BOUNDS; every record's id below `next`, unique
  * across the three stores, each store in increasing id; one relationship per being; every citation
  * live, at most three and each once, and a belief citing only beliefs of a lower id; each belief's
- * depth one more than that of the deepest belief it cites; and each belief's taints containing
+ * depth one more than that of the deepest belief it cites; no familiarity with a being never
+ * perceived; and each belief's taints containing
  * those of every record it cites, so that not even a crafted snapshot holds an unclosed taint. A
  * mind the engine wrote always holds them.
  */
@@ -19,6 +20,7 @@ import {
   type LocalId,
   type Mind,
   type MindRecord,
+  NEVER_SEEN,
   type Relationship,
   recordOf,
 } from "./records.ts";
@@ -205,6 +207,12 @@ function checkRelationship(
   checkInt(relationship.tn, B.taints, `${path}/tn`, sink);
   checkInt(relationship.talk, B.tick, `${path}/talk`, sink);
   checkInt(relationship.turns, B.turns, `${path}/turns`, sink);
+  if (relationship.seen === NEVER_SEEN && relationship.f !== 0) {
+    sink.report(
+      `${path}/f`,
+      `a being never perceived (seen 0) has no familiarity: f must be 0, not ${relationship.f}`,
+    );
+  }
   if (others.some((other) => other.who === relationship.who)) {
     sink.report(`${path}/who`, `the mind already holds a relationship with ${relationship.who}`);
   }

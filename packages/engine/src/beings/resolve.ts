@@ -9,7 +9,7 @@
 import { compareCodeUnits } from "../canonical/order.ts";
 import { simSeconds, type Tick } from "../time/tick.ts";
 import type { ChunkKey } from "../world/chunk.ts";
-import { idleEnd, nextArrival, nextBite } from "./activity.ts";
+import { idleEnd, nextArrival, nextBite, talkEnd } from "./activity.ts";
 import { hearingOf, outcomeOf, type Work } from "./advance.ts";
 import type { Being } from "./being.ts";
 import {
@@ -21,11 +21,12 @@ import {
   sameRates,
   storedBody,
 } from "./body.ts";
-import { type BeingsChunk, dueOf } from "./chunk.ts";
+import { type BeingsChunk, dueOf, indexOfBeing } from "./chunk.ts";
 import { type BeingsEnv, CONTEST_STREAM, integrity } from "./env.ts";
 import type { Depletion } from "./food.ts";
 import { takenAt } from "./food.ts";
 import { hearingWakes } from "./hearing.ts";
+import type { Species2 } from "./life2.ts";
 import { nextLightTick } from "./light.ts";
 import { isOccupied, mergeOccupied, pruneOccupancy } from "./occupancy.ts";
 import { ceilDiv, least, NEED_MAX } from "./rates.ts";
@@ -151,6 +152,9 @@ function activityTick(env: BeingsEnv, work: Work): Tick | undefined {
   if (activity.kind === "eat")
     return nextBite(activity, { simSecondsPerTick: env.sps, biteMs: work.species.diet.biteMs });
   if (activity.kind === "idle") return idleEnd(activity, env.sps);
+  // Only a being of beings@2 talks, and validateGlobal accepted laws of life@2 for it.
+  if (activity.kind === "talk")
+    return talkEnd(activity, (work.species as Species2).speech.actMs, env.sps);
   // A sleep whose target rest already holds ends at the next tick; otherwise its level ends it.
   return work.body.rest >= activity.untilRest ? env.tick + 1 : undefined;
 }
@@ -309,19 +313,24 @@ function firstCell(entry: Depletion | undefined, take: Take | undefined): number
   return least(entry.cell, take.cell);
 }
 
-/** A processed being's record after this tick, with the key of the chunk it ends the tick in. */
+/** A being's record after this tick, with the key of the chunk it ends the tick in. */
 type Placed = { readonly being: Being; readonly chunk: ChunkKey };
 
-/** The keys of every chunk this tick writes: where beings were, where they are, and where food went. */
+/**
+ * The keys of every chunk this tick writes: where beings were, where they are, where food went,
+ * and where a hearer the tick did not process heard something.
+ */
 function touched(
   works: readonly Work[],
   placed: readonly Placed[],
   takes: readonly Take[],
+  heard: readonly Placed[],
 ): ChunkKey[] {
   const keys = [
     ...works.map((work) => work.from),
     ...placed.map(({ chunk }) => chunk),
     ...takes.map((take) => take.chunk),
+    ...heard.map(({ chunk }) => chunk),
   ].sort(compareCodeUnits);
   return keys.filter((key, index) => index === 0 || key !== keys[index - 1]);
 }
@@ -370,29 +379,54 @@ function runAt<T extends { readonly chunk: ChunkKey }>(
 
 /**
  * Writes every processed being and every take, then the occupancy index. Its work grows with the
- * beings processed, the takes, and the chunks touched, never with their products: the beings,
- * sorted by chunk once, and the takes, which resolveClaims returns in that order, are read in step
- * with the touched chunks, and the beings that leave their chunks are found by binary search.
+ * beings processed, the takes, the hearers of the tick, and the chunks touched, never with their
+ * products: the beings, sorted by chunk once, the takes, which resolveClaims returns in that order,
+ * and `heard`, the records of hearers the tick did not process, in that order too, are read in step
+ * with the touched chunks, and the beings that leave their chunks, or that heard, are found by
+ * binary search.
  */
-export function applyWorks(env: BeingsEnv, works: readonly Work[], takes: readonly Take[]): void {
+export function applyWorks(
+  env: BeingsEnv,
+  works: readonly Work[],
+  takes: readonly Take[],
+  heard: readonly Placed[] = [],
+): void {
   const placed = placedBeings(env, works);
   const leaving = works.map((work) => work.old.id).sort((a, b) => a - b);
-  const [beingAt, takeAt]: [Cursor, Cursor] = [{ at: 0 }, { at: 0 }];
+  const [beingAt, takeAt, heardAt]: [Cursor, Cursor, Cursor] = [{ at: 0 }, { at: 0 }, { at: 0 }];
   const arrived: ChunkKey[] = [];
-  for (const key of touched(works, placed, takes)) {
+  for (const key of touched(works, placed, takes, heard)) {
     const chunk = liveChunk(env, key);
-    const staying = chunk.beings.filter((being) => !hasId(leaving, being.id));
+    const kept = chunk.beings.filter((being) => !hasId(leaving, being.id));
+    const staying = withHeard(kept, runAt(heard, heardAt, key));
     const coming = runAt(placed, beingAt, key).map(({ being }) => being);
     chunk.beings = [...staying, ...coming].sort((a, b) => a.id - b.id);
     chunk.depletion = deplete(env, chunk.depletion, runAt(takes, takeAt, key));
     chunk.due = dueOf(chunk.beings);
     if (coming.length > 0) arrived.push(key);
   }
-  // touched() holds the chunk of every placed being and every take, so both walks reach their ends
-  // unless one of the lists left the order of chunk keys.
-  if (beingAt.at !== placed.length || takeAt.at !== takes.length)
-    throw integrity("the beings or the takes of the tick are not in the order of their chunks");
+  // touched() holds the chunk of every placed being, every take, and every hearer, so the walks
+  // reach their ends unless one of the lists left the order of chunk keys.
+  if (beingAt.at !== placed.length || takeAt.at !== takes.length || heardAt.at !== heard.length)
+    throw integrity(
+      "the beings, takes, or hearers of the tick are not in the order of their chunks",
+    );
   updateOccupancy(env, arrived);
+}
+
+/**
+ * `beings`, a chunk's beings the tick did not process, by id, with the records of those of them
+ * that heard something at this tick, `heard`, put in their place.
+ */
+function withHeard(beings: readonly Being[], heard: readonly Placed[]): Being[] {
+  // One copy of the chunk's beings for all its hearers, each put in place by binary search.
+  const current = [...beings];
+  for (const { being } of heard) {
+    const index = indexOfBeing(current, being.id);
+    if (index === undefined) throw integrity(`the hearer ${being.id} is not in its chunk`);
+    current[index] = being;
+  }
+  return current;
 }
 
 /**

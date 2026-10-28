@@ -11,11 +11,17 @@ import type { MindLaws } from "./laws.ts";
 /** A tick, and the simulated seconds each tick lasts in the world. */
 export type Moment = { readonly tick: number; readonly secondsPerTick: number };
 
-/** The moment, the laws of the being's species, and its retention, in permille. */
+/**
+ * The moment, the laws of the being's species, its retention, in permille, and its talk window: the
+ * seconds after the being addressed a being during which a full store keeps their relationship,
+ * which holds the quotas of the pair: `max(speech.gap + 1, speech.cooldown)` of its species, since a
+ * pause of at most `gap` continues a conversation and one of less than `cooldown` cools it down.
+ */
 export type MindContext = {
   readonly moment: Moment;
   readonly laws: MindLaws;
   readonly retention: number;
+  readonly talkWindow: number;
 };
 
 /**

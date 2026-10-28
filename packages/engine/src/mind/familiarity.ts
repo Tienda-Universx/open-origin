@@ -5,12 +5,13 @@
  * absence the familiarity decays over the whole absence and nothing is added. So a being that
  * decides every tick earns no more than one that decides every minute while the other stays in
  * view. The decay is the salience formula with `w = f`, the anchor `seen`, and
- * `relations.halfLife`, which retention does not scale.
+ * `relations.halfLife`, which retention does not scale. Hearing a being is no co-presence: a
+ * relationship a message created holds `seen` 0 and `f` 0 until its first perception.
  */
 import { floorDiv, least } from "../int.ts";
 import { type MindContext, secondsSince } from "./context.ts";
 import { familiaritySaturation } from "./laws.ts";
-import type { Relationship } from "./records.ts";
+import { NEVER_SEEN, type Relationship } from "./records.ts";
 import { decay } from "./salience.ts";
 
 /**
@@ -35,9 +36,12 @@ export function familiarity(relationship: Relationship, ctx: MindContext): numbe
 /**
  * `relationship` after a perception of its being at the context's moment: the absence is credited
  * when it lasts at most `relations.gap`, up to the saturation ⌈1000 / rate⌉, and decays the
- * familiarity otherwise; then `seen` is now.
+ * familiarity otherwise; then `seen` is now. A relationship whose `seen` is 0, which a message
+ * created before any perception, gains nothing at its first perception: the time since was never
+ * co-presence. No perception is at tick 0, the tick before the first a world computes.
  */
 export function perceivedAgain(relationship: Relationship, ctx: MindContext): Relationship {
+  if (relationship.seen === NEVER_SEEN) return { ...relationship, seen: ctx.moment.tick };
   const absent = secondsSince(relationship.seen, ctx.moment);
   const { gap, halfLife, rate } = ctx.laws.relations;
   const f =

@@ -1,10 +1,11 @@
 /**
  * The cost of the tick of beings@2 (ADR 0024, docs/architecture/mind.md "Cost"), by count: the
  * calls of the beings system to its tick context stay within the bound of T4, since perception
- * reads no chunk beyond those the window reads and the contest for room reads the chunk an arrival
- * enters in the place of a contest over food, which an arrival never has at that tick; and no
- * mental work touches a being that is not due: its record and its mind stay the very values the
- * state held, and a mind is never copied at a wake.
+ * reads no chunk beyond those the window reads, the contest for room reads the chunk an arrival
+ * enters in the place of a contest over food, which an arrival never has at that tick, and a
+ * delivery finds its hearer among the chunks the speaker's window read, writing only the hearer's;
+ * and no mental work touches a being that is not due: its record and its mind stay the very values
+ * the state held, and a mind is never copied at a wake.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -24,6 +25,7 @@ import {
   windowChunks,
 } from "./support/beings-cost.ts";
 import { type BeingsWorld, behavior, chunkOf, spawn, testGenesis } from "./support/beings-world.ts";
+import { type Cell, standable } from "./support/beings2-mind.ts";
 import { being2, brain2, chunksOf, gateMind, life2With } from "./support/beings2-world.ts";
 
 /** A window a brain sensed: the cell it starts at and its side. */
@@ -57,6 +59,44 @@ const roamer = brain2((senses) => {
   };
 }, "roamer@2");
 
+/**
+ * A brain of beings@2 that greets, half the time, the nearest being it perceives within reach and
+ * awake, and roams otherwise: beings that meet talk, and deliveries reach beings not due.
+ */
+const talker = brain2((senses) => {
+  const [first = 0] = senses.draws;
+  const [x = 0, y = 0] = senses.self.cell;
+  const near = senses.perceived.beings.find(
+    ({ cell: [bx = 0, by = 0], activity }) =>
+      Math.max(Math.abs(bx - x), Math.abs(by - y)) <= 3 && activity !== "sleep",
+  );
+  if (near === undefined || first % 2 === 1) return roamer.decide(senses);
+  return {
+    steps: [{ kind: "talk", to: near.id, act: "greet" }],
+    wakeWhen: {},
+    behavior: behavior("roam"),
+  };
+}, "talker@2");
+
+/**
+ * A speaker's cell on the west edge of a chunk, beside the border, and two hearers' within its
+ * reach: SAME in its chunk, and ACROSS, two cells west, in the chunk beyond the border.
+ */
+const [SPEAKER, SAME, ACROSS] = ((): [Cell, Cell, Cell] => {
+  for (let y = -40; y < 40; y += 1) {
+    const cells: [Cell, Cell, Cell] = [
+      [64, y],
+      [65, y],
+      [62, y],
+    ];
+    if (cells.every(standable)) return cells;
+  }
+  throw new Error("no standable cells beside the border at x 64");
+})();
+
+/** Each cell of DISPERSED_CELLS, and one two cells east of it: ten pairs in sight of each other. */
+const PAIRED_CELLS = DISPERSED_CELLS.flatMap(([x, y]) => [[x, y] as const, [x + 2, y] as const]);
+
 /** `inner`, which records in `sink` the window of every decision it makes, unchanged. */
 function recorded(inner: beings.Controller2, sink: Window[]): beings.Controller2 {
   return {
@@ -79,6 +119,8 @@ type CountedTick = {
   readonly wakes: number;
   readonly windows: readonly Window[];
   readonly dayTurns: boolean;
+  /** The acts delivered at the tick. */
+  readonly delivered: number;
 };
 
 const SPS = 12;
@@ -104,14 +146,19 @@ function beingChunks(world: BeingsWorld): string[] {
 }
 
 /**
- * `ticks` ticks of ten roaming beings of beings@2, hungry and rested, spawned at tick 1 on
- * DISPERSED_CELLS among 4,096 empty chunks of the test genesis, every tick from 2 on counted.
+ * `ticks` ticks of beings of beings@2 deciding with `brain`, ten roamers by default, hungry and
+ * rested, spawned at tick 1 on `cells` among 4,096 empty chunks of the test genesis, every tick
+ * from 2 on counted.
  */
-function countedRun(ticks: number): CountedTick[] {
+function countedRun(
+  ticks: number,
+  brain: beings.Controller2 = roamer,
+  cells: readonly (readonly [number, number])[] = DISPERSED_CELLS,
+): CountedTick[] {
   const sink: Calls[] = [];
   const windows: Window[] = [];
   const ruleset = beings.createBeingsRuleset({
-    controllers: { s1: recorded(roamer, windows) },
+    controllers: { s1: recorded(brain, windows) },
     rules: "beings@2",
   });
   const world = createWorld(
@@ -127,13 +174,13 @@ function countedRun(ticks: number): CountedTick[] {
   const needs = { nutrition: 300_000, rest: beings.NEED_MAX };
   step(
     world,
-    DISPERSED_CELLS.map((cell, seq) => spawn(1, { species: "s1", cell: [...cell], needs }, seq)),
+    cells.map((cell, seq) => spawn(1, { species: "s1", cell: [...cell], needs }, seq)),
   );
   const counted: CountedTick[] = [];
   for (let tick = 2; tick <= ticks; tick += 1) {
     const { occupied, wakes } = before(world);
     const [calls, decided] = [sink.length, windows.length];
-    step(world, []);
+    const { events } = step(world, []);
     counted.push({
       tick,
       calls: sink[calls] as Calls,
@@ -143,6 +190,7 @@ function countedRun(ticks: number): CountedTick[] {
       wakes,
       windows: windows.slice(decided),
       dayTurns: Math.floor((tick * SPS) / DAY) > Math.floor(((tick - 1) * SPS) / DAY),
+      delivered: events.filter(({ type }) => type === "speech.delivered").length,
     });
   }
   return counted;
@@ -198,6 +246,62 @@ describe("the calls of the beings system of beings@2, counted", () => {
     expect(counted.some((tick) => tick.calls.readChunk > 2 * tick.occupied.length)).toBe(true);
   });
 
+  test("each tick of beings that talk stays within the same bound", () => {
+    const counted = countedRun(250, talker, PAIRED_CELLS);
+    expect(counted.flatMap(callIssues)).toEqual([]);
+    // Not vacuous: the pairs talked, and acts reached their hearers on many ticks.
+    expect(counted.reduce((sum, tick) => sum + tick.delivered, 0)).toBeGreaterThan(20);
+    expect(counted.filter((tick) => tick.delivered > 0).length).toBeGreaterThan(10);
+  });
+
+  test("finding a hearer reads no chunk beyond the speaker's window; writing it, its own once", () => {
+    // Being 1 ends at tick 2 either an act addressed to being 2 or an idle, and decides in both:
+    // the reads of that tick differ by the hearer's chunk when it lies in another chunk, which the
+    // delivery writes, and by nothing when it shares the speaker's.
+    const readsAt2 = (hearer: Cell, talks: boolean) => {
+      const sink: Calls[] = [];
+      const first: beings.Intention2 = talks
+        ? {
+            steps: [{ kind: "talk", to: 2, act: "greet" }],
+            wakeWhen: {},
+            behavior: behavior("roam"),
+          }
+        : { steps: [{ kind: "idle", ms: 12_000 }], wakeWhen: {}, behavior: behavior("roam") };
+      const brain = brain2((senses) =>
+        senses.self.id === 1 && senses.self.outcome.result === "none"
+          ? first
+          : { steps: [{ kind: "idle", ms: 6_000_000 }], wakeWhen: {}, behavior: behavior("rest") },
+      );
+      const chunks = chunksOf([being2(1, SPEAKER), being2(2, hearer)]);
+      const world = createWorld(
+        {
+          seed: [1, 2],
+          simSecondsPerTick: SPS,
+          global: {
+            ...beings.beingsGlobal(testGenesis(), beings.defaultLife2()),
+            occupancy: Object.keys(chunks).sort(),
+          },
+          chunks: chunks as { [key: string]: CanonicalValue },
+          ruleset: counting(
+            beings.createBeingsRuleset({ controllers: { s1: brain }, rules: "beings@2" }),
+            sink,
+          ),
+        },
+        { audit: false },
+      );
+      step(world, []);
+      const { events } = step(world, []);
+      const delivered = events.filter(({ type }) => type === "speech.delivered").length;
+      return { reads: (sink[1] as Calls).readChunk, delivered };
+    };
+    const [same, other] = [readsAt2(SAME, true), readsAt2(SAME, false)];
+    expect(same.delivered).toBe(1);
+    expect(same.reads).toBe(other.reads);
+    const [across, idle] = [readsAt2(ACROSS, true), readsAt2(ACROSS, false)];
+    expect(across.delivered).toBe(1);
+    expect(across.reads).toBe(idle.reads + 1);
+  });
+
   test("the bound: T4's, five reads per wake, and no more", () => {
     const calls = (readChunk: number, keys: string[]): Calls => ({
       chunkKeys: 0,
@@ -215,6 +319,7 @@ describe("the calls of the beings system of beings@2, counted", () => {
       wakes: 1,
       windows: [{ origin: [-24, -24], side: 49 }],
       dayTurns: false,
+      delivered: 0,
     };
     expect(callIssues(tick)).toEqual([]);
     expect(callIssues({ ...tick, calls: calls(12, [...tick.calls.keys, "0,0"]) })).toEqual([

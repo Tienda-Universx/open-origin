@@ -1,11 +1,13 @@
 /**
  * The fuzz of the minds of beings@2 with the ledger oracle (ADR 0024, docs/architecture/mind.md
  * "Verification plan"): beings with a chaotic brain, which proposes valid and invalid mental
- * operations of every kind, crowd at a chunk border while research injects claims at random
- * ticks, some refused; after every tick every mind holds its bounds and invariants, no taint,
- * exposure, or id shrinks, every record the tick created equals what the being perceived or was
- * delivered, and the ledger oracle, which reads only the events, rebuilds every live record's
- * taints and citations and every exposure exactly.
+ * operations of every kind and talks to the beings around it, crowd at a chunk border while
+ * research injects claims at random ticks, some refused; after every tick every mind holds its
+ * bounds, quotas, and invariants, no taint, exposure, or id shrinks, every record the tick created
+ * equals what the being perceived or was delivered, every message and heard episode equals a
+ * delivery addressed to that being with the taints its speaker's talk captured, and the ledger
+ * oracle, which reads only the events, rebuilds every live record's taints and citations and every
+ * exposure exactly.
  */
 import { expect, test } from "bun:test";
 import { step } from "../src/index.ts";
@@ -40,12 +42,15 @@ const LAWS = life2With(
       episodes: 4,
       beliefs: 4,
       relations: 2,
-      inbox: 2,
+      inbox: 1,
       ops: 6,
       depth: 3,
       halfLife: { episode: 120, belief: 600 },
     },
     relations: { ...species.relations, gap: 60, halfLife: 600 },
+    // Quotas the run reaches: few acts and wakes a day, short pauses after a conversation, and
+    // acts of three ticks, during which a hearer may walk away, fall asleep, or die.
+    speech: { ...species.speech, actMs: 36_000, perDay: 6, wakesPerDay: 2, cooldown: 240 },
   }),
   6,
 );
@@ -60,6 +65,12 @@ test("holds every invariant after every tick, and the ledger oracle matches ever
     beliefs: 0,
     crowded: 0,
     injected: 0,
+    told: 0,
+    delivered: 0,
+    full: 0,
+    away: 0,
+    heard: 0,
+    spoken: 0,
   };
   for (const seed of SEEDS) {
     const placed = cellsNear(HOME, BEINGS).map((cell, index) => being2(index + 1, cell));

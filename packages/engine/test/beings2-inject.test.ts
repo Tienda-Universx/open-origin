@@ -195,7 +195,16 @@ describe("mind.inject is refused", () => {
 
   test("under beings@1, which has no such command", () => {
     const ruleset = beings.createBeingsRuleset({
-      controllers: { s1: { brain: "b@1", decide: () => idling(LONG) } },
+      controllers: {
+        s1: {
+          brain: "b@1",
+          decide: () => ({
+            steps: [{ kind: "idle", ms: LONG }],
+            wakeWhen: {},
+            behavior: behavior("rest"),
+          }),
+        },
+      },
     });
     expect(Object.keys(ruleset.commands)).toEqual(["beings.spawn"]);
   });

@@ -15,6 +15,7 @@ import type {
   CooldownRequest,
   Outcome,
   PlanStep,
+  TalkStep,
   Traits2,
   WakeConditions,
 } from "./being.ts";
@@ -159,8 +160,14 @@ export type MindIntention = {
   }[];
 };
 
-/** What a brain of beings@2 proposes: an intention of T4, and optionally mental operations. */
-export type Intention2 = Intention & { readonly mind?: MindIntention };
+/**
+ * What a brain of beings@2 proposes: an intention of T4, whose one step may instead be a talk
+ * (docs/architecture/mind.md, "Speech"), and optionally mental operations.
+ */
+export type Intention2 = Omit<Intention, "steps"> & {
+  readonly steps: readonly (PlanStep | TalkStep)[];
+  readonly mind?: MindIntention;
+};
 
 /**
  * A brain of beings@2: its version; the 1 to 16 identifiers its `behavior.kind` may take, so that

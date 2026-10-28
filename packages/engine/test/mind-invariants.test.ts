@@ -39,7 +39,7 @@ const VALID = mindOf({
     belief(8, { ev: [7, 6], dp: 2, tn: 2, ex: 4, src: 12 }),
     belief(9, { ev: [10], tn: 1, src: 4 }),
   ],
-  relations: [relationship(10, 41, { tn: 1, f: 7200, aff: -1000, tr: 1000, turns: 8 })],
+  relations: [relationship(10, 41, { tn: 1, f: 7200, seen: 3, aff: -1000, tr: 1000, turns: 8 })],
   inbox: [
     { who: 41, t: 3, cell: [1, 1], act: "tell", p: foodAt(1, 1), band: 1, tn: 2, ex: 4 },
     { t: 3, act: "tell", p: foodAt(2, 2), tn: 2, ex: 0 },
@@ -126,6 +126,19 @@ describe("checkMind", () => {
     const twice = { ...VALID, relations: [...VALID.relations, relationship(11, 41)], next: 12 };
     expect(issuesOf(twice)).toEqual([
       { path: "/mind/relations/1/who", message: "the mind already holds a relationship with 41" },
+    ]);
+  });
+
+  test("reports familiarity with a being never perceived: seen 0 holds f 0", () => {
+    // A relationship a message created records no perception (mind.md, "Relationships").
+    const heard = { ...VALID, relations: [relationship(10, 41, { tn: 1 })] };
+    expect(issuesOf(heard)).toEqual([]);
+    const familiar = { ...VALID, relations: [relationship(10, 41, { tn: 1, f: 1 })] };
+    expect(issuesOf(familiar)).toEqual([
+      {
+        path: "/mind/relations/0/f",
+        message: "a being never perceived (seen 0) has no familiarity: f must be 0, not 1",
+      },
     ]);
   });
 

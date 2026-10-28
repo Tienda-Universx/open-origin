@@ -23,6 +23,7 @@ import {
   FAILURES,
   forget,
   freeId,
+  hear,
   type InboxMessage,
   importanceWithin,
   LIVE_MANIFEST,
@@ -32,10 +33,10 @@ import {
   type MindContext,
   type MindReason,
   type MindRefused,
+  type Perceived,
   perceive,
   type Related,
   refreshEpisode,
-  relationshipWith,
   taintsOf,
   type Unlinked,
 } from "../mind/index.ts";
@@ -110,7 +111,8 @@ function speakersOf(inbox: readonly InboxMessage[]): number[] {
  * Step 1 of a decision, a law (mind.md, "Beliefs"): `mind` without what has faded by the context's
  * moment; then familiarity updated, with a relationship created for each being of `perceived`, in
  * that order, the order attention keeps them, and then for each speaker of the inbox that has none,
- * by increasing id, a full store evicting by its rule; then the inbox consumed. The ledger records
+ * by increasing id, with `seen` 0 and no familiarity update for a speaker it knows, a full store
+ * evicting by its rule; then the inbox consumed. The ledger records
  * what faded and what was evicted, in that order, and the relationships created. The mind is the
  * same value when nothing changed.
  */
@@ -119,15 +121,14 @@ export function stepOne(mind: Mind, perceived: readonly number[], ctx: MindConte
   let current = kept;
   const created: LocalId[] = [];
   const evicted: Unlinked[] = [];
-  const meet = (who: number) => {
-    const met = perceive(current, who, ctx);
+  const relate = (met: Perceived) => {
     current = met.mind;
     if (met.created !== undefined) created.push(met.created);
     evicted.push(...met.displaced);
   };
-  for (const who of perceived) meet(who);
-  for (const who of speakersOf(current.inbox))
-    if (relationshipWith(current, who) === undefined) meet(who);
+  for (const who of perceived) relate(perceive(current, who, ctx));
+  // Hearing is no co-presence: a speaker the mind does not know gets a relationship, never seen.
+  for (const who of speakersOf(current.inbox)) relate(hear(current, who, ctx));
   const heard = current.inbox;
   if (heard.length > 0) current = { ...current, inbox: [] };
   const ledger: MindLedger = {
