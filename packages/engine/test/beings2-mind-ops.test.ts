@@ -285,6 +285,28 @@ describe("remember", () => {
     expect(episode?.t).toBe(outcome.tick);
   });
 
+  test("saturates the units of an ate episode at 2^20, the largest value an episode holds", () => {
+    // A meal of 2^21 units: valid laws allow more than 2^20, e.g. two bites of 600,000.
+    const meal = { result: "done", tick: 0, reason: "", units: 2 ** 21 };
+    const placed = [{ ...being2(1, CELL, { mind: HELD }), outcome: meal }];
+    const brain = brain2((senses) =>
+      senses.mind.next === HELD.next
+        ? idling(LONG, { remember: [{ percept: { outcome: true }, w: 500 }] })
+        : idling(LONG),
+    );
+    const world = beings2World({ controllers: { s1: brain }, chunks: chunksOf(placed) });
+    runTo(world, 1);
+    expect((beingOf(world, 1) as beings.Being2).mind.episodes.at(-1)).toEqual({
+      id: 6,
+      kind: "ate",
+      t: 0,
+      cell: [CELL[0], CELL[1]],
+      v: mind.MIND_BOUNDS.value.max,
+      w: 500,
+      r: 1,
+    });
+  });
+
   test("caps a new importance below the pin level once the pins are taken", () => {
     const pinned = mindOf({
       episodes: [own(1, { w: 950 }), own(2, { w: 900 })],

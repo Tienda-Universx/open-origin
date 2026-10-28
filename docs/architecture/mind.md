@@ -336,7 +336,8 @@ How the engine reads and applies them (T5-5a):
   `{ heard: i }` the i-th message heard, none until speech (T5-6); `{ food: [x, y] }` a cell of the
   window, which a cell outside the world never is; and `{ outcome: true }` a `failed` episode when
   the outcome's result is `failed`, whose reasons are exactly those a `failed` episode indexes, an
-  `ate` episode when the outcome holds `units`, 0 included, and no percept otherwise. An episode
+  `ate` episode when the outcome holds `units`, 0 included, saturating at 2^20, the largest value
+  an episode holds, which a meal under valid laws may pass, and no percept otherwise. An episode
   happens at the tick of the decision, one of the outcome at the outcome's tick; `r` is now, and `w`
   is the brain's, within the pins. Anything else the episode holds the engine copies from what it
   perceived, never from the brain.

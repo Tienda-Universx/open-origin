@@ -21,6 +21,7 @@ import {
   importanceWithin,
   LIVE_MANIFEST,
   type LocalId,
+  MIND_BOUNDS,
   type Mind,
   type MindContext,
   type MindReason,
@@ -33,6 +34,7 @@ import type { Cell, Outcome } from "./being.ts";
 import type { SensedWindow } from "./contracts.ts";
 import type { MindOperations, Percept, RememberOperation } from "./operations.ts";
 import type { PerceivedBeing } from "./perception.ts";
+import { least } from "./rates.ts";
 
 /**
  * What the being perceived at its decision, as the engine keeps it apart from the senses it gave
@@ -93,7 +95,7 @@ export function forgetAtDecision(mind: Mind, ctx: MindContext): Decided {
   return { kind: "applied", mind: kept, ledger: ledgerOf(forgot) };
 }
 
-/** The cell `cell` of the window as the being sensed it, by its index; undefined outside it. */
+/** The index of `cell` in the window `window`; undefined for a cell outside it. */
 function windowIndex(window: SensedWindow, cell: Cell): number | undefined {
   const column = cell[0] - window.origin[0];
   const row = cell[1] - window.origin[1];
@@ -101,7 +103,10 @@ function windowIndex(window: SensedWindow, cell: Cell): number | undefined {
   return column < 0 || row < 0 || column >= side || row >= side ? undefined : row * side + column;
 }
 
-/** The content of an episode of the being's own outcome: its last failure, or its last meal. */
+/**
+ * The content of an episode of the being's own outcome: its last failure, or its last meal, whose
+ * units saturate at the largest value an episode holds, 2^20, which a meal of valid laws may pass.
+ */
 function outcomeContent(percepts: Percepts): Content | undefined {
   const { outcome } = percepts;
   const cell: Cell = [percepts.cell[0], percepts.cell[1]];
@@ -111,7 +116,7 @@ function outcomeContent(percepts: Percepts): Content | undefined {
   }
   return outcome.units === undefined
     ? undefined
-    : { kind: "ate", t: outcome.tick, cell, v: outcome.units };
+    : { kind: "ate", t: outcome.tick, cell, v: least(outcome.units, MIND_BOUNDS.value.max) };
 }
 
 /**
