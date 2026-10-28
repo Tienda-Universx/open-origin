@@ -333,6 +333,38 @@ describe("revise", () => {
   });
 });
 
+describe("the depth limit", () => {
+  // Beliefs 2 and 3 are already deeper than a limit of 1.
+  const beyond = mindOf({
+    episodes: [own(1), own(5)],
+    beliefs: [
+      belief(2),
+      belief(3, { ev: [2], dp: 2, src: 4 }),
+      belief(4, { ev: [3], dp: 3, src: 4 }),
+    ],
+  });
+  const ctx = contextAt(100, lawsWith({ depth: 1 }));
+
+  test("refuses an operation that makes a belief deeper, and above mind.depth", () => {
+    // A new belief citing belief 4 would have depth 4, and one citing belief 2 depth 2.
+    expect(reasonOf(beyond, { believe: [believe([4], foodAt(9, 9))] }, ctx)).toBe("depth_exceeded");
+    expect(reasonOf(beyond, { believe: [believe([2], foodAt(9, 9))] }, ctx)).toBe("depth_exceeded");
+  });
+
+  test("lets a mind already beyond the limit drop and revise without deepening", () => {
+    const dropped = applied(beyond, { drop: [2] }, ctx).mind;
+    expect(dropped.beliefs.map((held) => [held.id, held.dp])).toEqual([
+      [3, 1],
+      [4, 2],
+    ]);
+    const revised = applied(beyond, { revise: [{ id: 4, cr: 1, ev: [5] }] }, ctx).mind;
+    expect(revised.beliefs.at(-1)).toMatchObject({ id: 4, dp: 3, ev: [3, 5] });
+    expect(
+      applied(beyond, { believe: [believe([1], foodAt(9, 9))] }, ctx).mind.beliefs.at(-1)?.dp,
+    ).toBe(1);
+  });
+});
+
 describe("drop", () => {
   const subject = mindOf({
     episodes: [own(1)],

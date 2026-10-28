@@ -316,12 +316,22 @@ describe("viewOf", () => {
       ],
       beliefs: [{ id: 2, p: foodAt(2, 0), cr: 800, src: 2, ev: [1], lost: 0, dp: 1, u: 300 }],
       // 3600 seconds at 5/36 give a familiarity of 500.
-      relations: [{ id: 3, who: 41, f: 500, seen: 30, aff: 0, tr: 500, talk: 300, turns: 0 }],
+      // The being never addressed 41: talk 0 has no age to show.
+      relations: [{ id: 3, who: 41, f: 500, seen: 30, aff: 0, tr: 500, turns: 0 }],
     });
     const text = canonicalize(view);
     for (const hidden of ['"tn"', '"ex"', '"exposure"']) expect(text).not.toContain(hidden);
     const old = viewOf(subject, contextAt(0x8000_0000));
     expect(old.beliefs[0]?.u).toBe(0x7fff_ffff);
+  });
+
+  test("shows how long ago the being last addressed a being, and nothing when it never did", () => {
+    const subject = mindOf({
+      relations: [relationship(1, 41, { talk: 60, turns: 2 }), relationship(2, 42, { talk: 0 })],
+    });
+    const [spoken, silent] = viewOf(subject, contextAt(100)).relations;
+    expect(spoken).toMatchObject({ talk: 40, turns: 2 });
+    expect(silent !== undefined && "talk" in silent).toBe(false);
   });
 
   test("shows an injection as a tell heard from no visible speaker, and external evidence as told", () => {

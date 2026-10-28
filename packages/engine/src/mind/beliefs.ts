@@ -232,18 +232,27 @@ class Draft {
     this.mind = { ...this.mind, episodes, beliefs };
   }
 
-  /** Runs the downstream pass; `depth_exceeded` when a belief became deeper than `mind.depth`. */
-  #settle(): MindReason | undefined {
+  /**
+   * Runs the downstream pass after an operation on the beliefs `before`; `depth_exceeded` when the
+   * operation made a belief, new or held, deeper than it was and deeper than `mind.depth`. A belief
+   * already beyond the limit does not stop an operation that leaves it no deeper.
+   */
+  #settle(before: readonly Belief[]): MindReason | undefined {
     const { mind, tainted } = settle(this.mind);
     this.mind = mind;
     for (const id of tainted) if (!this.#tainted.includes(id)) this.#tainted.push(id);
-    const tooDeep = mind.beliefs.some((belief) => belief.dp > this.#ctx.laws.mind.depth);
-    return tooDeep ? "depth_exceeded" : undefined;
+    const limit = this.#ctx.laws.mind.depth;
+    const deepened = mind.beliefs.some((belief) => {
+      const was = before.find((held) => held.id === belief.id)?.dp ?? 0;
+      return belief.dp > limit && belief.dp > was;
+    });
+    return deepened ? "depth_exceeded" : undefined;
   }
 
   believe(op: BelieveOperation): MindReason | undefined {
     const held = this.mind.beliefs.find((belief) => sameProposition(belief.p, op.p));
     if (held !== undefined) return this.revise({ id: held.id, cr: op.cr, ev: op.ev });
+    const before = this.mind.beliefs;
     const cited = this.#cite(op.ev);
     if (typeof cited === "string") return cited;
     const id = freeId(this.mind);
@@ -260,10 +269,11 @@ class Draft {
     this.mind = mind;
     this.#formed.push({ id, rule: op.rule });
     this.#unlinked.push(...displaced);
-    return this.#settle();
+    return this.#settle(before);
   }
 
   revise(op: ReviseOperation): MindReason | undefined {
+    const before = this.mind.beliefs;
     const added = op.ev;
     const cited = this.#cite(added);
     if (typeof cited === "string") return cited;
@@ -281,16 +291,17 @@ class Draft {
     this.mind = { ...this.mind, beliefs, exposure: exposureAfterBelief(exposure, belief) };
     if (!this.#revised.includes(target.id)) this.#revised.push(target.id);
     if (uncited.length > 0) this.#uncited.push({ belief: target.id, records: uncited });
-    return this.#settle();
+    return this.#settle(before);
   }
 
   drop(id: LocalId): MindReason | undefined {
-    if (!this.mind.beliefs.some((belief) => belief.id === id)) return "unknown_record";
+    const before = this.mind.beliefs;
+    if (!before.some((belief) => belief.id === id)) return "unknown_record";
     const { mind, unlinked } = withoutRecords(this.mind, [id]);
     this.mind = mind;
     this.#dropped.push(id);
     this.#unlinked.push(...unlinked);
-    return this.#settle();
+    return this.#settle(before);
   }
 }
 

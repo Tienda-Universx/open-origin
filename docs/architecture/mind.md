@@ -76,7 +76,8 @@ the tick:
   only through the being's own action on its cell.
 - **Its mind.** A view of its episodes, beliefs, and relationships, with ages in simulated seconds
   (saturating at 2^31 − 1) instead of ticks, familiarity as it stands at that moment, from 0 to
-  1000, and `next`, so that a brain can cite a record it creates in the same decision. A research injection appears in it as a message whose speaker is
+  1000, and `next`, so that a brain can cite a record it creates in the same decision. A
+  relationship's `talk` is left out of the view until the being first addresses that being. A research injection appears in it as a message whose speaker is
   not visible: the kind `external` and the evidence bit 8 are C3, and the view shows them as
   `heard` and as told. That a message came with no visible speaker is the one thing the being can
   tell, a declared limit.
@@ -292,7 +293,9 @@ no operation applies; what step 1 did stays, because it is a law, not a proposal
 - A belief may cite episodes and relationships of any id, but only beliefs of a **lower** id, so
   support cannot be circular. Its depth is one more than the deepest belief it cites, 1 when it
   cites none, at most `mind.depth`. Depth follows the live citations, so it falls when a cited
-  belief leaves, and an operation that would make any belief deeper is refused.
+  belief leaves. An operation is refused when it makes a belief, new or held, deeper than it was and
+  deeper than `mind.depth`; a belief already deeper does not stop an operation that leaves it no
+  deeper.
 - `revise` must cite at least one record it did not cite before; `ev` keeps the three most recent
   citations, those of the operation last, in the order given, and the ledger records any it drops.
   `src`, `tn`, and `ex` keep what the dropped ones brought.
