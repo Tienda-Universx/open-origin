@@ -1067,6 +1067,60 @@ most 150. The cause is not yet measured: every write of a being turns its whole
 chunk, mind included, into canonical text, hashes it, and validates it. T5-9 profiles that cost
 before any optimization, and a miss that remains is recorded as it is.
 
+**Measured: the cost of `mind@1`** (T5-9, 2026-10-28; indicative). `bun
+packages/agents/bench/mind-cost.ts [dispersed concentrated sleeping speech] [--ticks N]` runs T4's
+named scenarios, on T4's bench terrain and cells ([beings](beings.md#the-scale-benchmark)), under
+`beings@2` with `mind@1` and the frozen laws of `life@2`, audit off, each being drawn in T5's order
+from that label's spawn seed; its speech group runs a scripted talker with quotas wide enough to
+speak at every decision, since `mind@1` says at most two acts in a talk window, so it measures what
+an act costs the engine. `bench/gate.ts` ran as in T5-4, now with the frozen `life@2`, whose day
+sight is 24, and `--beings N` places N dispersed beings instead of 1,000. Each run once, at
+`nice -n 19`, one process at a time, on the Codespace, whose two CPUs are two threads of one AMD
+EPYC 7763 core, with Bun 1.4.4; "before" is `main` at `7a26777`, "after" the refactor below:
+
+| Target | Bound | Before | After | Status |
+|---|---|---|---|---|
+| One decision end to end, "dispersed 1,000" (T4's method; ticks whose one wake decided, did not) | median ≤ 4 ms | 2.90 ms (15, 47) | 1.31 ms | met |
+| The same, "concentrated 10, 3 × 3", 500 ticks | median ≤ 5 ms | 2.28 ms (10, 52) | 1.68 ms | met |
+| "dispersed 10" | median ≤ 1 ms | 0.048 ms | 0.049 ms | met |
+| "dispersed 1,000" | median ≤ 50 ms, p99 ≤ 100 ms | 37.50, 101.93 ms | 30.39, 75.20 ms | met after the refactor; the p99 missed by 1.93 ms before it |
+| "dispersed 1,000", hashed | p99 ≤ 1 MB | 182.2 KB | 182.2 KB | met |
+| The gate: "dispersed 1,000" with the gate's mind | median ≤ 50 ms, p99 ≤ 100 ms | 53.01, 120.15 ms | 47.77, 113.34 ms | the median met after the refactor; the p99 missed by 13.34 ms |
+| The gate, hashed | p99 < 1 MB | 418.7 KB | 418.7 KB | met: the entity section stays in T7 |
+| A wake that does not decide, `beings@2` with the gate's mind against `beings@1`, paired by tick (152 ticks) | at most 150 µs more | 317.0 µs more (490.1 against 154.9) | 347.1 µs more (547.5 against 188.7) | missed |
+| A sleeping being, beside 1,000, stepped in turn for 1,000 ticks | ≤ 1 µs per tick | 73.5 ns | 75.3 ns | met |
+| No mental work for a being that is not due | by count | `beings2-cost.test.ts` (T5-4) | — | met |
+| Many speaking: 50 and 500 pairs, 50 ticks | linear in acts | 349.7 and 370.2 µs an act | 339.7 and 350.5 µs | met: 1.06 and 1.03 times |
+| 50 speakers on the cell of one idle hearer, two days | at most `speech.wakesPerDay`, 8, decisions by hearing a day | 8 and 8 | 8 and 8 | met |
+| The largest mind | ≤ 4.5 KB; ≤ 6 KB | 4,056 B; 5,711 B (`mind-size.test.ts`, T5-3) | — | met |
+
+- **What a decision costs, and the refactor.** A CPU profile (`bun --cpu-prof-md`) of 1,500 ticks
+  of 300 dispersed beings under `mind@1` put about a third of its samples in the edges of the
+  windows, and three quarters of those on the lines that read the frozen pairs of `DIRECTIONS`
+  at each of the 19,208 steps of a window at radius 24. The refactor of the plan (`926b20e`) reads
+  them once per window into a typed array and passes a step's geometry as arguments instead of a
+  record; the edges fell to about a fifth of the samples, and the profiled run took 9.4 s instead
+  of 11.9 s. It is bit-identical: the T4 goldens (`beings-fuzz`, `beings-cost`,
+  `beings-determinism`, the survival trails), `beings2-baseline`, the trail `edb4c527…` of
+  `mind-determinism`, `mind-freeze`, `mind-world`, `mind-fuzz`, `beings2-fuzz`, the senses and
+  perception tests, the checksum of every tick of ten days of `calibration/2`, and the rows of
+  `bench/mind-calibration.ts 1`, which printed the same, are unchanged; ten days of
+  `calibration/1` took 14.8 s instead of 16.2 s.
+- **The misses that remain.** The p99 of the gate, whose every being holds a full mind from the
+  start, and the cost of a wake that does not decide. That wake writes its being, so the commit
+  turns its whole chunk, mind included, into canonical text, validates, and hashes it: about
+  350 µs more for the gate's mind of 2,680 B, which the window's edges do not touch. Under `mind@1`
+  itself the minds of dispersed beings stay small, 367 B a write on average, and a wake costs 478
+  µs against T4's 531 (all wakes, those that decide included). Both misses are recorded as they
+  are; the hash per component of the entity section (T7) is what removes the second.
+- **The writes that change only the body** (plan §10.4, evidence for T7). Of the beings a timed
+  tick wrote, the share whose `mind` stayed the same text: 96.7%, 97.5%, and 97.2% in "dispersed
+  10", "100", and "1,000" over a day (2,334, 38,012, and 403,293 writes), and 81.9% in
+  "concentrated 10, 3 × 3" (59 of 72), where beings see each other. A write in "dispersed 1,000"
+  held 643 B of body and 367 B of mind on average. Most writes are wakes that do not decide, the
+  steps of a walk, which never touch a mind, so a hash per component would rehash the body alone
+  in about 97 writes of 100.
+
 ## Verification plan
 
 | Requirement | Pull request |

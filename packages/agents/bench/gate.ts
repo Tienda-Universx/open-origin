@@ -8,12 +8,13 @@
  * in turn, the same beings run under beings@1 with `utility@1`: the baseline lives the same life,
  * so both worlds have the same wakes and decisions at every tick, which the benchmark checks.
  *
- *   bun packages/agents/bench/gate.ts [--ticks N]
+ *   bun packages/agents/bench/gate.ts [--ticks N] [--beings N]
  *
  * It prints, per tick of each world, the KB hashed and the time of the tick, median and p99, and
  * the cost of a wake that does not decide; then the gate's decision: below 1 MB hashed at p99 the
  * entity section stays in T7. It times one simulated day after the first decisions and 100 ticks
- * of warm-up, unless `--ticks N` says otherwise. On a shared machine, run it at low priority:
+ * of warm-up, unless `--ticks N` says otherwise; `--beings N` places N dispersed beings instead of
+ * 1,000, by the same rule, for the ceiling of "dispersed 10,000". On a shared machine, run it at low priority:
  * `nice -n 19 bun packages/agents/bench/gate.ts`.
  */
 import { beings, createWorld, step, type World, worldgen } from "@open-origin/engine";
@@ -289,20 +290,38 @@ function row(name: string, samples: readonly GateSample[], firstMs: number): str
   ].join(" | ")} |`;
 }
 
-/** The value of `--ticks`, or one simulated day; throws on anything else. */
+/** The usage of the gate, which every argument it refuses names. */
+const USAGE = "usage: gate.ts [--ticks N] [--beings N], each N a positive integer";
+
+/** `text` as a positive integer; throws the usage otherwise. */
+function positiveOf(text: string | undefined): number {
+  if (text === undefined || !/^[0-9]+$/.test(text) || Number(text) < 1) throw new Error(USAGE);
+  return Number(text);
+}
+
+/**
+ * The ticks to time, one simulated day unless `--ticks N` says otherwise, and the dispersed beings,
+ * 1,000 unless `--beings N` says otherwise; each at most once. Throws on anything else.
+ */
+export function gateArguments(argv: readonly string[]): { ticks: number; beings: number } {
+  const found = new Map<string, number>();
+  for (let at = 0; at < argv.length; at += 2) {
+    const flag = argv[at] as string;
+    if (!["--ticks", "--beings"].includes(flag) || found.has(flag)) throw new Error(USAGE);
+    found.set(flag, positiveOf(argv[at + 1]));
+  }
+  return { ticks: found.get("--ticks") ?? DAY_TICKS, beings: found.get("--beings") ?? BEINGS };
+}
+
+/** The value of `--ticks`, or one simulated day; throws on any argument gateArguments refuses. */
 export function gateTicks(argv: readonly string[]): number {
-  if (argv.length === 0) return DAY_TICKS;
-  const [flag, text] = argv;
-  const value = Number(text);
-  if (argv.length !== 2 || flag !== "--ticks" || !/^[0-9]+$/.test(text ?? "") || value < 1)
-    throw new Error("usage: gate.ts [--ticks N], N a positive integer");
-  return value;
+  return gateArguments(argv).ticks;
 }
 
 /** Builds the two worlds of the gate, runs them, and prints the table and the decision. */
-function main(measured: number): void {
+function main(measured: number, count: number): void {
   const scene = gateScene();
-  const cells = dispersedCells(BEINGS, scene.center, scene.prepared);
+  const cells = dispersedCells(count, scene.center, scene.prepared);
   const placed = gateBeings(cells, gateDraws(cells.length, scene.seeds.spawn));
   const benches: [GateWorld, GateWorld] = [
     gateWorld(scene, placed.one, false),
@@ -337,12 +356,12 @@ function main(measured: number): void {
 }
 
 if (import.meta.main) {
-  let measured: number;
+  let options: { ticks: number; beings: number };
   try {
-    measured = gateTicks(process.argv.slice(2));
+    options = gateArguments(process.argv.slice(2));
   } catch (error) {
     console.error(`gate: ${(error as Error).message}`);
     process.exit(2);
   }
-  main(measured);
+  main(options.ticks, options.beings);
 }

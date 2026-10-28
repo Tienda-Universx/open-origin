@@ -11,6 +11,7 @@ import { Sfc32 } from "../../engine/test/support/sfc32.ts";
 import {
   divergentTicks,
   type GateSample,
+  gateArguments,
   gateBeings,
   gateDraws,
   gateScene,
@@ -135,7 +136,20 @@ describe("the statistics of the gate", () => {
     expect(TRIGGER_BYTES).toBe(1_048_576);
     expect(gateTicks([])).toBe(DAY_TICKS);
     expect(gateTicks(["--ticks", "30"])).toBe(30);
-    for (const argv of [["--ticks"], ["--ticks", "0"], ["--ticks", "1.5"], ["--tick", "3"], ["x"]])
-      expect(() => gateTicks(argv)).toThrow("usage: gate.ts [--ticks N]");
+    expect(gateArguments([])).toEqual({ ticks: DAY_TICKS, beings: 1_000 });
+    expect(gateArguments(["--beings", "10000", "--ticks", "300"])).toEqual({
+      ticks: 300,
+      beings: 10_000,
+    });
+    for (const argv of [
+      ["--ticks"],
+      ["--ticks", "0"],
+      ["--ticks", "1.5"],
+      ["--tick", "3"],
+      ["x"],
+      ["--beings", "0"],
+      ["--ticks", "3", "--ticks", "4"],
+    ])
+      expect(() => gateArguments(argv)).toThrow("usage: gate.ts [--ticks N] [--beings N]");
   });
 });
