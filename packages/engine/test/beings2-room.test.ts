@@ -298,6 +298,37 @@ describe("the contest for room", () => {
     ]);
   });
 
+  test("keeps a loser's events of its body: incapacitated at its arrival, it stays so", () => {
+    // Starving, the walker reaches health 0 at the tick its walk arrives: placed beings decide at
+    // tick 1, so their crossings arrive at ARRIVAL − 1. Its health was re-anchored at tick 1, when
+    // its rates changed, so it holds there what falls in the ticks to its arrival.
+    const arrival = ARRIVAL - 1;
+    const starve = SPECIES.health.starve;
+    const fallen = (ticks: number) => Math.floor((starve.num * 12 * ticks) / starve.den);
+    const walker = {
+      ...being2(2, [EDGE, row(1)], { needs: { nutrition: 0, rest: 900_000 } }),
+      health: fallen(arrival - 1) + fallen(1),
+    };
+    const world = beings2World({
+      controllers: { s1: crosser },
+      life: life2With(undefined, 1),
+      chunks: chunksOf([being2(1, [EDGE + 2, row(0)]), walker]),
+    });
+    const events = runTo(world, arrival);
+    expect(
+      events.filter(({ tick }) => tick === arrival).map(({ type, payload }) => [type, payload]),
+    ).toEqual([
+      ["being.incapacitated", { id: 2 }],
+      ["being.finished", crowded(2)],
+    ]);
+    expect(beingOf(world, 2)).toMatchObject({
+      cell: [EDGE, row(1)],
+      condition: "incapacitated",
+      health: 0,
+      outcome: { result: "failed", tick: arrival, reason: "crowded" },
+    });
+  });
+
   test("leaves the events of a being that wins its room as they were, in order", () => {
     const at = (capacity: number) => {
       const world = roomWorld(capacity);

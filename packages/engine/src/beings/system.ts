@@ -34,6 +34,17 @@ export function runBeings(
 /** An event that a tick of beings@2 holds until the contest for room has decided whom it keeps. */
 type Held = { readonly type: string; readonly payload: CanonicalValue };
 
+/**
+ * The events of a being's body, facts of physiology rather than of a decision: a loser of the
+ * contest for room keeps them, since the contest discards its decision and its walk, not its body.
+ */
+const BODY_EVENTS: readonly string[] = Object.freeze([
+  "being.exhausted",
+  "being.incapacitated",
+  "being.recovered",
+  "being.died",
+]);
+
 /** `env`, whose events go to `sink` instead of the tick. */
 function holding(env: BeingsEnv, sink: Held[]): BeingsEnv {
   return {
@@ -47,9 +58,10 @@ function holding(env: BeingsEnv, sink: Held[]): BeingsEnv {
 /**
  * One tick of beings@2 (mind.md, "The tick of beings@2"): its phases as under beings@1, with the
  * contest for room after those over food. Each being's events of the second phase are held until
- * the contest decides; a loser keeps nothing of its decision, so its are dropped, and the crowded
- * end of its walk, which the contest emits, stands for them. Then the tick emits the second phase's
- * events by being id, then the third phase's: contests over food by place, and for room by chunk.
+ * the contest decides; a loser keeps nothing of its decision, so the events of that decision and of
+ * its walk are dropped, and the crowded end of its walk, which the contest emits, stands for them;
+ * the events of its body stay. Then the tick emits the second phase's events by being id, in their
+ * order, then the third phase's: contests over food by place, and for room by chunk.
  */
 function runBeings2(env: BeingsEnv): void {
   const held: Held[][] = [];
@@ -62,8 +74,9 @@ function runBeings2(env: BeingsEnv): void {
   const takes = resolveClaims(holding(env, third), works);
   const losers = resolveRoom(holding(env, third), works);
   works.forEach((work, index) => {
-    if (hasId(losers, work.old.id)) return;
-    for (const { type, payload } of held[index] ?? []) env.emit(type, payload);
+    const lost = hasId(losers, work.old.id);
+    for (const { type, payload } of held[index] ?? [])
+      if (!lost || BODY_EVENTS.includes(type)) env.emit(type, payload);
   });
   for (const { type, payload } of third) env.emit(type, payload);
   applyWorks(env, works, takes);
