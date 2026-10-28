@@ -232,12 +232,13 @@ function destructurings(code: string, local: string): { at: number; members: str
 
 /**
  * Whether the name at `index`, followed by `after`, is a key or a parameter that shares the
- * namespace's name rather than a use of it: it follows `{`, `,`, or `(`, and precedes `:` or `?:`.
+ * namespace's name rather than a use of it: it follows `{`, `,`, `(`, or `;`, perhaps through
+ * `readonly`, and precedes `:` or `?:`.
  * A ternary's branch (`c ? ns : x`) follows `?`, so it stays a use.
  */
 function isKey(code: string, index: number, after: string): boolean {
-  const before = code.slice(0, index).trimEnd().at(-1) ?? "";
-  return "{,(".includes(before) && /^\s*\??:/.test(after);
+  const before = code.slice(0, index).replace(/\breadonly\s*$/, "").trimEnd().at(-1) ?? "";
+  return "{,(;".includes(before) && /^\s*\??:/.test(after);
 }
 
 /** Every use of the namespace `symbol` in `code` that names no member it may use. */

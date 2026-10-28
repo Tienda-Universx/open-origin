@@ -44,6 +44,7 @@ describe("checkBrainSymbols", () => {
       "}",
       // A key or a member of another value that shares a binding's name is not a use of it.
       "export const shown = (s: { beings: number }) => ({ beings: s.beings });",
+      "export type Laws = { readonly mind: { readonly n: number }; readonly beings?: number };",
       "",
     ].join("\n");
     expect(scan(content)).toEqual([]);

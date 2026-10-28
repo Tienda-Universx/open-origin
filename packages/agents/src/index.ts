@@ -3,6 +3,9 @@
  * propose, and the templates that render their acts of speech (ADR 0024). This package imports
  * only the engine's public entry and keeps no module state.
  */
+
+export { MIND_BRAIN } from "./brain/mind/parameters.ts";
+export { type MindConfig, mindController } from "./brain/mind.ts";
 export { UTILITY_BRAIN } from "./brain/parameters.ts";
 export { utilityController } from "./brain/utility.ts";
 export { aStar, octileMs, type Route, type StepBounds } from "./navigation/astar.ts";

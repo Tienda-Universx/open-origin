@@ -687,6 +687,53 @@ in one pass. Traits modulate it: sociability its will to speak, credulity the co
 to testimony, retention its memory. A message whose speaker is not visible is weighed as one from a
 being it does not know, with the trust of a new relationship.
 
+### How `mind@1` decides (T5-7)
+
+`mindController({ species, dayLength })` builds the brain for a species of `life@2` in a world whose
+day lasts `dayLength` seconds; it copies the laws it reads when it is built, and refuses a day that
+is not a positive whole number of seconds. Its version is `mind@1`, its namespace `m1`, and its
+behaviors the five of `utility@1` and `seek`, `approach`, `talk`, and `wait`: `behavior.kind` holds
+one of them, cooldowns hold what `utility@1` puts there, and no other channel carries anything
+between decisions. Its code is in `packages/agents/src/brain/mind.ts` and `mind/`; its parameters
+are in `mind/parameters.ts`.
+
+**The concept and its rules** (`mind/rules.ts`). `mind@1` forms only `m1.food-at`: one cell as its
+term, a band 0 to 2 as its value, never a negation. Each belief operation is its rule applied to the
+records it cites, reading only their content (an episode's kind, cell, speaker, value, act,
+proposition, and band, a relationship's being and trust), never an age or an importance:
+
+| Rule | Cites | Forms |
+|---|---|---|
+| `seen-food` | one `food` episode | its cell at its band, confidence 900 |
+| `told-food` | a `heard` episode of a `tell` of `m1.food-at`, then, when the being holds one, the relationship with its speaker | the claim told, confidence `min(1000, ⌊[300, 600, 800][band] · (500 + trust) · credulity / 10^6⌋)`, the trust 500 of a new relationship when no relationship is cited, and band 1 for a message with none |
+| revision | one `food` episode of the belief's cell | confidence 900 when it shows the believed band, 100 when it shows another; the belief's own confidence is not read |
+
+A message whose speaker is not visible, an injection, is a `heard` episode with no speaker, so it
+cites no relationship and weighs as a stranger's at band 1. A checked testimony changes the trust in
+its speaker by `min(100, relations.delta)` up when the cue shows the claimed band, down otherwise.
+
+**Memory** (`mind/memory.ts`, `mind/operations.ts`). Each decision proposes, by priority and each
+only whole: a **testimony**, the first `tell` of a food claim it does not hold whose `told-food`
+confidence is at least 500, remembered (importance 600) and believed; a **check**, by retrieval, of
+a belief whose cell the window shows with another band, or with its band when the belief's
+confidence is below 900, remembered (importance 500) and revised, and, for a belief told by a being
+it holds a relationship with, `relate` with the trust change, citing the belief and the cue; a
+belief contradicted again at confidence 100 or less is dropped instead; a **forgotten** food, the
+one it could walk no nearer to; a **landmark**, the window's best cue (highest band, then nearest,
+then first by index) farther than 12 cells from every food it believes in at 500 or more, not
+cooled, and not believed at that band already, remembered (importance 500) and believed by
+`seen-food`; and the **being it meets**, the hearer of its act, remembered (importance 400). The
+whole stays within `mind.ops` and the ids left, and cites nothing a full store would evict first:
+the brain predicts each store with the engine's law of salience, as the engine fills it.
+
+**Retrieval** (`mind/retrieval.ts`) scores a record `⌊1000·H / (H + age)⌋ · importance · relevance`,
+`H` the half-life of a belief scaled by retention, in one pass; ties go to the lower id, and a score
+of 0 is never retrieved. Food to seek: beliefs of band 1 or 2 at 500 or more, beyond the window and
+not cooled, importance their confidence, relevance `⌊1000·R·band / (2·(R + d))⌋` for a window of
+radius R and a distance d. A belief to tell: the same beliefs but not told by the hearer, relevance
+`500·band`. A belief to check: importance `max(cr, 1000 − cr)`, relevance 1000 when contradicted
+and 500 when confirmed.
+
 ## Preregistration
 
 Registered before any calibration. Every choice below is fixed: none is left to the pull request
