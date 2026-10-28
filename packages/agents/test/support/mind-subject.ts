@@ -37,10 +37,10 @@ export const SUBJECT_SEEDS: readonly [Seed, Seed] = [
 ];
 
 /** The tick of the injection: its being is chosen and found by a run of the ticks before it. */
-export const INJECTION_TICK = 30;
+const INJECTION_TICK = 30;
 
 /** The being research injects a false claim into. */
-export const INJECTED = 2;
+const INJECTED = 2;
 
 type Placed = {
   readonly cell: readonly [number, number];
@@ -98,7 +98,7 @@ export function mindWorld(seed: Seed, ruleset: SuiteRuleset, audit: boolean): Wo
 }
 
 /** The being `id` of `world`; throws when there is none. */
-export function subjectBeing(world: World, id: number): beings.Being2 {
+function subjectBeing(world: World, id: number): beings.Being2 {
   const view = readView(world as BeingsWorld);
   for (const key of view.readGlobal().occupancy)
     for (const being of view.readChunk(key)?.beings ?? [])
@@ -160,8 +160,8 @@ export type Landmarks = {
 };
 
 /** The first tick of the second day of the subject's world, and the first tick of its first dusk. */
-export const DAY_TICK = SUBJECT_DAY / 12;
-export const DUSK_TICK = duskTick();
+const DAY_TICK = SUBJECT_DAY / 12;
+const DUSK_TICK = duskTick();
 
 /** The first tick whose light is dim after a tick whose light was not: sight falls to its dim. */
 function duskTick(): number {
