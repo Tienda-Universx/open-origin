@@ -10,16 +10,26 @@
  * - a **testimony**: the first `tell` of a food claim it hears, unless it holds it already,
  *   remembered and believed by told-food, citing the relationship with its speaker when it holds
  *   one;
- * - a **landmark**: the best food cue in sight, unless it lies within LANDMARK_SPACING of food it
- *   believes in, remembered and believed by seen-food;
+ * - a **landmark**: the best food cue in sight, unless the mind holds its claim or holds food
+ *   within LANDMARK_SPACING of it, remembered and believed by seen-food;
  *
  * and, from the act it chose, an unreachable food it forgets and a being it meets. Each is all or
  * nothing, and is added only when the whole decision may still be proposed (operations.ts). Every
- * belief operation is its rule applied to what it cites (rules.ts); none cites nothing. Which
- * claim a testimony or a landmark forms depends on what the being hears and sees, never on a
- * record it does not cite, and the check, the only operation that its records choose, comes first:
- * decided again with only the records an operation cites, the decision proposes it again, the
- * ablation of mind.md ("Evaluation").
+ * belief operation is its rule applied to what it cites (rules.ts); none cites nothing.
+ *
+ * Which claim an operation forms, and what it cites, depends on no other operation of the decision
+ * and on no record it does not cite: a testimony's on what the being hears, a landmark's on what it
+ * sees, and the check's on the belief it revises. Records it does not cite only hold an operation
+ * back, when the mind holds its claim already or, for a landmark, holds food within
+ * LANDMARK_SPACING of it, judged against what the mind held before the decision, never against what
+ * another operation believes: a landmark of the claim a testimony of the same decision believes
+ * adopts it, which the engine applies as a revision. The operations before one hold it back only
+ * through the law of operations and the room of a store. Under the frozen laws (`mind.ops` 4,
+ * stores of 8), a decision made again with only the records an operation cites, the belief it
+ * revises, and every input that is no record, proposes that operation again, the ablation of
+ * mind.md ("Evaluation"): the check, which its records choose, comes first; a testimony and a
+ * landmark take four operations together; and such a decision's stores hold little more than what
+ * it cites.
  */
 import { type beings, type DeepReadonly, mind } from "@open-origin/engine";
 import { greatest } from "../curves.ts";
@@ -68,10 +78,13 @@ function nextEpisode(recall: Recall, ops: Ops): number {
   return recall.senses.mind.next + ops.remember.length;
 }
 
-/** Whether the mind holds, or the decision believes, that the food at `cell` is of band `v`. */
-function heldOrBelieved(recall: Recall, ops: Ops, cell: mind.Cell, v: number): boolean {
-  const all = [...recall.senses.mind.beliefs, ...ops.believe];
-  return all.some((belief) => claims(belief.p, cell, v));
+/**
+ * Whether the mind holds the claim that the food at `cell` is of band `v`. Only what it held
+ * before the decision counts, never what another operation of the decision believes, so that no
+ * operation depends on another (see the header).
+ */
+function holds(recall: Recall, cell: mind.Cell, v: number): boolean {
+  return recall.senses.mind.beliefs.some((belief) => claims(belief.p, cell, v));
 }
 
 /** The episode a message of the decision becomes, as the view of the next decision shows it. */
@@ -96,7 +109,7 @@ function testimony(recall: Recall, ops: Ops): Intent | undefined {
   const message = heard[index];
   const claim = message === undefined ? undefined : foodClaim(message.p);
   if (message === undefined || claim === undefined) return undefined;
-  if (heldOrBelieved(recall, ops, claim.cell, claim.v)) return undefined;
+  if (holds(recall, claim.cell, claim.v)) return undefined;
   const known = relationWith(recall, message.who);
   const cited: CitedRecord[] = [{ store: "episodes", record: heardEpisode(message) }];
   if (known !== undefined) cited.push({ store: "relations", record: known });
@@ -201,9 +214,9 @@ function trusted(
     : { who: speaker.who, tr, because: [belief.id, id] };
 }
 
-/** The cells of the food the being believes in, held or believed in this decision: its landmarks. */
-function landmarks(recall: Recall, ops: Ops): mind.Cell[] {
-  return [...recall.senses.mind.beliefs, ...ops.believe].flatMap((belief) => {
+/** The cells of the food the mind held before the decision at TELL_FLOOR or more: its landmarks. */
+function landmarks(recall: Recall): mind.Cell[] {
+  return recall.senses.mind.beliefs.flatMap((belief) => {
     const claim = foodClaim(belief.p);
     return claim !== undefined && claim.v > 0 && belief.cr >= TELL_FLOOR ? [claim.cell] : [];
   });
@@ -221,10 +234,10 @@ function betterSight(a: Sighted, b: Sighted | undefined): boolean {
 /**
  * The landmark in sight: the cell of the window with the highest food cue, then the nearest, then
  * the first by index, that it does not cool; none when that cell lies within LANDMARK_SPACING of a
- * landmark the being has, or its band there is one the mind already believes or doubts. The cell
- * is chosen from what the being sees alone, so its records decide only whether it is new.
+ * landmark the mind held before the decision, or its band there is one the mind held. The cell is
+ * chosen from what the being sees alone, so its records decide only whether it is new.
  */
-function sighted(recall: Recall, ops: Ops): Sighted | undefined {
+function sighted(recall: Recall): Sighted | undefined {
   const { window, self } = recall.senses;
   const cooled = self.cooldowns.map(({ cell }) => cell);
   let best: Sighted | undefined;
@@ -240,14 +253,14 @@ function sighted(recall: Recall, ops: Ops): Sighted | undefined {
     const candidate = { cell, cue, distance: chebyshev(cell, self.cell) };
     if (betterSight(candidate, best)) best = candidate;
   }
-  if (best === undefined || heldOrBelieved(recall, ops, best.cell, best.cue)) return undefined;
+  if (best === undefined || holds(recall, best.cell, best.cue)) return undefined;
   const near = (landmark: mind.Cell) => chebyshev(landmark, best.cell) <= LANDMARK_SPACING;
-  return landmarks(recall, ops).some(near) ? undefined : best;
+  return landmarks(recall).some(near) ? undefined : best;
 }
 
 /** A landmark: the food cue of the landmark in sight, remembered and believed by seen-food. */
 function landmark(recall: Recall, ops: Ops): Intent | undefined {
-  const sight = sighted(recall, ops);
+  const sight = sighted(recall);
   if (sight === undefined) return undefined;
   const { cell, cue } = sight;
   const cited: CitedRecord[] = [{ store: "episodes", record: { kind: "food", cell, v: cue } }];

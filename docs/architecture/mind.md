@@ -728,19 +728,27 @@ only whole: a **check**, by retrieval, of a belief whose cell the window shows w
 with its band when the belief's confidence is below 900, remembered (importance 500) and revised,
 and, for a belief told by a being it holds a relationship with, `relate` with the trust change,
 citing the belief and the cue; a belief contradicted again at confidence 100 or less is dropped
-instead; a **testimony**, the first `tell` of a food claim it hears, unless it holds that claim or
-its `told-food` confidence is below 500, remembered (importance 600) and believed; a **forgotten**
-food, the one it could walk no nearer to; a **landmark**, the window's best cue (highest band, then
-nearest, then first by index) that it does not cool, unless that cell lies within 12 cells of food
-it believes in at 500 or more or its band there is believed already, remembered (importance 500) and
-believed by `seen-food`; and the **being it meets**, the hearer of its act, remembered (importance
-400). The whole stays within `mind.ops` and the ids left, and cites nothing a full store would evict
-first: the brain predicts each store with the engine's law of salience, as the engine fills it.
-Which claim a testimony or a landmark forms depends only on what the being hears and sees, its
-records deciding only whether the claim is new, and the check, the one operation its records
-choose, comes first; so the decision, made again with only the records an operation cites, the
-belief it revises, and every input that is no record, proposes that operation again, the ablation
-of [Evaluation](#evaluation), which `mind-memory.test.ts` checks on decisions built by hand.
+instead; a **testimony**, the first `tell` of a food claim it hears, unless the mind holds that
+claim or its `told-food` confidence is below 500, remembered (importance 600) and believed; a
+**forgotten** food, the one it could walk no nearer to; a **landmark**, the window's best cue
+(highest band, then nearest, then first by index) that it does not cool, unless the mind holds that
+claim or holds food at 500 or more within 12 cells of it, remembered (importance 500) and believed
+by `seen-food`; and the **being it meets**, the hearer of its act, remembered (importance 400).
+"Holds" means held before the decision: what a testimony of the same decision believes holds back
+no landmark, and a landmark of the claim it believes adopts it, which the engine applies as a
+revision. The whole stays within `mind.ops` and the ids left, and cites nothing a full store would
+evict first: the brain predicts each store with the engine's law of salience, as the engine fills
+it, a belief that adopts another entering none.
+
+Which claim an operation forms and what it cites depend on no other operation of the decision and
+on no record it does not cite; such records only hold an operation back, and the operations before
+it hold it back only through `mind.ops` and the room of a store. Under the frozen laws, `mind.ops`
+4 and stores of 8, the decision made again with only the records an operation cites, the belief it
+revises, and every input that is no record, therefore proposes that operation again: the check,
+which its records choose, comes first, and a testimony and a landmark take four operations
+together. This is the ablation (b) of [Evaluation](#evaluation); `mind-memory.test.ts` checks it on
+decisions built by hand, the verifier's case among them, and `mind-ablation.test.ts` on 250
+decisions generated from a fixed seed.
 
 **Retrieval** (`mind/retrieval.ts`) scores a record `⌊1000·H / (H + age)⌋ · importance · relevance`,
 `H` the half-life of a belief scaled by retention, in one pass; ties go to the lower id, and a score

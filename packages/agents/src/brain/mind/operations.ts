@@ -10,6 +10,7 @@
 import { type beings, type DeepReadonly, mind } from "@open-origin/engine";
 import { greatest } from "../curves.ts";
 import type { BrainLaws } from "./laws.ts";
+import { type Claim, claims, foodClaim } from "./rules.ts";
 
 type Senses2 = DeepReadonly<beings.Senses2>;
 
@@ -122,6 +123,23 @@ function neededBeliefs(recall: Recall, ops: Ops): number[] {
   return [...recall.keep, ...ops.revise.map(({ id }) => id), ...ops.drop, ...cited];
 }
 
+/**
+ * The `believe`s of `ops` that create a belief, in order: those whose claim the mind does not hold
+ * and no earlier `believe` of the decision forms. A `believe` of a claim held or formed already
+ * adopts it, which the engine applies as a revision: it takes no id and enters no store.
+ */
+function creating(recall: Recall, ops: Ops): Believed[] {
+  const formed: Believed[] = [];
+  const known = (p: Believed["p"]) => {
+    const claim = foodClaim(p);
+    const same = (other: { readonly p: Claim }) =>
+      claim === undefined ? false : claims(other.p, claim.cell, claim.v);
+    return recall.senses.mind.beliefs.some(same) || formed.some(same);
+  };
+  for (const op of ops.believe) if (!known(op.p)) formed.push(op);
+  return formed;
+}
+
 /** Whether every belief the decision needs survives its `believe`s. */
 function beliefsKept(recall: Recall, ops: Ops): boolean {
   const { laws, senses } = recall;
@@ -133,12 +151,12 @@ function beliefsKept(recall: Recall, ops: Ops): boolean {
     salience: mind.decay(certainty(cr), u, halfLife),
     age: u,
   }));
-  const first = view.next + ops.remember.length;
-  const added = ops.believe.map(({ cr }, index) => ({
-    id: first + index,
-    salience: certainty(cr),
-    age: 0,
-  }));
+  let id = view.next + ops.remember.length;
+  const added: Ranked[] = [];
+  for (const { cr } of creating(recall, ops)) {
+    added.push({ id, salience: certainty(cr), age: 0 });
+    id += 1;
+  }
   const kept = admitted(held, added, laws.mind.beliefs);
   return neededBeliefs(recall, ops).every((id) => kept.includes(id));
 }
@@ -150,7 +168,7 @@ function beliefsKept(recall: Recall, ops: Ops): boolean {
 function fits(recall: Recall, ops: Ops): boolean {
   const { next } = recall.senses.mind;
   if (countOf(ops) > recall.laws.mind.ops) return false;
-  if (ops.remember.length + ops.believe.length > mind.INT31_MAX - next) return false;
+  if (ops.remember.length + creating(recall, ops).length > mind.INT31_MAX - next) return false;
   return episodesKept(recall, ops) && beliefsKept(recall, ops);
 }
 

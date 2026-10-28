@@ -22,6 +22,7 @@ import {
 import { foodAt } from "../src/brain/mind/rules.ts";
 import { mindController } from "../src/brain/mind.ts";
 import { utilityController } from "../src/index.ts";
+import { reformed } from "./support/mind-ablation.ts";
 import { ruleProblems } from "./support/mind-rules-check.ts";
 import { DAY, relationView, type Senses2, SPECIES2, senses2Of } from "./support/mind-senses.ts";
 import { windowOf } from "./support/senses.ts";
@@ -52,64 +53,6 @@ function belief(
 ): mind.BeliefView {
   const { v = 2, ...members } = rest;
   return { id, p: foodAt(cell, v), cr: SEEN_CR, src: 1, ev: [], lost: 0, dp: 1, u: 0, ...members };
-}
-
-/** `senses` whose mind holds only the records of `ids`, every other input kept, `next` too. */
-function ablated(senses: Senses2, ids: readonly number[]): Senses2 {
-  const view = senses.mind;
-  const kept = <T extends { readonly id: number }>(records: readonly T[]) =>
-    records.filter(({ id }) => ids.includes(id));
-  return {
-    ...senses,
-    mind: {
-      next: view.next,
-      episodes: kept(view.episodes),
-      beliefs: kept(view.beliefs),
-      relations: kept(view.relations),
-    },
-  };
-}
-
-/**
- * The belief operations of `ops`, each citation of a record the decision creates written as the
- * percept that creates it: a decision ablated to fewer records proposes fewer operations, so its
- * new records take other ids, while the records it held keep theirs.
- */
-function citing(ops: beings.MindIntention, next: number) {
-  const remember = ops.remember ?? [];
-  const cite = (ev: readonly number[]) =>
-    ev.map((id) => (id >= next ? remember[id - next]?.percept : id));
-  return {
-    believe: (ops.believe ?? []).map((op) => ({ ...op, ev: cite(op.ev) })),
-    revise: (ops.revise ?? []).map((op) => ({ ...op, ev: cite(op.ev) })),
-  };
-}
-
-/**
- * Each belief operation `controller` proposes from `senses`, and the operations of the same kind
- * it proposes from `senses` ablated to the records that operation cites, and for a revision the
- * belief it revises.
- */
-function reformed(
-  senses: Senses2,
-  controller: beings.Controller2,
-): { readonly op: unknown; readonly again: readonly unknown[] }[] {
-  const ops = decide(senses, controller).mind ?? {};
-  const { next } = senses.mind;
-  const again = (ids: readonly number[]) =>
-    citing(decide(ablated(senses, ids), controller).mind ?? {}, next);
-  const { believe, revise } = citing(ops, next);
-  return [
-    ...believe.map((op, index) => ({
-      op,
-      again: again((ops.believe?.[index]?.ev ?? []).filter((id) => id < next)).believe,
-    })),
-    ...revise.map((op, index) => {
-      const original = ops.revise?.[index];
-      const held = [...(original?.ev ?? []), original?.id ?? 0].filter((id) => id < next);
-      return { op, again: again(held).revise };
-    }),
-  ];
 }
 
 const R = 24;
@@ -342,6 +285,83 @@ describe("the operations of one decision", () => {
     expect(decide(busy, lawOf(0)).mind).toBeUndefined();
   });
 
+  test("judge a landmark new against what the mind holds, never against the decision's testimony", () => {
+    // The verifier's case: food at (30, 0) it believed, saw contradicted once, and hears told again.
+    const senses = senses2Of(window([[20, 0, 2]]), {
+      heard: [{ who: 7, cell: [1, 0], act: "tell", p: foodAt([30, 0], 2), band: 2 }],
+      mind: {
+        next: 10,
+        beliefs: [belief(3, [30, 0], { cr: CONTRADICTED_CR })],
+        relations: [relationView(2, 7)],
+      },
+    });
+    const landmark = { p: foodAt([20, 0], 2), cr: SEEN_CR, ev: [10], rule: RULE_IDS.seen };
+    expect(decide(senses).mind).toEqual({
+      remember: [{ percept: { food: [20, 0] }, w: FOOD_W }],
+      believe: [landmark],
+    });
+    // Decided again with none of its records, it believes the testimony and still the landmark,
+    // though the testimony's food lies 10 cells from it.
+    const bare = { ...senses, mind: { ...senses.mind, beliefs: [], relations: [] } };
+    expect(decide(bare).mind).toEqual({
+      remember: [
+        { percept: { heard: 0 }, w: HEARD_W },
+        { percept: { food: [20, 0] }, w: FOOD_W },
+      ],
+      believe: [
+        { p: foodAt([30, 0], 2), cr: 800, ev: [10], rule: RULE_IDS.told },
+        { ...landmark, ev: [11] },
+      ],
+    });
+  });
+
+  test("let a landmark adopt the claim a testimony of the same decision believes", () => {
+    // Told what it sees: the testimony forms the belief, and the landmark revises it by adopting
+    // it, which takes no id and enters no store.
+    const told = senses2Of(window([[20, 0, 2]]), {
+      heard: [{ who: 7, cell: [1, 0], act: "tell", p: foodAt([20, 0], 2), band: 2 }],
+      mind: { next: 10 },
+    });
+    expect(decide(told).mind).toEqual({
+      remember: [
+        { percept: { heard: 0 }, w: HEARD_W },
+        { percept: { food: [20, 0] }, w: FOOD_W },
+      ],
+      believe: [
+        { p: foodAt([20, 0], 2), cr: 800, ev: [10], rule: RULE_IDS.told },
+        { p: foodAt([20, 0], 2), cr: SEEN_CR, ev: [11], rule: RULE_IDS.seen },
+      ],
+    });
+  });
+
+  test("count no room for a landmark that adopts, in a store full of what it needs", () => {
+    // Seven beliefs: an old one at (4, 0), which the window contradicts, the least salient, and six
+    // fresh ones far away. The testimony fills the store; the landmark adopts its claim and evicts
+    // nothing, so the belief the check revises stays.
+    const old = belief(1, [4, 0], { u: 10 * DAY });
+    const fresh = Array.from({ length: 6 }, (_, index) => belief(index + 2, [40 + index, 40]));
+    const senses = senses2Of(window([[20, 0, 2]]), {
+      heard: [{ who: 7, cell: [1, 0], act: "tell", p: foodAt([20, 0], 2), band: 2 }],
+      mind: { next: 20, beliefs: [old, ...fresh] },
+    });
+    const wide = mindController({
+      species: { ...SPECIES2, mind: { ...SPECIES2.mind, ops: 8 } },
+      dayLength: DAY,
+    });
+    expect(decide(senses, wide).mind).toEqual({
+      remember: [
+        { percept: { food: [4, 0] }, w: FOOD_W },
+        { percept: { heard: 0 }, w: HEARD_W },
+        { percept: { food: [20, 0] }, w: FOOD_W },
+      ],
+      believe: [
+        { p: foodAt([20, 0], 2), cr: 800, ev: [21], rule: RULE_IDS.told },
+        { p: foodAt([20, 0], 2), cr: SEEN_CR, ev: [22], rule: RULE_IDS.seen },
+      ],
+      revise: [{ id: 1, cr: CONTRADICTED_CR, ev: [20] }],
+    });
+  });
+
   test("form each belief again from its citations alone: the ablation of the decision", () => {
     // Decided again with only the records an operation cites, the belief it revises, and every
     // input that is no record, the decision still proposes it (mind.md, "Evaluation").
@@ -382,7 +402,9 @@ describe("the operations of one decision", () => {
       },
     );
     const checks = [busy, known, novel].flatMap((senses) =>
-      [brain, law].flatMap((controller) => reformed(senses, controller)),
+      [brain, law].flatMap((controller) =>
+        reformed(senses, (ablation) => decide(ablation, controller)),
+      ),
     );
     for (const { op, again } of checks) expect(again).toContainEqual(op);
     const checked = checks.length;
