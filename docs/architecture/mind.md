@@ -692,9 +692,9 @@ worlds woke and decided the same number of beings at every tick, which the bench
 `beings@1`; ticks of 50.01 ms at the median and 113.28 ms at p99, against 26.74 and 68.89 ms; and a
 wake that does not decide cost 486 µs against 143 µs (152 such ticks), 320 µs more paired tick by
 tick. The p99 hashed is below 1 MB, so the entity section stays in T7. With full minds, the time
-targets of "dispersed 1,000" are at their limit or missed: the median tick of 50.01 ms stands at the
-limit of at most 50; the p99 of 113.28 ms misses at most 100; and 320 µs more per wake that does not
-decide misses at most 150. The cause is not yet measured: every write of a being turns its whole
+targets of "dispersed 1,000" are missed: the median tick of 50.01 ms misses at most 50 by 0.01 ms;
+the p99 of 113.28 ms misses at most 100; and 320 µs more per wake that does not decide misses at
+most 150. The cause is not yet measured: every write of a being turns its whole
 chunk, mind included, into canonical text, hashes it, and validates it. T5-9 profiles that cost
 before any optimization, and a miss that remains is recorded as it is.
 
