@@ -264,7 +264,11 @@ with the reason `no_food` or `incapacitated`. An invalid intention is rejected w
 reasons `malformed`, `walk_not_first`, and `walk_blocked`: the being idles briefly, `outcome`
 records the reason, and the engine emits `being.intention_rejected`. A brain that throws
 poisons the world. The ruleset captures its brains as it captures its lists, and its
-brain version composes each species with its brain, in species order.
+brain version composes each species with its brain, in species order. A `decide` must be an
+ordinary function: the capture refuses an async function or a generator with `invalid_ruleset`,
+because it returns a promise or an iterator, never an intention (tracker L53). A sync `decide`
+that returns a promise is rejected as `malformed` when it decides, and a promise it leaves rejected
+is the host's to handle, since the engine may not name `Promise`; T6's host installs that handler.
 
 ### `utility@1`
 
@@ -483,7 +487,10 @@ One system, `beings`, runs three phases:
    events. At most one write of the global value per tick.
 
 Commands: `beings.spawn`, from an admin, with `{ species, cell, needs?, traits? }` and no draws;
-from any other origin it is rejected with the reason `admin_only`.
+from any other origin it is rejected with the reason `admin_only`, and into a chunk that already
+holds 65,536 beings, the most a chunk may, with `invalid_spawn`, so that a spawn never makes a
+chunk invalid and poisons the world (tracker L53). A walk into such a chunk still poisons it: a
+ceiling of `beings@1`, which `beings@2` replaces with a capacity law ([Mind](mind.md)).
 Events, one per behavior rather than per step, on the order of 50 per being and simulated day:
 `being.spawned`, `started`, `finished`, `ate`, `contested`, `exhausted`, `incapacitated`,
 `recovered`, `died`, `intention_rejected`. A sleep starts and finishes as every activity does, so

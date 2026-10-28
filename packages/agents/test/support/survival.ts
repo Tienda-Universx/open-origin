@@ -41,14 +41,15 @@ export type KeptRun = {
 
 /**
  * What a child process returns: the run's metrics, its world's day in seconds and its seconds per
- * tick, the first tick at which each being that was incapacitated was, as [id, tick] pairs, and
- * what it kept.
+ * tick, the first tick at which each being that was incapacitated was, as [id, tick] pairs, the
+ * digest of every tick's checksum, and what it kept.
  */
 export type SurvivalOutput = {
   readonly record: RunRecord;
   readonly dayLength: number;
   readonly simSecondsPerTick: number;
   readonly incapacitatedAt: readonly (readonly [number, number])[];
+  readonly trail: string;
   readonly kept?: KeptRun;
 };
 
@@ -72,7 +73,7 @@ export function startSurvival(input: SurvivalInput): JsonChild {
 /** Whether `value` has the shape of a SurvivalOutput, as far as the readers of a run rely on it. */
 function isSurvivalOutput(value: unknown): value is SurvivalOutput {
   if (typeof value !== "object" || value === null) return false;
-  const { record, dayLength, simSecondsPerTick, incapacitatedAt } = value as {
+  const { record, dayLength, simSecondsPerTick, incapacitatedAt, trail } = value as {
     readonly [key: string]: unknown;
   };
   if (typeof record !== "object" || record === null) return false;
@@ -80,7 +81,8 @@ function isSurvivalOutput(value: unknown): value is SurvivalOutput {
     Array.isArray((record as { beings?: unknown }).beings) &&
     typeof dayLength === "number" &&
     typeof simSecondsPerTick === "number" &&
-    Array.isArray(incapacitatedAt)
+    Array.isArray(incapacitatedAt) &&
+    typeof trail === "string"
   );
 }
 

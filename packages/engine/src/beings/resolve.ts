@@ -222,32 +222,72 @@ function liveChunk(env: BeingsEnv, key: ChunkKey): BeingsChunk {
 /**
  * `entries` with what was taken at this tick added and re-anchored now, and the entries that fully
  * regrew dropped; untouched entries keep their anchor, so their regrowth never depends on when the
- * chunk was written.
+ * chunk was written. Both lists are in cell order, the entries by the chunk's invariant and the
+ * takes by resolveClaims, so one merge pass visits each cell once (tracker L53).
  */
 function deplete(
   env: BeingsEnv,
   entries: readonly Depletion[],
   takes: readonly Take[],
 ): Depletion[] {
+  if (!inCellOrder(entries) || !inCellOrder(takes))
+    throw integrity("the depletion or the takes of a chunk are not in the order of their cells");
   const result: Depletion[] = [];
-  const cells = [...entries.map((entry) => entry.cell), ...takes.map((take) => take.cell)].sort(
-    (a, b) => a - b,
-  );
-  let previous = -1;
-  for (const cell of cells) {
-    if (cell === previous) continue;
-    previous = cell;
-    const entry = entries.find((candidate) => candidate.cell === cell);
-    const since = entry === undefined ? env.now : simSeconds(entry.since, env.sps);
-    const missing = entry === undefined ? 0 : takenAt(entry, env.regrowth(), env.now - since);
-    const taken =
-      missing +
-      takes.filter((take) => take.cell === cell).reduce((sum, take) => sum + take.units, 0);
-    if (taken === 0) continue;
-    const changed = takes.some((take) => take.cell === cell);
-    result.push(changed || entry === undefined ? { cell, taken, since: env.tick } : entry);
+  let next = 0;
+  let at = 0;
+  while (next < entries.length || at < takes.length) {
+    const cell = firstCell(entries[next], takes[at]);
+    const entry = entries[next]?.cell === cell ? entries[next] : undefined;
+    if (entry !== undefined) next += 1;
+    const run = takesOn(takes, at, cell);
+    at = run.end;
+    const kept = depleted(env, cell, entry, run);
+    if (kept !== undefined) result.push(kept);
   }
   return result;
+}
+
+/** The takes on `cell` from index `start` on: the units they took, and the index after them. */
+type TakeRun = { readonly units: number; readonly any: boolean; readonly end: number };
+
+/** The run of takes on `cell` that starts at index `start` of `takes`. */
+function takesOn(takes: readonly Take[], start: number, cell: number): TakeRun {
+  let end = start;
+  let units = 0;
+  for (let take = takes[end]; take?.cell === cell; take = takes[end]) {
+    units += take.units;
+    end += 1;
+  }
+  return { units, any: end > start, end };
+}
+
+/**
+ * The entry of `cell` after this tick: re-anchored now when something was taken from it or it is
+ * new, `entry` itself otherwise, and undefined when nothing is missing from the cell.
+ */
+function depleted(
+  env: BeingsEnv,
+  cell: number,
+  entry: Depletion | undefined,
+  run: TakeRun,
+): Depletion | undefined {
+  const since = entry === undefined ? env.now : simSeconds(entry.since, env.sps);
+  const missing = entry === undefined ? 0 : takenAt(entry, env.regrowth(), env.now - since);
+  const taken = missing + run.units;
+  if (taken === 0) return undefined;
+  return run.any || entry === undefined ? { cell, taken, since: env.tick } : entry;
+}
+
+/** Whether the cells of `items` never decrease. */
+function inCellOrder(items: readonly { readonly cell: number }[]): boolean {
+  return items.every((item, index) => index === 0 || (items[index - 1]?.cell ?? 0) <= item.cell);
+}
+
+/** The lower of the cells of `entry` and `take`, whichever are defined; one of them always is. */
+function firstCell(entry: Depletion | undefined, take: Take | undefined): number {
+  if (entry === undefined) return take?.cell ?? 0;
+  if (take === undefined) return entry.cell;
+  return least(entry.cell, take.cell);
 }
 
 /** A processed being's record after this tick, with the key of the chunk it ends the tick in. */

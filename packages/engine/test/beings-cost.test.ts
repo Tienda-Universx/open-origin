@@ -15,6 +15,7 @@ import {
   beings,
   type Command,
   createWorld,
+  digest,
   type Ruleset,
   readView,
   step,
@@ -201,13 +202,15 @@ function countedRun(
   const spawns: Command[] = DISPERSED_CELLS.map((cell, seq) =>
     spawn(1, { species: SPECIES.id, cell: [...cell], needs }, seq),
   );
-  step(world, spawns);
+  const checksums = [step(world, spawns).checksum];
   const counted: CountedTick[] = [];
   let ate = 0;
   for (let tick = 2; tick <= ticks; tick += 1) {
     const { occupied, wakes } = before(world);
     const [calls, decided] = [sink.length, windows.length];
-    ate += step(world, []).events.filter((event) => event.type === "being.ate").length;
+    const result = step(world, []);
+    checksums.push(result.checksum);
+    ate += result.events.filter((event) => event.type === "being.ate").length;
     counted.push({
       tick,
       calls: sink[calls] as Calls,
@@ -219,7 +222,7 @@ function countedRun(
       dayTurns: Math.floor((tick * SPS) / DAY) > Math.floor(((tick - 1) * SPS) / DAY),
     });
   }
-  return { counted, ate };
+  return { counted, ate, trail: digest(checksums) };
 }
 
 /**
@@ -269,9 +272,16 @@ function callIssues(tick: CountedTick): string[] {
 /** How many ticks the counted run lasts: past two day turns of the test genesis. */
 const COUNTED_TICKS = 250;
 
+/**
+ * The digest of every tick's checksum of the counted run, pinned on `6fa7375` before T5 shared any
+ * code with `beings@2`: `beings@1` must keep every output byte for byte (ADR 0024).
+ */
+const COUNTED_TRAIL = "2133bae0ed57d42bbca36644bb7740ec";
+
 describe("the calls of the beings system, counted (plan §7)", () => {
   test("each tick reads only the chunks listed, sensed, or occupied, within the bound, and never lists every chunk", () => {
-    const { counted, ate } = countedRun(COUNTED_TICKS);
+    const { counted, ate, trail } = countedRun(COUNTED_TICKS);
+    expect(trail).toBe(COUNTED_TRAIL);
     expect(counted.flatMap(callIssues)).toEqual([]);
     // Not vacuous: beings decided, several in one tick; were processed without deciding; ate; left
     // their chunks for others; and the prune ran on both day turns.
