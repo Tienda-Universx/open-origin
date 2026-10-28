@@ -15,6 +15,14 @@ export {
   within,
 } from "./bounds.ts";
 export {
+  checkMindLaws,
+  defaultMindLaws,
+  familiaritySaturation,
+  MIND_LAW_BOUNDS,
+  type MindLaws,
+  type Ratio,
+} from "./laws.ts";
+export {
   checkProposition,
   copyProposition,
   isConceptId,
