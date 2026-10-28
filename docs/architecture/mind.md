@@ -395,7 +395,9 @@ what inhabitants think.
    by `random.permutation` on the stream `beings.crowd`, keyed by the lowest arriving id, and the
    first take the places. The rest end their walk at the cell they started the tick in, which their
    own chunk still counts, with the result `failed`, the reason `crowded`, an idle of 1 ms, and a
-   wake at t + 1. Then deliveries are resolved.
+   wake at t + 1. A loser whose walk ended at t has already decided at its new cell in phase 2: what
+   it started there is replaced too, and its `being.finished` names the walk. Then deliveries are
+   resolved.
 4. `applyWorks`: the final records, where an unchanged mind is the same value, not a copy; then the
    deliveries; then `due` and the occupancy.
 5. Events: those of phase 2 by being id, each being's in the order T4 emits them, then its
@@ -475,6 +477,10 @@ before iterating, and requires exact members, NFC strings, and the grammars abov
 | C0 | The `talk` activity and its hearer; `speech.uttered` |
 | C1 | Episodes, beliefs, and relationships without their taints; the inbox; the three traits; `mind.quota`; `mind.changed`, `speech.delivered` |
 | C3 | `tn`, `ex`, `exposure`; the episode kind `external` and the evidence bit 8; the captured content of a talk in progress; `speech.unheard`, `mind.provenance`, `mind.injected`, `mind.inject`; the laws of `life@2`; reference truth |
+
+The events and the command of T4 are classified too: `being.spawned`, `being.started`, and
+`being.died`, which an observer could see happen, are C0; the other `being.*` events, the being's
+own experience and body, are C1; and `beings.spawn`, an admin command, is C3.
 
 Taints are C3, not C1, because C1 may reach the inhabitant itself
 ([0008](../decisions/0008-data-classification-and-audience-projections.md)), and an inhabitant
@@ -659,6 +665,21 @@ of T2 to T4. "dispersed 10,000" already crosses it: at about 1.3 KB per being it
 and recorded in T5-9. For T7, the section needs one hash term per component, body and mind, so that
 a step rehashes about 0.5 KB rather than about 4 KB; T5-9 measures the share of writes that change
 only the body as evidence for that design.
+
+**Measured: the gate** (2026-10-28, `bun packages/agents/bench/gate.ts`, one run at `nice -n 19` on
+the Codespace, Bun 1.4.4; indicative). "dispersed 1,000" on the terrain of `open-origin/t5/bench`,
+whose spawn area centers on chunk (−4, −4), built as initial chunks with every being of `beings@2`
+holding the gate's mind, ran one simulated day (6,300 ticks after 100 of warm-up) under the mindless
+baseline, stepped in turn with the same beings under `beings@1` and `utility@1`; both worlds woke and
+decided the same beings at every tick. Under `beings@2`: 247.8 KB hashed at the median tick and
+419.5 KB at p99, against 52.6 and 106.2 KB under `beings@1`; ticks of 50.0 ms at the median and
+113.3 ms at p99, against 26.7 and 68.9 ms; and a wake that does not decide cost 486 µs against 143 µs
+(152 such ticks), 320 µs more paired tick by tick. The p99 hashed is below 1 MB, so the entity
+section stays in T7. The tick and the wake that does not decide already sit at or beyond the targets
+above for `mind@1` (a median of 50 ms, a p99 of 100 ms, and 150 µs), unverified as to cause: every
+write of a being turns its whole chunk, mind included, into canonical text, hashes it, and validates
+it, and the term per component of T7 would spare the hashing of a mind that did not change. T5-9
+measures them again with `mind@1`.
 
 ## Verification plan
 
