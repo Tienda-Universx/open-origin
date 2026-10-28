@@ -213,6 +213,52 @@ describe("a relationship", () => {
 });
 
 /**
+ * The speaker of a message in the inbox. Until speech (T5-6) delivers one, only a mind the host
+ * placed holds such a message: a tell from being 41, which being 1 neither perceives nor knows,
+ * tainted human-external and implementation-leak. The tick a relationship created from a message
+ * records as `seen` is left to T5-6, which decides what it means without a perception.
+ */
+describe("the speaker of a message in the inbox", () => {
+  const message: mind.InboxMessage = {
+    who: 41,
+    t: 0,
+    cell: [A[0], A[1]],
+    act: "tell",
+    p: { p: "t1.food-at", a: [{ c: [1, 1] }] },
+    band: 1,
+    tn: 2,
+    ex: 4,
+  };
+  const held = mindOf({ inbox: [message], exposure: 6 });
+
+  test("gets a relationship at step 1, with only its creation in the ledger", () => {
+    const { being, events } = relateOnce({}, { held });
+    expect(being.mind.inbox).toEqual([]);
+    expect(being.mind.relations).toHaveLength(1);
+    expect(being.mind.relations[0]).toMatchObject({ id: 1, who: 41, f: 0, aff: 0, tr: 500, tn: 0 });
+    const changed = eventsAt(events, 1).find(([type]) => type === "mind.changed");
+    expect(changed?.[1]).toMatchObject({ related: [1] });
+  });
+
+  test("leaves the message's taints on the heard episode a remember makes of it", () => {
+    const { being, events } = relateOnce(
+      { remember: [{ percept: { heard: 0 }, w: 500 }] },
+      { held },
+    );
+    expect(being.mind.episodes).toHaveLength(1);
+    expect(being.mind.episodes[0]).toMatchObject({ id: 2, kind: "heard", who: 41, tn: 2, ex: 4 });
+    const provenance = eventsAt(events, 1).find(([type]) => type === "mind.provenance");
+    expect(provenance?.[1]).toMatchObject({
+      records: [
+        { id: 1, tn: 0, ex: 0, ev: [] },
+        { id: 2, tn: 2, ex: 4, ev: [] },
+      ],
+      exposure: 6,
+    });
+  });
+});
+
+/**
  * The mind of the relate tests: being 40 perceived (1), food (2), a tell heard from 40 with `tn`
  * human-external and `ex` implementation-leak (3), the relationship with 40 (4), a belief citing
  * it (5), and a belief citing that one (6).
