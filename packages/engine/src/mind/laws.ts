@@ -5,7 +5,8 @@
  * the two that span several laws. Their seal and their other parts belong to the beings layer.
  */
 import type { IssueSink } from "../canonical/value.ts";
-import { ceilDiv, INT31_MAX, type IntRange, MIND_BOUNDS, range, within } from "./bounds.ts";
+import { ceilDiv } from "../int.ts";
+import { INT31_MAX, type IntRange, MIND_BOUNDS, range, within } from "./bounds.ts";
 
 /** A rate of `num` units per `den` simulated seconds, as the rates of T4. */
 export type Ratio = { readonly num: number; readonly den: number };

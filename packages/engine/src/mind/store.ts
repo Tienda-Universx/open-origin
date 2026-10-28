@@ -7,7 +7,8 @@
  * of relationships always admits a being met for the first time, and evicts the other relationship
  * with the lowest familiarity, then the one seen longest ago, then the lowest id.
  */
-import { INT31_MAX, least } from "./bounds.ts";
+import { least } from "../int.ts";
+import { INT31_MAX } from "./bounds.ts";
 import type { MindContext } from "./context.ts";
 import { familiarity } from "./familiarity.ts";
 import type { Belief, Episode, LocalId, Mind, Relationship } from "./records.ts";

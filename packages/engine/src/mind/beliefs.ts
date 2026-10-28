@@ -14,7 +14,8 @@
  *   and reports the ones it drops, while `src`, `tn`, and `ex` keep what they brought.
  * - Citing a record refreshes it: an episode as a recall does, a belief's `u` becomes now.
  */
-import { greatest, MIND_BOUNDS } from "./bounds.ts";
+import { greatest } from "../int.ts";
+import { MIND_BOUNDS } from "./bounds.ts";
 import type { MindContext } from "./context.ts";
 import { copyProposition, type Proposition, sameProposition } from "./prop.ts";
 import {

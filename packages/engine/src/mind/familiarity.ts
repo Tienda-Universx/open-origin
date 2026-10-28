@@ -7,8 +7,7 @@
  * view. The decay is the salience formula with `w = f`, the anchor `seen`, and
  * `relations.halfLife`, which retention does not scale.
  */
-import { floorDiv } from "../int.ts";
-import { least } from "./bounds.ts";
+import { floorDiv, least } from "../int.ts";
 import { type MindContext, secondsSince } from "./context.ts";
 import { familiaritySaturation } from "./laws.ts";
 import type { Relationship } from "./records.ts";

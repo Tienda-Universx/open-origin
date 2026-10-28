@@ -17,15 +17,7 @@ export {
   type MindRefused,
   type ReviseOperation,
 } from "./beliefs.ts";
-export {
-  ceilDiv,
-  greatest,
-  INT31_MAX,
-  type IntRange,
-  least,
-  MIND_BOUNDS,
-  within,
-} from "./bounds.ts";
+export { INT31_MAX, type IntRange, MIND_BOUNDS } from "./bounds.ts";
 export type { MindContext, Moment } from "./context.ts";
 export { familiarity, familiarSeconds, perceivedAgain } from "./familiarity.ts";
 export { forget } from "./forget.ts";

@@ -4,7 +4,8 @@
  * seconds per tick, and it measures the seconds since an anchor as (tick − anchor) × seconds per
  * tick, which stays a safe integer because the seconds of the tick itself do.
  */
-import { INT31_MAX, least } from "./bounds.ts";
+import { least } from "../int.ts";
+import { INT31_MAX } from "./bounds.ts";
 import type { MindLaws } from "./laws.ts";
 
 /** A tick, and the simulated seconds each tick lasts in the world. */

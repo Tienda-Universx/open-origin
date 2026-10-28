@@ -11,8 +11,7 @@
  * where E is the seconds from the anchor to the moment. 2^k is taken only for k below 30, so no
  * shift wraps; the laws keep every product a safe integer (laws.ts).
  */
-import { floorDiv, floorMod } from "../int.ts";
-import { greatest, least } from "./bounds.ts";
+import { floorDiv, floorMod, greatest, least } from "../int.ts";
 import { type MindContext, secondsSince } from "./context.ts";
 import type { MindLaws } from "./laws.ts";
 import type { Belief, Episode, LocalId } from "./records.ts";

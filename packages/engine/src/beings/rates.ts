@@ -5,7 +5,11 @@
  * value is a safe integer, whatever the elapsed time, because products that could leave the safe
  * integers are split or saturated first.
  */
-import { floorDiv } from "../int.ts";
+import { ceilDiv, floorDiv } from "../int.ts";
+
+// The integer helpers live in int.ts, which every layer may import; the beings layer's modules
+// keep importing them from here.
+export { ceilDiv, greatest, least } from "../int.ts";
 
 /** A rate of `num` units per `den` simulated seconds. */
 export type Ratio = { readonly num: number; readonly den: number };
@@ -22,24 +26,6 @@ export const RATIO_BOUNDS = Object.freeze({
 
 /** The largest value of a need or of health: the fixed-point 0 to 1,000,000 of plan §I.1.4. */
 export const NEED_MAX = 1_000_000;
-
-/** The smaller of `a` and `b`. Math is denied in the engine (ADR 0003). */
-export function least(a: number, b: number): number {
-  if (a < b) return a;
-  return b;
-}
-
-/** The larger of `a` and `b`. */
-export function greatest(a: number, b: number): number {
-  if (a > b) return a;
-  return b;
-}
-
-/** ⌈a / b⌉ for a safe integer a ≥ 0 and a positive safe integer b, without computing a + b − 1. */
-export function ceilDiv(a: number, b: number): number {
-  const quotient = floorDiv(a, b);
-  return quotient * b === a ? quotient : quotient + 1;
-}
 
 /**
  * ⌊num·seconds/den⌋ for `seconds` ≥ 0, or `cap` when that is larger. It is computed as

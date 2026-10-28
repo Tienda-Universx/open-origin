@@ -3,9 +3,7 @@
  * life@2"): their defaults, the bounds of the table at both edges, and the two rules across laws.
  */
 import { describe, expect, test } from "bun:test";
-import * as rates from "../src/beings/rates.ts";
 import { beings, type Issue, mind } from "../src/index.ts";
-import { Sfc32 } from "./support/sfc32.ts";
 
 const { checkMindLaws, defaultMindLaws, familiaritySaturation, MIND_LAW_BOUNDS } = mind;
 
@@ -158,18 +156,7 @@ describe("checkMindLaws", () => {
   });
 });
 
-describe("what the mind layer shares with the beings layer", () => {
-  test("ceilDiv, least, and greatest agree with the beings layer's, which it may not import", () => {
-    const random = new Sfc32(5306);
-    for (let round = 0; round < 2000; round += 1) {
-      const a = random.between(0, 0xffff_ffff) * random.between(1, 0x1f_ffff);
-      const b = random.between(1, 0xffff_ffff);
-      expect(mind.ceilDiv(a, b)).toBe(rates.ceilDiv(a, b));
-      expect(mind.least(a, b)).toBe(rates.least(a, b));
-      expect(mind.greatest(a, b)).toBe(rates.greatest(a, b));
-    }
-  });
-
+describe("familiaritySaturation", () => {
   test("familiarity saturates within the 2^22 seconds its bound allows", () => {
     expect(mind.MIND_BOUNDS.familiarity.max).toBe(2 ** 22);
     expect(familiaritySaturation({ num: 5, den: 36 })).toBe(7200);

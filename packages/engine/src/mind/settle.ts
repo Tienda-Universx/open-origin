@@ -6,7 +6,7 @@
  * settled. Afterwards a belief's taints contain those of everything it cites, and the taints of a
  * belief never shrink.
  */
-import { greatest } from "./bounds.ts";
+import { greatest } from "../int.ts";
 import type { Belief, LocalId, Mind, MindRecord } from "./records.ts";
 import { citedTaints } from "./taints.ts";
 

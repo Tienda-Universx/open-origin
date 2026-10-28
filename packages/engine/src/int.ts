@@ -63,3 +63,21 @@ export function floorMod(a: number, b: number): number {
   const remainder = a % b;
   return remainder < 0 ? remainder + b : remainder + 0;
 }
+
+/** The smaller of `a` and `b`, without `Math.min`, which this module does not use. */
+export function least(a: number, b: number): number {
+  if (a < b) return a;
+  return b;
+}
+
+/** The larger of `a` and `b`. */
+export function greatest(a: number, b: number): number {
+  if (a > b) return a;
+  return b;
+}
+
+/** ⌈a / b⌉ for a safe integer a ≥ 0 and a positive safe integer b, without computing a + b − 1. */
+export function ceilDiv(a: number, b: number): number {
+  const quotient = floorDiv(a, b);
+  return quotient * b === a ? quotient : quotient + 1;
+}

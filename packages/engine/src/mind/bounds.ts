@@ -1,10 +1,8 @@
 /**
  * The bounds of the values a mind holds (ADR 0024, docs/architecture/mind.md "The mind of a
- * being"), and the integer helpers of the mind layer. The layer may not import the beings layer or
- * worldgen, so the few helpers and bounds it shares with them are written here again; tests pin
- * that they agree.
+ * being"). The layer may not import worldgen, so the bounds of a cell are written here again, and a
+ * test pins them to worldgen's.
  */
-import { floorDiv } from "../int.ts";
 
 /** The integers from `min` to `max`, both included. */
 export type IntRange = { readonly min: number; readonly max: number };
@@ -59,22 +57,4 @@ export const MIND_BOUNDS = Object.freeze({
 /** Whether `value` lies within `bounds`. */
 export function within(value: number, bounds: IntRange): boolean {
   return value >= bounds.min && value <= bounds.max;
-}
-
-/** The smaller of `a` and `b`; `Math` is denied outside int.ts (ADR 0003). */
-export function least(a: number, b: number): number {
-  if (a < b) return a;
-  return b;
-}
-
-/** The larger of `a` and `b`. */
-export function greatest(a: number, b: number): number {
-  if (a > b) return a;
-  return b;
-}
-
-/** ⌈a / b⌉ for a safe integer a ≥ 0 and a positive safe integer b, without computing a + b − 1. */
-export function ceilDiv(a: number, b: number): number {
-  const quotient = floorDiv(a, b);
-  return quotient * b === a ? quotient : quotient + 1;
 }

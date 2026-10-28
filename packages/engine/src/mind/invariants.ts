@@ -8,7 +8,8 @@
  * mind the engine wrote always holds them.
  */
 import type { IssueSink } from "../canonical/value.ts";
-import { greatest, type IntRange, MIND_BOUNDS, within } from "./bounds.ts";
+import { greatest } from "../int.ts";
+import { type IntRange, MIND_BOUNDS, within } from "./bounds.ts";
 import {
   ACTS,
   type Belief,
