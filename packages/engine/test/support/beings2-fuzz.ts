@@ -161,22 +161,32 @@ class Operations {
 }
 
 /**
- * Relates, half the time, a perceived being, citing the episode it remembers of it and, half of
- * those times, one of its beliefs too, which may carry taints into the relationship; a quarter of
- * those times, it relates the same being again in the decision.
+ * Relates, half the time, a perceived being, citing the episode it remembers of it and what
+ * `alsoOf` adds, which may carry taints into the relationship; a quarter of those times, it
+ * relates the same being again in the decision. Returns the being it related.
  */
-function relateSeen(ops: Operations, senses: Senses2, random: Sfc32): void {
+function relateSeen(ops: Operations, senses: Senses2, random: Sfc32): number | undefined {
   const seen = senses.perceived.beings;
-  if (seen.length === 0 || random.below(2) === 0) return;
+  if (seen.length === 0 || random.below(2) === 0) return undefined;
   const index = random.below(seen.length);
   const id = ops.keep({ being: index }, random.below(1001));
   const who = (seen[index] as beings.PerceivedBeing).id;
   const change = () => random.below(501) - 250;
-  const { beliefs } = senses.mind;
-  const also =
-    beliefs.length > 0 && random.below(2) === 0 ? [beliefs[random.below(beliefs.length)]?.id] : [];
-  ops.add("relate", { who, aff: change(), tr: change(), because: [id, ...also] });
+  ops.add("relate", { who, aff: change(), tr: change(), because: [id, ...alsoOf(senses, random)] });
   if (random.below(4) === 0) ops.add("relate", { who, tr: change(), because: [id] });
+  return who;
+}
+
+/**
+ * What a relate cites besides its encounter: a heard episode when the being holds one, which
+ * carries the taints of a message, or else, half the time, one of its beliefs.
+ */
+function alsoOf(senses: Senses2, random: Sfc32): number[] {
+  const { beliefs, episodes } = senses.mind;
+  const heard = episodes.filter(({ kind }) => kind === "heard");
+  const from = heard.length > 0 ? heard : beliefs;
+  if (from.length === 0 || (heard.length === 0 && random.below(2) === 0)) return [];
+  return [(from[random.below(from.length)] as (typeof from)[number]).id];
 }
 
 /** Believes what it hears, citing the message it remembers. */
@@ -200,15 +210,38 @@ function observeFood(ops: Operations, senses: Senses2, random: Sfc32): void {
 }
 
 /**
+ * Believes something of a being it knows, citing their relationship, so that a relate that taints
+ * the relationship must pass the taint on to the belief: half the time of the being `related`, the
+ * one this decision relates after the belief applies, and else a quarter of the time of any.
+ */
+function believeKnown(
+  ops: Operations,
+  senses: Senses2,
+  random: Sfc32,
+  related: number | undefined,
+): void {
+  const { relations } = senses.mind;
+  const mine = relations.find(({ who }) => who === related);
+  let known = mine !== undefined && random.below(2) === 0 ? mine : undefined;
+  if (known === undefined && relations.length > 0 && random.below(4) === 0)
+    known = relations[random.below(relations.length)];
+  if (known === undefined) return;
+  const p = { p: "t1.kin", a: [{ e: known.who }] };
+  ops.add("believe", { p, cr: random.below(1001), ev: [known.id], rule: "knew" });
+}
+
+/**
  * The mental operations of a chaotic decision: a plausible core, which relates a perceived being,
- * believes what it hears, and believes or revises from the food of its cell, each citing what it
- * remembers in the same decision; and, sometimes, random ones after it.
+ * believes what it hears, believes or revises from the food of its cell, each citing what it
+ * remembers in the same decision, and believes something of a being it knows; and, sometimes,
+ * random ones after it.
  */
 function operationsOf(senses: Senses2, random: Sfc32): beings.MindIntention {
   const ops = new Operations(senses.mind.next);
-  relateSeen(ops, senses, random);
+  const related = relateSeen(ops, senses, random);
   believeHeard(ops, senses, random);
   observeFood(ops, senses, random);
+  believeKnown(ops, senses, random, related);
   const extra = random.below(3) === 0 ? 1 + random.below(2) : 0;
   for (let index = 0; index < extra; index += 1) ops.add(...anyOperation(senses, random));
   return ops.mind;
@@ -466,7 +499,19 @@ export class MindInvariants {
   /** The outcomes every being held at the end of each tick, by being/tick of the outcome. */
   readonly #outcomes = new Map<string, beings.Outcome>();
   /** Counts of what the fuzz exercised, so that a pass is not vacuous. */
-  readonly seen = { external: 0, relations: 0, related: 0, beliefs: 0, crowded: 0, injected: 0 };
+  readonly seen = {
+    external: 0,
+    relations: 0,
+    /** Relates applied: relationships the ledger lists with what they cited. */
+    related: 0,
+    /** Relates that gave their relationship a taint it lacked. */
+    tainted: 0,
+    /** Of those, the ones a belief cites, which the taint had to flow to. */
+    flowed: 0,
+    beliefs: 0,
+    crowded: 0,
+    injected: 0,
+  };
 
   constructor(laws: beings.LifeConfig2) {
     this.#laws = laws;
@@ -476,7 +521,7 @@ export class MindInvariants {
   check(record: TickRecord): string[] {
     const accepted = acceptedOf(record);
     this.#injections.push(...accepted);
-    for (const event of record.events) this.#readEvent(event, record.tick);
+    for (const event of record.events) this.#readEvent(event, record);
     const problems: string[] = [];
     checkAddressed(accepted, record, problems);
     checkRelated(record, problems);
@@ -503,13 +548,28 @@ export class MindInvariants {
   }
 
   /** Keeps the meals and counts of an event of the tick. */
-  #readEvent({ type, payload }: EngineEvent, tick: number): void {
+  #readEvent({ type, payload }: EngineEvent, record: TickRecord): void {
     const event = payload as { id: number; activity?: string; units?: number; reason?: string };
-    if (event.activity === "eat") this.#readMeal(type, event.id, tick);
+    if (event.activity === "eat") this.#readMeal(type, event.id, record.tick);
     if (type === "being.ate")
       this.#meal.set(event.id, (this.#meal.get(event.id) ?? 0) + (event.units ?? 0));
     if (type === "being.finished" && event.reason === "crowded") this.seen.crowded += 1;
     if (type === "mind.injected") this.seen.injected += 1;
+    if (type === "mind.provenance")
+      for (const entry of (payload as Provenance).records)
+        this.#countRelate(event.id, entry, record);
+  }
+
+  /** Counts `entry` of the being `id`'s provenance when it is a relationship a relate changed. */
+  #countRelate(id: number, entry: Provenance["records"][number], record: TickRecord): void {
+    const held = record.after.get(id)?.mind;
+    if (held === undefined || entry.ev.length === 0) return;
+    if (!held.relations.some((relationship) => relationship.id === entry.id)) return;
+    this.seen.related += 1;
+    const was = record.before.get(id)?.mind.relations.find((r) => r.id === entry.id)?.tn ?? 0;
+    if ((entry.tn & ~was) === 0) return;
+    this.seen.tainted += 1;
+    if (held.beliefs.some((belief) => belief.ev.includes(entry.id))) this.seen.flowed += 1;
   }
 
   /** A meal of the being `id` starts or ends with an event of `type` at `tick`. */
@@ -533,9 +593,6 @@ export class MindInvariants {
         report(`relationship ${relationship.id} with ${relationship.who}, never perceived`);
     }
     this.seen.beliefs += being.mind.beliefs.filter(({ id }) => id >= from).length;
-    const changed = (r: mind.Relationship) =>
-      before !== undefined && r.aff !== mind.relationshipWith(before.mind, r.who)?.aff;
-    this.seen.related += being.mind.relations.filter(changed).length;
   }
 
   /** Why `episode`, made at this tick, is not what the being perceived; undefined when it is. */

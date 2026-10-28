@@ -51,7 +51,16 @@ const LAWS = life2With(
 );
 
 test("holds every invariant after every tick, and the ledger oracle matches every mind", () => {
-  const exercised = { external: 0, relations: 0, related: 0, beliefs: 0, crowded: 0, injected: 0 };
+  const exercised = {
+    external: 0,
+    relations: 0,
+    related: 0,
+    tainted: 0,
+    flowed: 0,
+    beliefs: 0,
+    crowded: 0,
+    injected: 0,
+  };
   for (const seed of SEEDS) {
     const placed = cellsNear(HOME, BEINGS).map((cell, index) => being2(index + 1, cell));
     const world = beings2World({
