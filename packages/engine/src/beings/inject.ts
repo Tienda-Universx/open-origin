@@ -70,6 +70,18 @@ function readInjection(payload: unknown, issues: IssueList): Injection | undefin
 /** Where the being of an injection stands: its chunk, its index there, and its record. */
 type Located = { readonly key: ChunkKey; readonly index: number; readonly being: Being2 };
 
+/** The index of the first of `beings`, sorted by id, whose id is at least `id`, by binary search. */
+function lowerBound(beings: readonly { readonly id: number }[], id: number): number {
+  let low = 0;
+  let high = beings.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((beings[middle]?.id ?? id) < id) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 /**
  * The being of `injection` in the chunk of its cell, found by binary search on the ids the chunk
  * keeps in increasing order, if it stands at that cell; undefined otherwise.
@@ -81,19 +93,11 @@ function locate(
   const [x, y] = injection.cell;
   const key: ChunkKey = `${chunkOfCell(x)},${chunkOfCell(y)}`;
   const beings = view.readChunk(key)?.beings ?? [];
-  let low = 0;
-  let high = beings.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    const id = beings[middle]?.id ?? 0;
-    if (id < injection.being) low = middle + 1;
-    else high = middle;
-  }
-  const being = beings[low];
-  if (being === undefined || being.id !== injection.being) return undefined;
-  if (being.cell[0] !== x || being.cell[1] !== y) return undefined;
+  const index = lowerBound(beings, injection.being);
+  const being = beings[index];
+  if (being?.id !== injection.being || being.cell[0] !== x || being.cell[1] !== y) return undefined;
   // validateChunk accepted every being of beings@2 with its mind.
-  return { key, index: low, being: being as unknown as Being2 };
+  return { key, index, being: being as unknown as Being2 };
 }
 
 /** The laws of the species of `being`; validateGlobal accepted laws of life@2 for every being's. */
