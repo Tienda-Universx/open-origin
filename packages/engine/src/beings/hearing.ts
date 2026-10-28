@@ -9,13 +9,9 @@
  * each message by allowlist: never its taints, nor the tick.
  */
 import { floorDiv } from "../int.ts";
-import {
-  copyProposition,
-  exposureAfterMessage,
-  type InboxMessage,
-  type Mind,
-} from "../mind/index.ts";
+import { exposureAfterMessage, type InboxMessage, type Mind } from "../mind/index.ts";
 import type { Activity } from "./being.ts";
+import { copyHeard } from "./classes.ts";
 import type { HeardMessage } from "./contracts.ts";
 
 /** `mind` with `message` at the end of its inbox and its exposure grown by the message's taints. */
@@ -53,14 +49,11 @@ export function hearingWakes(mind: Mind, activity: Activity, hearing: Hearing): 
   return woken < hearing.wakesPerDay;
 }
 
-/** `message` as a brain hears it: its C1 members but the tick, copied; never its taints. */
+/**
+ * `message` as a brain hears it, by the allowlist of the classification registry (classes.ts): its
+ * C1 members but the tick, copied; never its taints.
+ */
 export function heardMessage(message: InboxMessage): HeardMessage {
-  const { who, cell, act, p, band } = message;
-  return {
-    ...(who === undefined ? {} : { who }),
-    ...(cell === undefined ? {} : { cell: [cell[0], cell[1]] }),
-    act,
-    ...(p === undefined ? {} : { p: copyProposition(p) }),
-    ...(band === undefined ? {} : { band }),
-  };
+  // copyHeard keeps only members of an inbox message, which the engine built.
+  return copyHeard(message) as HeardMessage;
 }
