@@ -59,7 +59,7 @@ export function canSpeak(senses: Senses2, laws: BrainLaws): boolean {
  * conversation, a pause of at most `speech.gap` and fewer than `speech.turns` acts; or a new
  * conversation, once the talk window has passed.
  */
-export function addressable(relation: Relation, laws: BrainLaws): boolean {
+function addressable(relation: Relation, laws: BrainLaws): boolean {
   const { talk, turns } = relation;
   if (talk === undefined) return true;
   if (talk <= laws.speech.gap) return turns < laws.speech.turns;
@@ -100,7 +100,7 @@ function hearerOf(senses: Senses2, laws: BrainLaws, who: number): Hearer | undef
  * The belief to tell `hearer`, by retrieval: food it believes at TELL_FLOOR or more, not told it
  * by that being, the higher band the more relevant.
  */
-export function toTell(senses: Senses2, laws: BrainLaws, hearer: number): number | undefined {
+function toTell(senses: Senses2, laws: BrainLaws, hearer: number): number | undefined {
   const halfLife = memoryHalfLife(laws, senses.self.traits.retention);
   const told = retrieve(
     senses.mind.beliefs,

@@ -89,7 +89,6 @@ export const BRAIN_SYMBOLS: Readonly<Record<string, readonly string[] | typeof A
       "RelationshipView",
       "Term",
       "decay",
-      "sameProposition",
       "scaledHalfLife",
     ]),
     worldgen: Object.freeze(["MAX_CELL", "MIN_CELL"]),

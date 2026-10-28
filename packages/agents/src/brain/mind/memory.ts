@@ -83,7 +83,7 @@ function relationWith(recall: Recall, who: number | undefined): mind.Relationshi
  * A testimony: the first message that tells a food claim the mind does not hold, which told-food
  * believes at TESTIMONY_FLOOR or more, remembered and believed.
  */
-export function testimony(recall: Recall, ops: Ops): Intent | undefined {
+function testimony(recall: Recall, ops: Ops): Intent | undefined {
   const { heard } = recall.senses.perceived;
   for (let index = 0; index < heard.length; index += 1) {
     const message = heard[index] as Senses2["perceived"]["heard"][number];
@@ -153,7 +153,7 @@ function checkFocus(recall: Recall): Checked | undefined {
  * for a testimony, with the trust in its speaker changed. A belief already at the confidence of a
  * contradiction and contradicted again is dropped instead.
  */
-export function check(recall: Recall, ops: Ops): Intent | undefined {
+function check(recall: Recall, ops: Ops): Intent | undefined {
   const focus = checkFocus(recall);
   if (focus === undefined) return undefined;
   const { belief, cell, cue } = focus;
@@ -234,7 +234,7 @@ function sighted(recall: Recall, ops: Ops): Sighted | undefined {
 }
 
 /** A landmark: the food cue of the landmark in sight, remembered and believed by seen-food. */
-export function landmark(recall: Recall, ops: Ops): Intent | undefined {
+function landmark(recall: Recall, ops: Ops): Intent | undefined {
   const sight = sighted(recall, ops);
   if (sight === undefined) return undefined;
   const { cell, cue } = sight;
@@ -248,7 +248,7 @@ export function landmark(recall: Recall, ops: Ops): Intent | undefined {
 }
 
 /** A being the decision's act meets, the `index`-th the being perceives, remembered. */
-export function encounter(index: number): Intent {
+function encounter(index: number): Intent {
   return { remember: [{ percept: { being: index }, w: BEING_W, cited: false }] };
 }
 
