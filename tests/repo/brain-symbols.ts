@@ -237,7 +237,12 @@ function destructurings(code: string, local: string): { at: number; members: str
  * A ternary's branch (`c ? ns : x`) follows `?`, so it stays a use.
  */
 function isKey(code: string, index: number, after: string): boolean {
-  const before = code.slice(0, index).replace(/\breadonly\s*$/, "").trimEnd().at(-1) ?? "";
+  const before =
+    code
+      .slice(0, index)
+      .replace(/\breadonly\s*$/, "")
+      .trimEnd()
+      .at(-1) ?? "";
   return "{,(;".includes(before) && /^\s*\??:/.test(after);
 }
 
