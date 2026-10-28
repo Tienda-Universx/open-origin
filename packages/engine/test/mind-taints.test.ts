@@ -352,3 +352,136 @@ describe("downstream flow", () => {
     expect(outcome.changes.tainted).toEqual([4, 5]);
   });
 });
+
+/** The laws of the provenance fuzz: small stores and short half-lives, so records leave often. */
+const CRAMPED = lawsWith({
+  episodes: 5,
+  beliefs: 4,
+  relations: 2,
+  depth: 4,
+  halfLife: { episode: 60, belief: 240 },
+  floor: 50,
+  pins: 1,
+});
+
+/** What the provenance fuzz saw happen, to show that each path was exercised. */
+type Seen = { forgot: number; displaced: number; adopted: number; cut: number; dropped: number };
+
+/** Up to `count` distinct live ids of `subject`. */
+const someIds = (random: Sfc32, subject: mind.Mind, count: number) =>
+  draw(random, liveIds(subject), count);
+
+/** One decision of random belief operations, over a small pool of propositions. */
+function randomDecision(random: Sfc32, subject: mind.Mind): mind.BeliefOperations {
+  const believe = Array.from({ length: random.below(3) }, () => ({
+    p: foodAt(random.below(4), 0),
+    cr: random.between(0, 1000),
+    ev: someIds(random, subject, random.below(4)),
+    rule: "fuzz",
+  }));
+  const held = subject.beliefs;
+  const revise =
+    held.length === 0 || random.below(2) === 0
+      ? []
+      : [
+          {
+            id: random.pick(held).id,
+            cr: random.between(0, 1000),
+            ev: someIds(random, subject, 1 + random.below(2)),
+          },
+        ];
+  const drop = held.length === 0 || random.below(4) > 0 ? [] : [random.pick(held).id];
+  return { believe, revise, drop };
+}
+
+/** A new tainted message the being remembers, its exposure grown as delivery grows it. */
+function remembered(random: Sfc32, subject: mind.Mind, ctx: mind.MindContext): mind.Admitted {
+  const id = mind.freeId(subject) ?? 0;
+  const common = { t: ctx.moment.tick, r: ctx.moment.tick, w: random.between(100, 1000) };
+  const episode =
+    random.below(2) === 0
+      ? heard(id, 300 + random.below(4), { ...common, tn: random.below(8), ex: random.below(8) })
+      : external(id, { ...common, tn: 2 | random.below(8) });
+  const w = mind.importanceWithin(subject.episodes, undefined, episode.w, ctx.laws);
+  const taints = mind.taintsOf({ store: "episodes", record: episode });
+  const exposure = mind.exposureAfterMessage(subject.exposure, taints);
+  return mind.admitEpisode({ ...subject, next: id + 1, exposure }, { ...episode, w }, ctx);
+}
+
+/** One random step: a decision, forgetting, a perception, or a remembered message. */
+function provenanceStep(
+  random: Sfc32,
+  subject: mind.Mind,
+  ctx: mind.MindContext,
+  seen: Seen,
+): mind.Mind {
+  const action = random.below(8);
+  if (action < 4) {
+    const outcome = applyBeliefs(subject, randomDecision(random, subject), ctx, LIVE_MANIFEST);
+    if (outcome.kind === "rejected") return subject;
+    const { changes } = outcome;
+    seen.adopted += changes.revised.filter((entry) => entry.rule !== undefined).length;
+    seen.cut += changes.uncited.length;
+    seen.dropped += changes.dropped.length;
+    seen.displaced += changes.unlinked.filter((link) => link.beliefs.length > 0).length;
+    return outcome.mind;
+  }
+  if (action === 4) {
+    const { mind: after, forgot } = mind.forget(subject, ctx);
+    seen.forgot += forgot.filter((link) => link.beliefs.length > 0).length;
+    return after;
+  }
+  const admitted =
+    action === 5
+      ? mind.perceive(subject, 400 + random.below(5), ctx)
+      : remembered(random, subject, ctx);
+  seen.displaced += admitted.displaced.filter((link) => link.beliefs.length > 0).length;
+  return admitted.mind;
+}
+
+/** Checks that no belief of `before` lost a taint or a source in `after`, nor the exposure. */
+function expectNoFall(before: mind.Mind, after: mind.Mind): void {
+  expect(after.exposure & before.exposure).toBe(before.exposure);
+  for (const held of after.beliefs) {
+    const old = before.beliefs.find((belief) => belief.id === held.id);
+    if (old === undefined) continue;
+    expect({
+      id: held.id,
+      tn: held.tn & old.tn,
+      ex: held.ex & old.ex,
+      src: held.src & old.src,
+    }).toEqual({ id: held.id, tn: old.tn, ex: old.ex, src: old.src });
+  }
+  const issues: string[] = [];
+  mind.checkMind(after, "", { report: (path, message) => issues.push(`${path}: ${message}`) });
+  expect(issues).toEqual([]);
+}
+
+describe("provenance never falls", () => {
+  test("forgetting, displacement, dropping, adoption again, and corroboration lower no taint", () => {
+    const random = new Sfc32(5307);
+    const seen: Seen = { forgot: 0, displaced: 0, adopted: 0, cut: 0, dropped: 0 };
+    for (let round = 0; round < 150; round += 1) {
+      const episodes = [1, 2, 3].map((id) =>
+        heard(id, 100 + id, {
+          tn: random.below(8),
+          ex: random.below(8),
+          w: random.between(100, 1000),
+        }),
+      );
+      let subject = mindOf({
+        episodes: [...episodes, own(4)],
+        relations: [relationship(5, 105, { tn: random.below(8) })],
+      });
+      subject = { ...subject, exposure: 7 & ~random.below(8) };
+      let tick = 0;
+      for (let step = 0; step < 40; step += 1) {
+        tick += random.below(30);
+        const after = provenanceStep(random, subject, contextAt(tick, CRAMPED), seen);
+        expectNoFall(subject, after);
+        subject = after;
+      }
+    }
+    for (const count of Object.values(seen)) expect(count).toBeGreaterThan(20);
+  });
+});
