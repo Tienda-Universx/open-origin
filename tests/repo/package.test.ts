@@ -199,6 +199,17 @@ describe("package.json", () => {
     }
   });
 
+  test("leaves the file it runs alone out of the parallel step, as Bun reads the pattern", () => {
+    // Bun finds no file to run when the one the filter names is the one the pattern ignores, so
+    // the parallel step never runs the evaluation a second time.
+    const result = Bun.spawnSync(
+      ["bun", "test", `--path-ignore-patterns=${SEQUENTIAL_TEST}`, SEQUENTIAL_TEST],
+      { cwd: REPO_ROOT, timeout: 30_000 },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("did not match any test files");
+  });
+
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {
     expect(manifest.scripts.lint).toContain("bunx --no-install --bun biome check .");
     // --deny-warnings: a rule lowered to "warn" in .oxlintrc.json still fails CI.
