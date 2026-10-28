@@ -4,7 +4,8 @@
  * each belief operation it proposes is proposed again when it decides with only the records that
  * operation cites, the belief it revises, and every input that is no record. The generator favours
  * what makes operations depend on each other: testimonies of claims the being holds or doubts,
- * cues near what it is told, and beliefs inside and beyond its window, under the frozen laws.
+ * cues near what it is told, beliefs inside and beyond its window, and full stores, under the
+ * frozen laws.
  */
 import { describe, expect, test } from "bun:test";
 import type { beings, mind } from "@open-origin/engine";
@@ -63,9 +64,11 @@ function cellOf(random: Sfc32, cues: readonly (readonly number[])[]): mind.Cell 
   return roll === 2 ? near(random, [0, 0], 24) : near(random, [36, 0], 10);
 }
 
-/** Up to five held beliefs of food, of every band, confidence, and kind of evidence. */
+/** Held beliefs of food, of every band, confidence, and kind of evidence: up to five, or a full store. */
 function beliefsOf(random: Sfc32, cues: readonly (readonly number[])[]): mind.BeliefView[] {
-  return Array.from({ length: below(random, 6) }, (_, index) => {
+  // A third of the stores are full, so that a belief one operation forms may evict another's.
+  const count = below(random, 3) === 0 ? SPECIES2.mind.beliefs : below(random, 6);
+  return Array.from({ length: count }, (_, index) => {
     const told = below(random, 2) === 0;
     return {
       id: 20 + index,

@@ -738,10 +738,15 @@ claim or its `told-food` confidence is below 500, remembered (importance 600) an
 claim or holds food at 500 or more within 12 cells of it, remembered (importance 500) and believed
 by `seen-food`; and the **being it meets**, the hearer of its act, remembered (importance 400).
 "Holds" means held before the decision: what a testimony of the same decision believes holds back
-no landmark, and a landmark of the claim it believes adopts it, which the engine applies as a
-revision. The whole stays within `mind.ops` and the ids left, and cites nothing a full store would
-evict first: the brain predicts each store with the engine's law of salience, as the engine fills
-it, a belief that adopts another entering none.
+no landmark. The whole stays within `mind.ops` and the ids left, and cites, revises, or tells
+nothing a full store would evict first: the brain predicts each store with the engine's law of
+salience, as the engine fills it. Its believes apply in order: one whose claim the store still
+holds at that point adopts that belief, which the engine applies as a revision, taking no id and no
+room; any other forms a belief with the next id, which a full store admits by evicting the belief of
+lowest salience, then the oldest, then the lowest id, itself included. So a landmark of the claim a
+testimony of the same decision believes adopts the testimony's belief only while the store holds
+it: when a full store evicts the testimony at once, the landmark forms a belief of its own, and is
+not proposed if that belief would evict one the decision relies on.
 
 Which claim an operation forms and what it cites depend on no other operation of the decision and
 on no record it does not cite; such records only hold an operation back, and the operations before

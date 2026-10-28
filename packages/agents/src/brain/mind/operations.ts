@@ -79,19 +79,23 @@ function leavesBefore(a: Ranked, b: Ranked): boolean {
   return a.id < b.id;
 }
 
-/** The ids a store of `capacity` holds after `added` enter it in order, each evicting when full. */
-function admitted(held: readonly Ranked[], added: readonly Ranked[], capacity: number): number[] {
+/** The records a store of `capacity` holds after `added` enter it in order, each evicting when full. */
+function admitted<T extends Ranked>(
+  held: readonly T[],
+  added: readonly T[],
+  capacity: number,
+): T[] {
   const store = [...held];
   for (const record of added) {
     store.push(record);
     if (store.length <= capacity) continue;
     let lowest = 0;
     store.forEach((other, index) => {
-      if (leavesBefore(other, store[lowest] as Ranked)) lowest = index;
+      if (leavesBefore(other, store[lowest] as T)) lowest = index;
     });
     store.splice(lowest, 1);
   }
-  return store.map(({ id }) => id);
+  return store;
 }
 
 /** Whether every new episode a later operation cites survives the decision's `remember`s. */
@@ -112,7 +116,7 @@ function episodesKept(recall: Recall, ops: Ops): boolean {
     if (importance >= pinLevel) pinned += 1;
     return { id: view.next + index, salience: importance, age: 0 };
   });
-  const kept = admitted(held, added, laws.mind.episodes);
+  const kept = admitted(held, added, laws.mind.episodes).map(({ id }) => id);
   return ops.remember.every(({ cited }, index) => !cited || kept.includes(view.next + index));
 }
 
@@ -123,42 +127,60 @@ function neededBeliefs(recall: Recall, ops: Ops): number[] {
   return [...recall.keep, ...ops.revise.map(({ id }) => id), ...ops.drop, ...cited];
 }
 
+/** The beliefs a decision holds after its `believe`s, by id, and the id its next record takes. */
+export type AfterBelieves = { readonly held: readonly number[]; readonly next: number };
+
+/** A belief of the predicted store: its rank, and its claim. */
+type Stored = Ranked & { readonly p: Claim };
+
+/** Whether `stored` holds the claim of `p`, a food claim of mind@1. */
+function holding(stored: Stored, p: Claim): boolean {
+  const claim = foodClaim(p);
+  return claim !== undefined && claims(stored.p, claim.cell, claim.v);
+}
+
 /**
- * The `believe`s of `ops` that create a belief, in order: those whose claim the mind does not hold
- * and no earlier `believe` of the decision forms. A `believe` of a claim held or formed already
- * adopts it, which the engine applies as a revision: it takes no id and enters no store.
+ * The beliefs of the mind of `recall` after the `believe`s `believe` of a decision that makes
+ * `remembers` episodes first, as the engine applies them, in order: a `believe` whose claim the
+ * store holds at that point adopts that belief, which the engine applies as a revision, so it takes
+ * no id and no room, and the belief it revises becomes as certain as the `believe`, and new; any
+ * other forms a belief with the next id, which a full store admits by evicting the belief of lowest
+ * salience, then the oldest, then the lowest id, itself included. A testimony that a full store
+ * evicts at once is therefore not there for a landmark of its claim to adopt. Returns the ids held
+ * after, and the id the decision's next record takes.
  */
-function creating(recall: Recall, ops: Ops): Believed[] {
-  const formed: Believed[] = [];
-  const known = (p: Believed["p"]) => {
-    const claim = foodClaim(p);
-    const same = (other: { readonly p: Claim }) =>
-      claim === undefined ? false : claims(other.p, claim.cell, claim.v);
-    return recall.senses.mind.beliefs.some(same) || formed.some(same);
-  };
-  for (const op of ops.believe) if (!known(op.p)) formed.push(op);
-  return formed;
+export function afterBelieves(
+  recall: Recall,
+  remembers: number,
+  believe: readonly Believed[],
+): AfterBelieves {
+  const { laws, senses } = recall;
+  const halfLife = mind.scaledHalfLife(laws.mind.halfLife.belief, senses.self.traits.retention);
+  const certainty = (cr: number) => greatest(cr, 1000 - cr);
+  let store: Stored[] = senses.mind.beliefs.map(({ id, p, cr, u }) => ({
+    id,
+    p,
+    salience: mind.decay(certainty(cr), u, halfLife),
+    age: u,
+  }));
+  let next = senses.mind.next + remembers;
+  for (const { p, cr } of believe) {
+    const at = store.findIndex((stored) => holding(stored, p));
+    const adopted = store[at];
+    if (adopted !== undefined) {
+      store = store.with(at, { ...adopted, salience: certainty(cr), age: 0 });
+      continue;
+    }
+    store = admitted(store, [{ id: next, p, salience: certainty(cr), age: 0 }], laws.mind.beliefs);
+    next += 1;
+  }
+  return { held: store.map(({ id }) => id), next };
 }
 
 /** Whether every belief the decision needs survives its `believe`s. */
 function beliefsKept(recall: Recall, ops: Ops): boolean {
-  const { laws, senses } = recall;
-  const halfLife = mind.scaledHalfLife(laws.mind.halfLife.belief, senses.self.traits.retention);
-  const view = senses.mind;
-  const certainty = (cr: number) => greatest(cr, 1000 - cr);
-  const held = view.beliefs.map(({ id, cr, u }) => ({
-    id,
-    salience: mind.decay(certainty(cr), u, halfLife),
-    age: u,
-  }));
-  let id = view.next + ops.remember.length;
-  const added: Ranked[] = [];
-  for (const { cr } of creating(recall, ops)) {
-    added.push({ id, salience: certainty(cr), age: 0 });
-    id += 1;
-  }
-  const kept = admitted(held, added, laws.mind.beliefs);
-  return neededBeliefs(recall, ops).every((id) => kept.includes(id));
+  const { held } = afterBelieves(recall, ops.remember.length, ops.believe);
+  return neededBeliefs(recall, ops).every((id) => held.includes(id));
 }
 
 /**
@@ -166,9 +188,8 @@ function beliefsKept(recall: Recall, ops: Ops): boolean {
  * citation of a record its store evicts first.
  */
 function fits(recall: Recall, ops: Ops): boolean {
-  const { next } = recall.senses.mind;
   if (countOf(ops) > recall.laws.mind.ops) return false;
-  if (ops.remember.length + creating(recall, ops).length > mind.INT31_MAX - next) return false;
+  if (afterBelieves(recall, ops.remember.length, ops.believe).next > mind.INT31_MAX) return false;
   return episodesKept(recall, ops) && beliefsKept(recall, ops);
 }
 
