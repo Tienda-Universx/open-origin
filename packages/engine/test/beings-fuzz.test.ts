@@ -2,7 +2,8 @@
  * Seeded fuzzing of the beings ruleset (plan §9.2, test 12) and the count of its reads (test 14's
  * harness): random spawns, valid and invalid, and a random brain, valid and invalid, whose choices
  * come from its own draws; after every tick, the invariants of docs/architecture/beings.md hold.
- * A quiet tick reads each listed chunk once and never lists every chunk.
+ * A quiet tick reads each listed chunk once and never lists every chunk; beings-cost.test.ts bounds
+ * the reads of every tick.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -15,6 +16,7 @@ import {
   worldgen,
   worldStatus,
 } from "../src/index.ts";
+import { type Calls, counting, DISPERSED_CELLS } from "./support/beings-cost.ts";
 import {
   type BeingsWorld,
   baseFood,
@@ -225,55 +227,25 @@ describe("fuzzing", () => {
   });
 });
 
-/** The reads one run of the beings system made. */
-type Reads = { chunkKeys: number; readChunk: number; writeGlobal: number };
-
-/** A beings world whose system counts its reads into `counts`, one record per tick. */
-function countedWorld(counts: Reads[]): BeingsWorld {
+/** A beings world whose system records its calls into `sink`, one record per tick. */
+function countedWorld(sink: Calls[]): BeingsWorld {
   const ruleset = beings.createBeingsRuleset({ controllers: { [SPECIES.id]: idler(6_000_000) } });
-  const [system] = ruleset.systems;
-  if (system === undefined) throw new Error("the beings ruleset has its system");
-  const counted = {
-    ...ruleset,
-    systems: [
-      {
-        name: system.name,
-        streams: system.streams,
-        run: (ctx: Parameters<typeof system.run>[0]) => {
-          const reads: Reads = { chunkKeys: 0, readChunk: 0, writeGlobal: 0 };
-          counts.push(reads);
-          const watched = new Proxy(ctx, {
-            get(target, key) {
-              const value = Reflect.get(target, key, target);
-              if (key !== "chunkKeys" && key !== "readChunk" && key !== "writeGlobal") return value;
-              return (...args: unknown[]) => {
-                reads[key] += 1;
-                return (value as (...inner: unknown[]) => unknown).apply(target, args);
-              };
-            },
-          });
-          return system.run(watched);
-        },
-      },
-    ],
-  };
   return createWorld({
     seed: [5, 6],
     simSecondsPerTick: 12,
     global: beings.beingsGlobal(testGenesis(), beings.defaultLife()),
     chunks: {},
-    ruleset: counted,
+    ruleset: counting(ruleset, sink),
   });
 }
 
 describe("the cost of a tick", () => {
   test("reads each listed chunk once on a quiet tick, never lists the chunks, and writes the global at most once", () => {
-    const counts: Reads[] = [];
+    const counts: Calls[] = [];
     const world = countedWorld(counts);
-    const cells = Array.from({ length: 10 }, (_, i) => [i * 64 - 300, 7 * i - 30]);
     step(
       world,
-      cells.map((cell, seq) => spawn(1, { species: SPECIES.id, cell }, seq)),
+      DISPERSED_CELLS.map((cell, seq) => spawn(1, { species: SPECIES.id, cell: [...cell] }, seq)),
     );
     for (let tick = 2; tick <= 150; tick += 1) step(world, []);
     const listed = readView(world).readGlobal().occupancy.length;

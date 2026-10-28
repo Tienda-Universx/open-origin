@@ -4,22 +4,27 @@
  * frozen default laws and brain `utility@1`, under the adverse and the favorable variants of the
  * laws, and, for comparison only, with the random-walk baseline instead of the brain; and the
  * stationary control, a negative control of the preregistration, at its own settings
- * (test/support/stationary.ts) for the ticks of the stationary horizon H. It prints every being's
- * acceptance items for every run, then a summary table of the acceptance and one of the stationary
- * control, whatever the results are.
+ * (test/support/stationary.ts) for the ticks of the stationary horizon H. Then, once, the negative
+ * control of the nearly barren world on calibration/1's terrain (test/support/controls.ts), which
+ * T4-8 moved here from survival.test.ts to keep `bun test` in CI within its budget. It prints every
+ * being's acceptance items for every run, then a summary table of the acceptance, one of the
+ * stationary control, and the barren control's verdict, whatever the results are.
  *
  *   bun packages/agents/bench/soak.ts [1 2 3 4 5 6] [laws adverse favorable random-walk
- *     stationary] [--ticks N] [--jobs K]
+ *     stationary barren] [--ticks N] [--jobs K]
  *
- * The numbers name heldout/1 to /6, all six by default; the words name the runs of each label,
- * all five by default; `--ticks` sets the ticks of every run but the stationary control's. Each
- * run is a child process (test/support/survival-child.ts); `--jobs` runs K of them at once, 2 by
- * default. A child that fails is reported, its siblings still run, and the soak exits with code 1
- * after its tables. It runs only the held-out labels: the reserve, heldout/7 to /12, replaces
- * burned labels only, and the default and calibration labels have their own runs. Any other
- * argument is an error, and exits with code 2.
+ * The numbers name heldout/1 to /6, all six by default; the words name the runs of each label and
+ * the barren control, all of them by default; `--ticks` sets the ticks of every run but the
+ * stationary control's. Each run of a label is a child process (test/support/survival-child.ts);
+ * `--jobs` runs K of them at once, 2 by default. A child that fails is reported, its siblings
+ * still run, and the soak exits with code 1 after its tables, as it does when the barren control
+ * fails. It runs only the held-out labels: the reserve, heldout/7 to /12, replaces burned labels
+ * only, and the default and calibration labels have their own runs. Any other argument is an
+ * error, and exits with code 2, as do label numbers or `--jobs` without a run of a label, and
+ * `--ticks` without a run that takes it.
  */
 import { beings } from "@open-origin/engine";
+import { type BarrenRun, barrenControl, barrenIssues } from "../test/support/controls.ts";
 import { misses } from "../test/support/metrics.ts";
 import { BEINGS, LABELS, type Variant } from "../test/support/scenario.ts";
 import { stationaryTicks } from "../test/support/stationary.ts";
@@ -46,10 +51,14 @@ const TEN_DAYS = 63_000;
 const RUNS = ["laws", "adverse", "favorable", "random-walk", "stationary"] as const;
 export type Run = (typeof RUNS)[number];
 
-/** What the arguments ask for: the labels, the runs of each, the ticks, and the parallel runs. */
+/**
+ * What the arguments ask for: the labels, the runs of each, whether to run the barren control, the
+ * ticks, and the parallel runs.
+ */
 export type Arguments = {
   readonly labels: readonly string[];
   readonly runs: readonly Run[];
+  readonly barren: boolean;
   readonly ticks: number;
   readonly jobs: number;
 };
@@ -61,7 +70,7 @@ const HELDOUT = /^[1-6]$/;
 const RESERVE = /(^|\/)heldout\/([7-9]|1[0-2])$|^([7-9]|1[0-2])$/;
 
 /** What the arguments read so far ask for. */
-type Reading = { numbers: string[]; runs: Run[]; ticks?: number; jobs?: number };
+type Reading = { numbers: string[]; runs: Run[]; barren: boolean; ticks?: number; jobs?: number };
 
 /** The value of the option at `argv[at]`, which must be a positive safe integer. */
 function positive(argv: readonly string[], at: number): number {
@@ -92,21 +101,42 @@ function readWord(reading: Reading, arg: string): void {
     );
   if (isRun(arg) && !reading.runs.includes(arg)) {
     reading.runs.push(arg);
+  } else if (arg === "barren" && !reading.barren) {
+    reading.barren = true;
   } else if (HELDOUT.test(arg) && !reading.numbers.includes(arg)) {
     reading.numbers.push(arg);
   } else {
     throw new Error(
-      `unknown argument "${arg}": give 1 to 6, ${RUNS.join(", ")}, --ticks N, or --jobs K`,
+      `unknown argument "${arg}": give 1 to 6, ${RUNS.join(", ")}, barren, --ticks N, or --jobs K`,
     );
   }
 }
 
 /**
+ * Refuses what no named run would use, instead of ignoring it: label numbers and `--jobs`, which
+ * only the runs of a label use, when only the barren control is named; and `--ticks`, which the
+ * stationary control and the barren control set themselves, when no other run is named.
+ */
+function checkUsed(reading: Reading, runs: readonly Run[]): void {
+  if (runs.length === 0 && reading.numbers.length > 0)
+    throw new Error(
+      `label ${reading.numbers.join(", ")} given, but no run of a label is named: the barren control runs on calibration/1 alone`,
+    );
+  if (runs.length === 0 && reading.jobs !== undefined)
+    throw new Error("--jobs given, but no run of a label is named: the barren control runs alone");
+  if (reading.ticks !== undefined && runs.every((run) => run === "stationary"))
+    throw new Error(
+      "--ticks given, but no run that takes it is named: the stationary and barren controls run to their own bounds",
+    );
+}
+
+/**
  * The arguments of the soak. Throws an Error that says what is wrong: a reserve label, any other
- * label or word, an option without a valid value, or an option, a run, or a label given twice.
+ * label or word, an option without a valid value, an option, a run, or a label given twice, or a
+ * label or option that no named run would use.
  */
 export function parseArguments(argv: readonly string[]): Arguments {
-  const reading: Reading = { numbers: [], runs: [] };
+  const reading: Reading = { numbers: [], runs: [], barren: false };
   for (let at = 0; at < argv.length; at += 1) {
     const arg = argv[at] as string;
     if (arg === "--ticks" || arg === "--jobs") {
@@ -115,9 +145,14 @@ export function parseArguments(argv: readonly string[]): Arguments {
     } else readWord(reading, arg);
   }
   const numbers = reading.numbers.length === 0 ? ["1", "2", "3", "4", "5", "6"] : reading.numbers;
+  // Naming no run at all asks for every run and the barren control.
+  const named = reading.runs.length > 0 || reading.barren;
+  const runs = named ? reading.runs : [...RUNS];
+  checkUsed(reading, runs);
   return {
     labels: numbers.map((n) => LABELS.heldout[Number(n) - 1] as string),
-    runs: reading.runs.length === 0 ? [...RUNS] : reading.runs,
+    runs,
+    barren: named ? reading.barren : true,
     ticks: reading.ticks ?? TEN_DAYS,
     jobs: reading.jobs ?? 2,
   };
@@ -225,6 +260,22 @@ function printSummary(done: readonly Done[]): void {
   }
 }
 
+/**
+ * The verdict of the barren control, as the cells of a Markdown row: when each being was
+ * incapacitated and its bound, the bites, the cues sensed, and pass or every way it failed.
+ */
+export function barrenCells(run: BarrenRun): string[] {
+  const issues = barrenIssues(run);
+  return [
+    run.incapacitated
+      .map(([id, tick]) => `${id}: ${tick} (bound ${run.bounds[id - 1]})`)
+      .join("; "),
+    `${run.bites}`,
+    `{${run.cues.join(", ")}}`,
+    issues.length === 0 ? "pass" : `fail: ${issues.join("; ")}`,
+  ];
+}
+
 if (import.meta.main) {
   let options: Arguments | undefined;
   try {
@@ -246,4 +297,15 @@ if (import.meta.main) {
   printSummary(done);
   // A child that failed fails the soak, after every run was reported.
   if (done.some(({ error }) => error !== undefined)) process.exitCode = 1;
+  if (options.barren) {
+    const started = performance.now();
+    const barren = barrenControl();
+    const seconds = ((performance.now() - started) / 1000).toFixed(1);
+    console.log(
+      `\n| Barren control, ${seconds} s | Incapacitated at tick | Bites | Cues sensed | Verdict |`,
+    );
+    console.log("|---|---|---|---|---|");
+    console.log(`| calibration/1, two beings | ${barrenCells(barren).join(" | ")} |`);
+    if (barrenIssues(barren).length > 0) process.exitCode = 1;
+  }
 }

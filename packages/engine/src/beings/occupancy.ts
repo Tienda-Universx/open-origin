@@ -41,19 +41,56 @@ export function occupancyIssues(value: unknown, path: string): Issue[] {
   return issues.issues;
 }
 
-/** Inserts `key` into the ordered `keys` in place; false when it was already there. */
-export function insertOccupied(keys: ChunkKey[], key: ChunkKey): boolean {
+/** Where `key` is in the ordered `keys`, or where it would go: a binary search by code units. */
+function search(
+  keys: readonly ChunkKey[],
+  key: ChunkKey,
+): { readonly at: number; readonly found: boolean } {
   let low = 0;
   let high = keys.length;
   while (low < high) {
     const middle = (low + high) >>> 1;
     const order = compareCodeUnits(keys[middle] ?? "", key);
-    if (order === 0) return false;
+    if (order === 0) return { at: middle, found: true };
     if (order < 0) low = middle + 1;
     else high = middle;
   }
-  keys.splice(low, 0, key);
+  return { at: low, found: false };
+}
+
+/** Whether the ordered `keys` hold `key`. */
+export function isOccupied(keys: readonly ChunkKey[], key: ChunkKey): boolean {
+  return search(keys, key).found;
+}
+
+/** Inserts `key` into the ordered `keys` in place; false when it was already there. */
+export function insertOccupied(keys: ChunkKey[], key: ChunkKey): boolean {
+  const { at, found } = search(keys, key);
+  if (found) return false;
+  keys.splice(at, 0, key);
   return true;
+}
+
+/**
+ * The ordered `keys` with the ordered `added`, without repeats: a new array, merged in one pass over
+ * both, however many keys it adds.
+ */
+export function mergeOccupied(keys: readonly ChunkKey[], added: readonly ChunkKey[]): ChunkKey[] {
+  const merged: ChunkKey[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < keys.length && j < added.length) {
+    const kept = keys[i] as ChunkKey;
+    const adding = added[j] as ChunkKey;
+    const order = compareCodeUnits(kept, adding);
+    if (order <= 0) {
+      merged.push(kept);
+      i += 1;
+    }
+    if (order > 0) merged.push(adding);
+    if (order >= 0) j += 1;
+  }
+  return merged.concat(keys.slice(i), added.slice(j));
 }
 
 /** The keys of `keys` whose chunk is not `empty`, in the same order: a new array. */

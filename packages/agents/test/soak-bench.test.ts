@@ -4,7 +4,7 @@
  * ignoring it. Its tables (bench/table.ts) summarize a run by its acceptance items.
  */
 import { describe, expect, test } from "bun:test";
-import { type Job, parseArguments, runAll } from "../bench/soak.ts";
+import { barrenCells, type Job, parseArguments, runAll } from "../bench/soak.ts";
 import { stationaryCells, summaryCells } from "../bench/table.ts";
 import type { BeingRecord } from "./support/metrics.ts";
 import { LABELS } from "./support/scenario.ts";
@@ -14,15 +14,43 @@ describe("the arguments of the soak", () => {
     expect(parseArguments([])).toEqual({
       labels: [...LABELS.heldout],
       runs: ["laws", "adverse", "favorable", "random-walk", "stationary"],
+      barren: true,
       ticks: 63_000,
       jobs: 2,
     });
+  });
+
+  test("run the barren control alone, or beside the runs named, when named", () => {
+    expect(parseArguments(["barren"])).toMatchObject({ runs: [], barren: true });
+    expect(parseArguments(["laws", "barren"])).toMatchObject({ runs: ["laws"], barren: true });
+    expect(parseArguments(["laws"])).toMatchObject({ runs: ["laws"], barren: false });
+    expect(parseArguments(["3", "stationary", "barren", "--jobs", "1"])).toMatchObject({
+      runs: ["stationary"],
+      barren: true,
+      jobs: 1,
+    });
+    expect(parseArguments(["adverse", "--ticks", "300"])).toMatchObject({ ticks: 300 });
+  });
+
+  test.each([
+    { argv: ["3", "barren"], message: "label 3 given, but no run of a label is named" },
+    { argv: ["barren", "--jobs", "2"], message: "--jobs given, but no run of a label is named" },
+    { argv: ["barren", "--ticks", "300"], message: "--ticks given, but no run that takes it" },
+    { argv: ["3", "barren", "--ticks", "300"], message: "label 3 given" },
+    { argv: ["stationary", "--ticks", "300"], message: "--ticks given, but no run that takes it" },
+    {
+      argv: ["stationary", "barren", "--ticks", "9"],
+      message: "--ticks given, but no run that takes it",
+    },
+  ])("refuse $argv, which no named run would use: $message", ({ argv, message }) => {
+    expect(() => parseArguments(argv)).toThrow(message);
   });
 
   test("name labels by number, the runs by word, the ticks, and the parallel runs", () => {
     expect(parseArguments(["6", "2", "adverse", "laws", "--ticks", "300", "--jobs", "3"])).toEqual({
       labels: [LABELS.heldout[5] as string, LABELS.heldout[1] as string],
       runs: ["adverse", "laws"],
+      barren: false,
       ticks: 300,
       jobs: 3,
     });
@@ -46,6 +74,7 @@ describe("the arguments of the soak", () => {
     { argv: ["heldout/1"], message: 'unknown argument "heldout/1"' },
     { argv: ["1", "1"], message: 'unknown argument "1"' },
     { argv: ["adverse", "adverse"], message: 'unknown argument "adverse"' },
+    { argv: ["barren", "barren"], message: 'unknown argument "barren"' },
     { argv: ["random"], message: 'unknown argument "random"' },
     { argv: ["--tick", "3"], message: 'unknown argument "--tick"' },
     { argv: ["--ticks"], message: "--ticks needs a value" },
@@ -153,6 +182,47 @@ describe("the summary of a run of the stationary control", () => {
         ticks,
       ),
     ).toEqual(["2 of 3", "-", "no", "no"]);
+  });
+});
+
+describe("the verdict of the barren control (moved here from survival.test.ts)", () => {
+  /** A run that passes: both beings incapacitated within their bounds, nothing eaten, cues {0}. */
+  const passing = {
+    incapacitated: [
+      [1, 19_208],
+      [2, 18_936],
+    ] as const,
+    bounds: [31_599, 32_552],
+    bites: 0,
+    cues: [0],
+  };
+
+  test("passes a run that collapses within its bounds, without a bite, sensing only cue 0", () => {
+    expect(barrenCells(passing)).toEqual([
+      "1: 19208 (bound 31599); 2: 18936 (bound 32552)",
+      "0",
+      "{0}",
+      "pass",
+    ]);
+  });
+
+  test.each([
+    { change: { incapacitated: [[1, 19_208]] }, issue: "incapacitated beings 1, not 1 and 2" },
+    { change: { incapacitated: [] }, issue: "incapacitated beings none, not 1 and 2" },
+    {
+      change: {
+        incapacitated: [
+          [1, 31_600],
+          [2, 18_936],
+        ],
+      },
+      issue: "being 1 incapacitated at tick 31600, after its bound 31599",
+    },
+    { change: { bites: 2 }, issue: "2 bites taken in a world without food" },
+    { change: { cues: [0, 1] }, issue: "food cues sensed {0, 1}, not exactly {0}" },
+    { change: { cues: [] }, issue: "food cues sensed {}, not exactly {0}" },
+  ])("fails $issue", ({ change, issue }) => {
+    expect(barrenCells({ ...passing, ...change } as never).at(-1)).toBe(`fail: ${issue}`);
   });
 });
 
