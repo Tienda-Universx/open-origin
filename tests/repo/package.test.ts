@@ -82,6 +82,9 @@ const TSC_STEP = /^bunx --no-install --bun tsc --noEmit -p (\S+)$/;
  */
 const TEST_BUDGET_MS = 30_000;
 
+/** CI's test script: the whole suite, one worker per core, with a time for tests that set none. */
+const TEST_SCRIPT = /^bun test --parallel --timeout (\d+)$/;
+
 describe("script checks", () => {
   const scripts = new Set(["lint", "typecheck"]);
 
@@ -161,10 +164,11 @@ describe("package.json", () => {
     );
     // Only --parallel, which runs every file on one worker per core, and --timeout: any other
     // argument, a path or an option such as --test-name-pattern, can narrow the suite CI runs.
-    const [, timeout] =
-      /^bun test --parallel --timeout (\d+)$/.exec(manifest.scripts.test ?? "") ?? [];
+    const script = manifest.scripts.test ?? "";
+    expect(script).toMatch(TEST_SCRIPT);
     // Under --parallel a test's wall time grows with the runner's load, about twice its time
     // alone; the slowest tests on Bun's default of 5 s took up to 5.7 s on CI and failed it.
+    const [, timeout] = TEST_SCRIPT.exec(script) ?? [];
     expect(Number(timeout)).toBeGreaterThanOrEqual(TEST_BUDGET_MS);
   });
 
