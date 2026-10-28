@@ -334,7 +334,12 @@ describe("the contest for room", () => {
     const arrival = ARRIVAL - 1;
     // At the arrival the episode 1 has faded, so a decision there would forget it.
     const laws = { mind: life.species[0]?.mind, relations: life.species[0]?.relations } as never;
-    const at = (tick: number) => ({ moment: { tick, secondsPerTick: 12 }, laws, retention: 1000 });
+    const at = (tick: number) => ({
+      moment: { tick, secondsPerTick: 12 },
+      laws,
+      retention: 1000,
+      talkWindow: 18_900,
+    });
     expect(mind.forget(fadingMind(), at(1)).forgot).toEqual([]);
     expect(mind.forget(fadingMind(), at(arrival)).forgot).toEqual([{ id: 1, beliefs: [3] }]);
     // At tick 1 each perceived the other, and step 1 created its relationship 4.

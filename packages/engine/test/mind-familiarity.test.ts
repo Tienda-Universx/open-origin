@@ -172,6 +172,64 @@ describe("a full store of relationships", () => {
     expect(after.relations.map((held) => held.id)).toEqual([2, 3]);
   });
 
+  test("keeps a relationship its being addressed within the talk window, evicting another", () => {
+    // Being 42, the least familiar, was addressed 599 s ago, within a window of 600 s.
+    const subject = mindOf({
+      relations: [
+        relationship(1, 41, { f: 3600, seen: 1000 }),
+        relationship(2, 42, { f: 360, seen: 1000, talk: 401, turns: 3 }),
+      ],
+    });
+    const window = { talkWindow: 600 };
+    const kept = perceive(subject, 43, contextAt(1000, laws, window));
+    expect(kept.mind.relations.map(({ id, who }) => [id, who])).toEqual([
+      [2, 42],
+      [3, 43],
+    ]);
+    expect(kept.displaced).toEqual([{ id: 1, beliefs: [] }]);
+    // Addressed exactly the window ago, it is out of it, and goes first as the least familiar.
+    const out = mindOf({
+      relations: [
+        subject.relations[0] as mind.Relationship,
+        relationship(2, 42, { f: 360, seen: 1000, talk: 400 }),
+      ],
+    });
+    const evicted = perceive(out, 43, contextAt(1000, laws, window));
+    expect(evicted.mind.relations.map(({ id }) => id)).toEqual([1, 3]);
+    // A talk after now, which no world holds, as the gate's mind of tick 99,999,999, keeps nothing.
+    const future = mindOf({
+      relations: [
+        subject.relations[0] as mind.Relationship,
+        relationship(2, 42, { f: 360, seen: 1000, talk: 1001 }),
+      ],
+    });
+    expect(
+      perceive(future, 43, contextAt(1000, laws, window)).mind.relations.map(({ id }) => id),
+    ).toEqual([1, 3]);
+    // A being never addressed, talk 0, is never kept by the window.
+    const silent = perceive(
+      mindOf({ relations: [...out.relations] }),
+      43,
+      contextAt(1000, laws, { talkWindow: 2000 }),
+    );
+    expect(silent.mind.relations.map(({ id }) => id)).toEqual([2, 3]);
+  });
+
+  test("gives a newcomer none when every relationship is within the talk window", () => {
+    const subject = mindOf({
+      relations: [
+        relationship(1, 41, { f: 3600, seen: 1000, talk: 990, turns: 1 }),
+        relationship(2, 42, { f: 360, seen: 1000, talk: 999, turns: 2 }),
+      ],
+    });
+    const met = perceive(subject, 43, contextAt(1000, laws, { talkWindow: 600 }));
+    // Nothing is evicted, no id is taken, and the mind is the same value.
+    expect(met).toEqual({ mind: subject, displaced: [] });
+    expect(met.mind).toBe(subject);
+    // A message of a being it does not know leaves no relationship either.
+    expect(mind.hear(subject, 43, contextAt(1000, laws, { talkWindow: 600 })).mind).toBe(subject);
+  });
+
   test("holds no relationship when the law gives no room, nor once ids have run out", () => {
     const none = perceive(mindOf(), 42, contextAt(0, lawsWith({ relations: 0 })));
     expect(none).toEqual({ mind: mindOf(), displaced: [] });

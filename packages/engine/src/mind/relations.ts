@@ -1,7 +1,8 @@
 /**
  * Relationships as a law (ADR 0024, docs/architecture/mind.md "Relationships" and "Beliefs", step
  * 1): a perception of a being updates the familiarity of the being's relationship with it, or
- * creates one, with affinity 0 and trust 500, which a full store always admits. A first perception
+ * creates one, with affinity 0 and trust 500, which a full store admits unless the being addressed
+ * every being it holds within its talk window (store.ts). A first perception
  * adds no familiarity. A message of a being that has none creates one too, which records that no
  * perception happened, `seen` 0, and hearing a being the mind already knows changes nothing, since
  * hearing is no co-presence. A relationship exists only after a percept or a message of that
@@ -26,7 +27,8 @@ export type Perceived = {
 
 /**
  * `mind` after it perceived the being `who` at the context's moment. With no room for any
- * relationship (`mind.relations` is 0), or once ids have run out, a new being leaves no record.
+ * relationship (`mind.relations` is 0), once ids have run out, or when a full store keeps every
+ * relationship it holds for the talk window, a new being leaves no record.
  */
 export function perceive(mind: Mind, who: number, ctx: MindContext): Perceived {
   const held = mind.relations.findIndex((relationship) => relationship.who === who);
@@ -45,11 +47,14 @@ export function hear(mind: Mind, who: number, ctx: MindContext): Perceived {
   return related(mind, who, NEVER_SEEN, ctx);
 }
 
-/** `mind` with a new relationship with `who`, last perceived at `seen`, if it has room and ids. */
+/**
+ * `mind` with a new relationship with `who`, last perceived at `seen`, if it has ids and its store
+ * admits one; the same mind, with no id taken, otherwise.
+ */
 function related(mind: Mind, who: number, seen: number, ctx: MindContext): Perceived {
   const id = freeId(mind);
   if (id === undefined || ctx.laws.mind.relations === 0) return { mind, displaced: [] };
   const created: Relationship = { id, who, f: 0, seen, aff: 0, tr: 500, tn: 0, talk: 0, turns: 0 };
   const admitted = admitRelationship({ ...mind, next: id + 1 }, created, ctx);
-  return { ...admitted, created: id };
+  return admitted === undefined ? { mind, displaced: [] } : { ...admitted, created: id };
 }

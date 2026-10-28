@@ -378,6 +378,7 @@ describe("the classification registry", () => {
       moment: { tick: 9, secondsPerTick: 12 },
       laws: mind.defaultMindLaws(),
       retention: 1000,
+      talkWindow: 18_900,
     });
     const node = memberOf(BEING_CLASSES, "mind") as ClassNode;
     // The view's transforms keep the registry's names: ticks become ages, familiarity is shown as

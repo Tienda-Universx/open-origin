@@ -211,8 +211,13 @@ seconds, with `w = f`, the anchor `seen`, and `relations.halfLife`, which retent
   salience; they are displaced when their store is full.
 - A full store of episodes or beliefs evicts the record with the lowest salience, the new one
   included, then the oldest (an episode by `t`, a belief by `u`), then the lowest id. A full store
-  of relationships always admits a being met for the first time and evicts the other relationship
-  with the lowest familiarity, then the one seen longest ago, then the lowest id.
+  of relationships admits a being met for the first time and evicts the other relationship with
+  the lowest familiarity, then the one seen longest ago, then the lowest id, among those whose being
+  the mind has not addressed in the last `max(speech.gap, speech.cooldown)` seconds: it never
+  evicts a relationship whose `talk` is a tick from 1 to now, less than that long ago, which holds
+  the quotas of a conversation or its cooldown; a `talk` of 0, or after now, which no world holds,
+  keeps nothing. When every relationship it holds is within that window, the newcomer gets none,
+  and nothing is evicted.
 - A recall, or citing the episode as evidence, sets `w` to `min(1000, s + recall)` and `r` to now.
   At most `pins` episodes have `w ≥ pinLevel`: beyond that, a new importance is capped at
   `pinLevel − 1`.
@@ -286,7 +291,8 @@ At a decision, in this order:
 1. the engine forgets what has faded by now, and updates familiarity, creating a relationship for
    each perceived being and each speaker heard that has none (affinity 0, trust 500): first the
    perceived beings in the order attention keeps them, then the speakers of the inbox by increasing
-   id, each evicting by the rule above when the store is full. Hearing is no co-presence: a
+   id, each evicting by the rule above when the store is full, or getting none when that rule
+   keeps every relationship the store holds. Hearing is no co-presence: a
    speaker's relationship records that no perception happened, `seen` 0, and hearing a speaker
    the mind already knows changes nothing;
 2. the brain decides on the view of that mind;
@@ -380,10 +386,13 @@ and its first perception only sets `seen`, since the time since the message was 
 A chunk is invalid if a relationship with `seen` 0 holds an `f` other than 0. A full store ranks
 such a relationship as seen longest ago. So a brain that decides every tick earns no more than one
 that decides every minute while the other stays in view, and familiarity lost to an absence stays
-lost. A relationship exists only after a percept or a message of that being. Affinity and trust
-change only by `relate`, by at most `relations.delta`, and the relationship takes the `tn` of what
-it cites. Knowing someone is familiarity; trusting its claims is a judgment the brain makes by
-checking its testimony against what it later sees.
+lost. A relationship exists only after a percept or a message of that being. It also holds the
+quotas of speech to that being, `talk` and `turns`, so a full store never evicts one the mind
+addressed within `max(speech.gap, speech.cooldown)` seconds ("Time, salience, and forgetting"):
+evicting it and meeting the being again would reset a conversation or its cooldown. Affinity and
+trust change only by `relate`, by at most `relations.delta`, and the relationship takes the `tn`
+of what it cites. Knowing someone is familiarity; trusting its claims is a judgment the brain makes
+by checking its testimony against what it later sees.
 
 How the engine applies them (T5-5b): `relate`'s `aff` and `tr` are signed changes, absent meaning
 0, and each result saturates at its bounds, −1000 to 1000 and 0 to 1000. The relationship's `tn`
@@ -439,8 +448,9 @@ How the engine applies it (T5-6):
   paused longer than `speech.gap`, or when `speech.cooldown` has passed, at least, since a full
   conversation; `turns + 1` otherwise; and while a full conversation cools down, the act is
   `talk_quota`. So is an act beyond `speech.perDay`, and one to a being the mind holds no
-  relationship with, which happens only once ids have run out. An act counts whether or not it is
-  later cut short or heard.
+  relationship with, which happens when ids have run out, or when a full store kept no room for it
+  because the being addressed every being it holds within the window of the store's rule. An act
+  counts whether or not it is later cut short or heard.
 - **The activity.** `{ kind: "talk", start, to, act, captured }`, where `captured` is
   `{ p?, band?, tn, ex }`, a tell's content and taints, and `{ tn: 0, ex: 0 }` for the other acts.
   `talk` comes last in the list of kinds of activity of `beings@2`, after those of T4, whose index

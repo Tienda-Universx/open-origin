@@ -23,6 +23,7 @@ import type { Species2 } from "./life2.ts";
 import { applyOperations, type Percepts, type StepOne, stepOne } from "./mental.ts";
 import { type MindGrammar, NO_OPERATIONS } from "./operations.ts";
 import { copyPerceived, type PerceivedBeing, perceiveBeings, sightOf } from "./perception.ts";
+import { greatest } from "./rates.ts";
 import {
   type CoveredChunk,
   copyWindow,
@@ -81,15 +82,21 @@ function sensesOf(env: BeingsEnv, work: Work): Sensed {
   return { window, senses };
 }
 
-/** The context the mind layer works in for the being of `work` at this tick. */
+/**
+ * The context the mind layer works in for the being of `work` at this tick: a full store keeps the
+ * relationship of a being it addressed within `max(speech.gap, speech.cooldown)` seconds, which
+ * holds the quotas of the pair.
+ */
 function mindContext(env: BeingsEnv, work: Work): MindContext {
   // validateGlobal accepted laws of life@2, and validateChunk the being's six traits.
   const species = work.species as Species2;
   const traits = work.old.traits as Traits2;
+  const { gap, cooldown } = species.speech;
   return {
     moment: { tick: env.tick, secondsPerTick: env.sps },
     laws: { mind: species.mind, relations: species.relations },
     retention: traits.retention,
+    talkWindow: greatest(gap, cooldown),
   };
 }
 
