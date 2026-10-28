@@ -577,6 +577,15 @@ describe("a chunk of beings@2 holding a talk", () => {
     expect(talking(silent)).toEqual(["/activity/captured"]);
   });
 
+  test("is invalid when a plan follows its talk, which is the only step of its intention", () => {
+    expect(talking(greet, [{ kind: "idle", ms: 1000 }])).toEqual(["/plan"]);
+  });
+
+  test("is invalid when it talks to the being itself", () => {
+    expect(talking({ ...greet, to: 1 })).toEqual(["/activity/to"]);
+    expect(talking({ ...tell, to: 1 })).toEqual(["/activity/to"]);
+  });
+
   test("is invalid with a talk in a plan, which only an intention's one step may be", () => {
     expect(
       talking({ kind: "idle", start: 1, ms: 1 }, [{ kind: "talk", to: 2, act: "greet" }]),

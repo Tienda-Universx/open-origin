@@ -543,6 +543,25 @@ export function checkBeing(
     sink,
   );
   if (rules.minds) checkMindValue(being.value("mind"), being.at("mind"), sink);
+  checkTalking(being, sink);
+}
+
+/**
+ * Reports a talk no decision can have started: one followed by a plan, since a talk is the only
+ * step of its intention and the being decides when it ends, or one addressed to the being itself,
+ * which it never perceives.
+ */
+function checkTalking(being: Fields, sink: IssueSink): void {
+  const activity = being.value("activity");
+  if (typeof activity !== "object" || activity === null) return;
+  // A canonical record is plain data: its members are data properties.
+  const { kind, to } = activity as { readonly kind?: unknown; readonly to?: unknown };
+  if (kind !== "talk") return;
+  const plan = being.value("plan");
+  if (Array.isArray(plan) && plan.length > 0)
+    sink.report(being.at("plan"), "a talk is the only step of its intention: its plan is empty");
+  if (to !== undefined && to === being.value("id"))
+    sink.report(`${being.at("activity")}/to`, "a being never talks to itself");
 }
 
 /**

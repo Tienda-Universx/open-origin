@@ -456,7 +456,8 @@ How the engine applies it (T5-6):
   `talk` comes last in the list of kinds of activity of `beings@2`, after those of T4, whose index
   a `being` episode holds. A plan never holds a talk. A chunk is invalid if a talk captured content
   its act cannot carry: a tell without a proposition and a band, or another act with any content
-  or taint.
+  or taint; if a plan follows a talk, which is the only step of its intention; or if a talk is
+  addressed to the being itself.
 - **The end.** The act ends at `start + ⌈actMs / (seconds per tick · 1,000)⌉`; at that tick the
   being says what it captured, `speech.uttered`, and decides. Physiology comes first at every tick,
   so forced sleep, incapacity, or death at that tick, or before it, cut the talk short:
