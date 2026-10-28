@@ -1120,6 +1120,13 @@ EPYC 7763 core, with Bun 1.4.4; "before" is `main` at `7a26777`, "after" the ref
   held 643 B of body and 367 B of mind on average. Most writes are wakes that do not decide, the
   steps of a walk, which never touch a mind, so a hash per component would rehash the body alone
   in about 97 writes of 100.
+- **The ceiling of "dispersed 10,000"**, measured after the refactor with `bench/gate.ts --beings
+  10000 --ticks 1500`, which times the night and the morning of the first day: with the gate's mind,
+  1,149.6 KB hashed at the median tick and 2,346.1 KB at p99, against 332.3 and 607.5 KB under
+  `beings@1` and `utility@1`; ticks of 218.11 and 531.21 ms at the median and p99, against 114.07
+  and 271.25 ms; and a wake that does not decide, 434.7 µs more, paired by tick. Its p99 passes
+  1 MB, as T5-4 expected: a ceiling outside what v0.1 supports, which decides nothing about the
+  gate; the gate decides on "dispersed 1,000" alone, and the benchmark prints it so.
 
 ## Verification plan
 
