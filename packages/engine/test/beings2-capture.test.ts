@@ -99,6 +99,24 @@ describe("the capture of a brain of beings@2", () => {
     }
   });
 
+  test("refuses the namespace obs, which the observables of the catalog hold", () => {
+    expect(
+      captureIssues({ s1: { brain: "a@1", decide: idle, behaviors: ["rest"], concepts: "obs" } }),
+    ).toEqual([
+      {
+        path: "/controllers/s1/concepts",
+        message:
+          'the namespace "obs" is reserved for the observables of the catalog: a brain declares its own',
+      },
+    ]);
+    expect(
+      beings.createBeingsRuleset({
+        controllers: { s1: { brain: "a@1", decide: idle, behaviors: ["rest"], concepts: "obs1" } },
+        rules: "beings@2",
+      }).versions.brain,
+    ).toBe("s1:a@1");
+  });
+
   test("keeps the behaviors it captured, whatever the host changes later", () => {
     const behaviors = ["rest"];
     const world = beings2World({

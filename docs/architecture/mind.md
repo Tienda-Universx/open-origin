@@ -326,12 +326,17 @@ no operation applies; what step 1 did stays, because it is a law, not a proposal
 How the engine reads and applies them (T5-5a):
 
 - **Order of the checks.** Before the intention is copied, every list and record of its `mind` is
-  bounded from its length: more than 256 entries in all, or a string or key longer than 64
-  characters, is `mind_malformed`, since no legal operations hold that much. Then a value that is
-  not canonical, or a body of the wrong shape, is `malformed`; operations of the wrong shape, count,
-  bound, or grammar, `mind_malformed`; then `walk_not_first` and `walk_blocked`; and last, as the
-  operations apply, `unknown_record`, `premise_order`, `depth_exceeded`, and the `mind_malformed`
-  of a citation repeated or of ids run out.
+  bounded from its length: more than 256 entries in all, a string or key longer than 64
+  characters, or a length that is not a count, is `mind_malformed`, since no legal operations hold
+  that. Then a value that is not canonical, or a body of the wrong shape, is `malformed`; operations
+  of the wrong shape, count, bound, or grammar, `mind_malformed`; then `walk_not_first` and
+  `walk_blocked`; and last the operations apply, in their order, and the first that fails gives its
+  reason. Within one operation: a `remember` of a percept that does not exist is `unknown_record`,
+  before ids that have run out, `mind_malformed`; a `recall` or `drop` of a record not held,
+  `unknown_record`; a `believe` or `revise` citing a record twice is `mind_malformed`, then one not
+  held `unknown_record`; a `believe` once ids have run out is `mind_malformed`, before its depth,
+  `depth_exceeded`; and a `revise` of a belief not held is `unknown_record`, then `premise_order`,
+  then `depth_exceeded`.
 - **Percepts.** `{ being: i }` is the i-th being perceived, in the order attention keeps them;
   `{ heard: i }` the i-th message heard, none until speech (T5-6); `{ food: [x, y] }` a cell of the
   window, which a cell outside the world never is; and `{ outcome: true }` a `failed` episode when
@@ -343,9 +348,9 @@ How the engine reads and applies them (T5-5a):
   perceived, never from the brain.
 - **Grammars.** `rule` is an identifier, as a behavior is: 1 to 32 characters, a lowercase letter
   first, then lowercase letters, digits, `.`, `_`, or `-`. A brain forms only concepts of the
-  namespace it declares, or `obs.` followed by an id of the catalog of observables. `recall` may
-  name an episode more than once, each time refreshing it; a percept that does not exist is
-  `unknown_record`, checked before whether ids have run out.
+  namespace it declares, or `obs.` followed by an id of the catalog of observables; the namespace
+  `obs` is reserved for those, and the capture refuses a brain that declares it. `recall` may name
+  an episode more than once, each time refreshing it from its salience then.
 
 A brain of `beings@2` declares, besides its version and its `decide`, `behaviors`, the 1 to 16
 identifiers its `behavior.kind` may take, and `concepts`, the namespace of its concepts; the capture
@@ -488,7 +493,7 @@ runs of the survival child, which already runs them. Every T4 test runs unchange
 | `speech.delivered` | C1, the hearer's | `{ id, to }` |
 | `speech.unheard` | C3, because its reason tells the hearer's condition | `{ id, to, reason }`: `range`, `asleep`, `gone`, `full`, or `condition` |
 | `mind.changed` | C1 | `{ id, encoded, formed, revised, dropped, forgot, related }`: ids, with each formed belief's rule and each forgotten record's citing beliefs |
-| `mind.provenance` | C3 | `{ id, records, exposure }`: the `tn`, `ex`, and evidence of each record created or revised, and the being's exposure |
+| `mind.provenance` | C3 | `{ id, records, exposure }`: the `tn`, `ex`, and evidence of each record created, revised, or tainted downstream, and the being's exposure |
 | `mind.injected` | C3 | `{ id }`, for an accepted `mind.inject` |
 
 A decision with changes to a mind emits one `mind.changed` and one `mind.provenance`. A decision
@@ -497,11 +502,11 @@ changes `w` and `r`; both events are emitted then, even when every list is empty
 each with the beliefs that lost it, every record that left the mind but by `drop`: those that faded
 at step 1, by increasing id, then those a full store evicted, in the order of the operations.
 `mind.provenance` lists `{ id, tn, ex, ev }` for each live record the decision created, revised, or
-tainted downstream, by increasing id, an episode with `ev: []`, and `exposure` after the decision.
-A delivery
-emits `speech.delivered`, and a `mind.provenance` when it changes an exposure; an accepted
-injection emits `mind.injected` and a `mind.provenance`. Every change of a mind is therefore in the
-ledger.
+tainted downstream, by increasing id, an episode with `ev: []`, and `exposure` after the decision;
+the `ev` of a revised belief records the citations it pushed out, those of its previous `ev` it no
+longer holds. A delivery emits `speech.delivered`, and a `mind.provenance` when it changes an
+exposure; an accepted injection emits `mind.injected` and a `mind.provenance`. Every change of a
+mind is therefore in the ledger.
 
 ## Commands and faults
 
@@ -514,8 +519,10 @@ the rule of a hearer, without spending its daily wakes. Rejections: `admin_only`
 An intention or operation that fails validation is a rejection, the being's experience: `malformed`,
 `mind_malformed`, `unknown_record`, `premise_order`, `depth_exceeded`, `talk_unseen`,
 `talk_out_of_range`, `talk_unheld`, `talk_quota`, `ask_concept`. `beings` copies brain output with
-`copyCanonicalReported`, refuses accessors and proxies, reads every length once and bounds it
-before iterating, and requires exact members, NFC strings, and the grammars above.
+`copyCanonicalReported`, which refuses accessors and reads a Proxy only through its own data
+properties, refusing one that throws; it reads every length once and bounds it before iterating,
+refusing one that misreports a length, and requires exact members, NFC strings, and the grammars
+above.
 
 ## Classification
 

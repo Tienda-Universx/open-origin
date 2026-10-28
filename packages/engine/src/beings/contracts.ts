@@ -141,7 +141,8 @@ export type Intention2 = Intention & { readonly mind?: MindIntention };
 /**
  * A brain of beings@2: its version; the 1 to 16 identifiers its `behavior.kind` may take, so that
  * no other value hides information there; the namespace of its concepts, the first segment of the
- * concept ids it may form; and its decision, called without `this`.
+ * concept ids it may form, never `obs`, which the observables of the catalog hold; and its
+ * decision, called without `this`.
  */
 export interface Controller2 {
   readonly brain: string;

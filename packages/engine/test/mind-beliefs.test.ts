@@ -79,7 +79,6 @@ describe("believe", () => {
       revised: [],
       dropped: [],
       unlinked: [],
-      uncited: [],
       tainted: [],
     });
   });
@@ -334,14 +333,13 @@ describe("revise", () => {
     expect(changes.tainted).toEqual([6]);
   });
 
-  test("keeps the three most recent citations and reports the ones it pushes out", () => {
-    const { mind: after, changes } = applied(subject, {
+  test("keeps the three most recent citations, those of the operation last", () => {
+    const { mind: after } = applied(subject, {
       revise: [{ id: 5, cr: 200, ev: [1, 3, 4] }],
     });
     // Citing 1 again makes it recent: 2 leaves, and the belief keeps what 2 brought.
     expect(after.beliefs[0]?.ev).toEqual([1, 3, 4]);
     expect(after.beliefs[0]?.lost).toBe(0);
-    expect(changes.uncited).toEqual([{ belief: 5, records: [2] }]);
   });
 
   test("keeps the last speaker when the new evidence holds none", () => {

@@ -32,6 +32,7 @@ import {
 } from "../mind/index.ts";
 import type { Cell, Outcome } from "./being.ts";
 import type { SensedWindow } from "./contracts.ts";
+import { integrity } from "./env.ts";
 import type { MindOperations, Percept, RememberOperation } from "./operations.ts";
 import type { PerceivedBeing } from "./perception.ts";
 import { least } from "./rates.ts";
@@ -75,7 +76,7 @@ type Content = Episode extends infer E
   : never;
 
 /** A decision's mind after its operations applied, and the ledger of the whole decision. */
-export type Decided = {
+type Decided = {
   readonly kind: "applied";
   readonly mind: Mind;
   readonly ledger: MindLedger;
@@ -130,6 +131,11 @@ function contentOf(percept: Percept, percepts: Percepts): Content | undefined {
       const being = percepts.beings[percept.index];
       if (being === undefined) return undefined;
       const v = percepts.activities.indexOf(being.activity);
+      // validateChunk accepts only the ruleset's kinds of activity: any other is a broken state.
+      if (v < 0)
+        throw integrity(
+          `the being ${being.id} was perceived doing "${being.activity}", no kind of activity of the ruleset`,
+        );
       return { kind: "being", t, cell: [being.cell[0], being.cell[1]], who: being.id, v };
     }
     case "food": {

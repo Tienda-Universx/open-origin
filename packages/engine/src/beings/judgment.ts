@@ -14,7 +14,7 @@ import type { Traits2 } from "./being.ts";
 import type { Brain } from "./capture.ts";
 import { copySensed } from "./classes.ts";
 import type { SensedWindow, Senses, Senses2 } from "./contracts.ts";
-import type { BeingsEnv } from "./env.ts";
+import { type BeingsEnv, integrity } from "./env.ts";
 import { type Accepted, acceptIntention, type Refused } from "./intention.ts";
 import type { Species2 } from "./life2.ts";
 import { applyOperations, forgetAtDecision, type Percepts } from "./mental.ts";
@@ -157,6 +157,9 @@ export function judge(env: BeingsEnv, work: Work): Accepted | Refused {
  * rejects the whole intention. The new mind and the decision's ledger are left in `work`.
  */
 export function judge2(env: BeingsEnv, work: Work): Accepted | Refused {
+  // A being decides at most once a tick: a second decision would replace the first one's ledger.
+  if (work.ledger !== undefined)
+    throw integrity(`the being ${work.old.id} decided twice at the tick ${env.tick}`);
   const ctx = mindContext(env, work);
   // validateChunk accepted the mind of every being of beings@2.
   const step1 = forgetAtDecision(work.mind as Mind, ctx);

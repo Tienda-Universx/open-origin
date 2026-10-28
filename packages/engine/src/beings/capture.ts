@@ -38,6 +38,9 @@ const BEHAVIORS = range(1, 16);
  */
 const NAMESPACE_LENGTH = 46;
 
+/** The namespace of the observables of the catalog, which no brain may declare as its own. */
+const OBSERVABLES = "obs";
+
 /** The brain of one species, read once: its version, its decide function, and what it declares. */
 function captureOne(
   controller: unknown,
@@ -170,6 +173,13 @@ function readConcepts(value: unknown, path: string, issues: IssueList): string |
   if (value === UNREAD) return undefined;
   if (value === undefined) {
     issues.report(at, "a brain of beings@2 declares the namespace of its concepts");
+    return undefined;
+  }
+  if (value === OBSERVABLES) {
+    issues.report(
+      at,
+      `the namespace "${OBSERVABLES}" is reserved for the observables of the catalog: a brain declares its own`,
+    );
     return undefined;
   }
   if (

@@ -13,6 +13,7 @@ import { behavior, beingOf, findCell, runTo, walkMs } from "./support/beings-wor
 import {
   type Cell,
   type Committed,
+  cellOf,
   eventsAt,
   eventsOf,
   idling,
@@ -115,6 +116,38 @@ describe("the events of a decision that changed a mind", () => {
     ]);
   });
 
+  test("list in forgot what faded at step 1 first, then what a full store evicted", () => {
+    // Episode 2 fades at tick 1; remembering two more then fills the store of eight, which evicts
+    // episode 1, the lowest salience left. Both are cited by belief 9.
+    const full = mindOf({
+      episodes: [
+        own(1, { w: 60 }),
+        own(2, { w: 49 }),
+        ...[3, 4, 5, 6, 7, 8].map((id) => own(id, { w: 500 })),
+      ],
+      beliefs: [belief(9, { ev: [1, 2] })],
+    });
+    const remember = [0, 1].map((dx) => ({
+      percept: { food: [CELL[0] + dx, CELL[1]] as const },
+      w: 500,
+    }));
+    const world = beings2World({
+      controllers: {
+        s1: brain2((s) => (isFirst(s) ? idling(LONG, { remember }) : idling(LONG))),
+      },
+      chunks: chunksOf([being2(1, CELL, { mind: full })]),
+    });
+    const [changed] = eventsOf(runTo(world, 1), "mind.changed", 1);
+    expect(changed?.payload).toMatchObject({
+      encoded: [10, 11],
+      forgot: [
+        { id: 2, beliefs: [9] },
+        { id: 1, beliefs: [9] },
+      ],
+    });
+    expect((beingOf(world, 1) as beings.Being2).mind.beliefs[0]).toMatchObject({ ev: [], lost: 2 });
+  });
+
   test("leave the mind they record: taints flowed downstream, the exposure grew, links were cut", () => {
     const { world } = run();
     const after = (beingOf(world, 1) as beings.Being2).mind;
@@ -174,6 +207,48 @@ describe("the events of a decision that changed a mind", () => {
       expect(mindEvents(events)).toEqual([]);
       expect((beingOf(world, 1) as beings.Being2).mind).toEqual(steady);
     }
+  });
+});
+
+describe("decisions", () => {
+  test("happen at most once per being and tick, on every path that reaches one", () => {
+    // Walks that end, planned meals that cannot start, and wake conditions: each reaches a decision.
+    const restless = brain2((senses) => {
+      const [a = 0, b = 0] = senses.draws;
+      const wakeWhen = a % 3 === 0 ? { nutritionBelow: senses.self.needs.nutrition - 1 } : {};
+      if (a % 4 === 0 && walkMs(senses.window as beings.SensedWindow, "0") !== undefined)
+        return { steps: [{ kind: "walk", dirs: "0" }], wakeWhen, behavior: behavior("travel") };
+      return {
+        steps: [
+          { kind: "idle", ms: 1 + (b % 30_000) },
+          { kind: "eat", untilNutrition: beings.NEED_MAX },
+        ],
+        wakeWhen,
+        behavior: behavior("eat"),
+        mind: { remember: [{ percept: { food: cellOf(senses) }, w: 1 + (b % 900) }] },
+      };
+    });
+    const decided: number[] = [];
+    const counting: beings.Controller2 = {
+      ...restless,
+      decide: (senses) => {
+        decided.push(senses.self.id);
+        return restless.decide(senses);
+      },
+    };
+    const cells = [0, 1, 2, 3].map((dx): Cell => [CELL[0] + dx, CELL[1]]).filter(standable);
+    const world = beings2World({
+      controllers: { s1: counting },
+      chunks: chunksOf(cells.map((cell, index) => being2(index + 1, cell))),
+    });
+    let decisions = 0;
+    for (let tick = 1; tick <= 300; tick += 1) {
+      decided.length = 0;
+      runTo(world, tick);
+      decisions += decided.length;
+      expect([tick, decided.length]).toEqual([tick, new Set(decided).size]);
+    }
+    expect(decisions).toBeGreaterThan(300);
   });
 });
 

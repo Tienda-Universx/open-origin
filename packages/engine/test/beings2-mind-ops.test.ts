@@ -7,6 +7,8 @@
  * operations are atomic; and brain output that is hostile is refused before anything is copied.
  */
 import { describe, expect, test } from "bun:test";
+import { applyOperations, forgetAtDecision } from "../src/beings/mental.ts";
+import { NO_OPERATIONS } from "../src/beings/operations.ts";
 import { beings, type EngineEvent, mind, readView, worldgen } from "../src/index.ts";
 import {
   type BeingsWorld,
@@ -40,7 +42,8 @@ import {
   type Senses2,
   SPECIES2,
 } from "./support/beings2-world.ts";
-import { belief, mindOf, own, relationship, seen } from "./support/mind-records.ts";
+import { engineErrorOf } from "./support/engine-error.ts";
+import { belief, contextAt, mindOf, own, relationship, seen } from "./support/mind-records.ts";
 
 /** A long idle, after which nothing else happens in these tests. */
 const LONG = 6_000_000;
@@ -391,6 +394,12 @@ describe("recall, believe, revise, and drop", () => {
     expect(being.mind.episodes[1]).toEqual(HELD.episodes[1] as mind.Episode);
   });
 
+  test("recall of one episode twice refreshes it twice, each time from its salience then", () => {
+    // 500, then 500 + 200 = 700 anchored now, then 700 + 200 = 900, below the two pins.
+    const { being } = withOps({ recall: [1, 1] });
+    expect(being.mind.episodes[0]).toMatchObject({ id: 1, w: 900, r: 1 });
+  });
+
   test("believe, revise, and drop apply in that order through the mind layer", () => {
     const { being } = withOps({
       drop: [4],
@@ -566,6 +575,12 @@ const CASES: readonly Case[] = [
     held: EXHAUSTED,
   },
   {
+    name: "a percept not perceived, once ids have run out: the percept is checked first",
+    ops: { remember: [{ percept: { being: 99 }, w: 1 }] },
+    reason: "unknown_record",
+    held: EXHAUSTED,
+  },
+  {
     name: "recall of an id the mind does not hold",
     ops: { recall: [99] },
     reason: "unknown_record",
@@ -727,6 +742,23 @@ describe("hostile mental operations", () => {
     );
   });
 
+  test("refuse a list whose length is misreported, NaN or negative, before reading the rest", () => {
+    for (const length of [Number.NaN, -(2 ** 22), 1.5]) {
+      const lying = new Proxy([], {
+        getOwnPropertyDescriptor(target, key) {
+          if (key !== "length") return Reflect.getOwnPropertyDescriptor(target, key);
+          return { value: length, writable: true, enumerable: false, configurable: false };
+        },
+      });
+      // A sparse list the canonical copy would refuse cheaply, but a scan would walk in full.
+      const sparse: unknown[] = [];
+      sparse.length = 2 ** 20;
+      const { being, events } = withOps({ recall: lying, remember: sparse });
+      expect([length, being.outcome.reason]).toEqual([length, "mind_malformed"]);
+      expect(eventsOf(events, "being.intention_rejected", 1)).toHaveLength(1);
+    }
+  });
+
   test("refuse what is not canonical as malformed, as the rest of an intention", () => {
     const getter = {
       get w() {
@@ -768,6 +800,27 @@ describe("hostile mental operations", () => {
   test("accept a benign Proxy of a valid record, which the copy reads through its descriptors", () => {
     const proxied = new Proxy({ recall: [1] }, {});
     expect(rejection(proxied).mind.episodes[0]).toMatchObject({ id: 1, w: 700, r: 1 });
+  });
+});
+
+describe("the percepts the engine kept", () => {
+  test("never hold a perceived activity outside the ruleset's kinds: that is an integrity fault", () => {
+    const ctx = contextAt(1);
+    const percepts = {
+      tick: 1,
+      cell: CELL,
+      outcome: { result: "none", tick: 0, reason: "" },
+      beings: [{ id: 2, species: "s1", cell: [0, 0] as const, activity: "talk" }],
+      window: windowAt(CELL),
+      activities: ["eat", "idle", "sleep", "walk"],
+    };
+    const remember = [{ percept: { kind: "being" as const, index: 0 }, w: 1 }];
+    const step1 = forgetAtDecision(HELD, ctx);
+    const error = engineErrorOf(() =>
+      applyOperations(step1, { ...NO_OPERATIONS, remember }, percepts, ctx),
+    );
+    expect(error.code).toBe("integrity_violation");
+    expect(error.issues[0]?.message).toContain('"talk"');
   });
 });
 

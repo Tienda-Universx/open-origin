@@ -87,9 +87,10 @@ const SCAN_TEXT = 64;
 type Scan = { budget: number; readonly visited: object[] };
 
 /**
- * Whether `value` holds more than the scan allows: a string or key longer than SCAN_TEXT, or more
- * entries in all than its budget. Each length is read once, through its descriptor, before
- * anything is iterated. A value reached twice is left to the canonical copy, which refuses it.
+ * Whether `value` holds more than the scan allows: a string or key longer than SCAN_TEXT, more
+ * entries in all than its budget, or a length that is not a count. Each length is read once,
+ * through its descriptor, and bounded before anything is iterated. A value reached twice is left
+ * to the canonical copy, which refuses it.
  */
 function oversized(value: unknown, scan: Scan): boolean {
   if (typeof value === "string") return value.length > SCAN_TEXT;
@@ -98,11 +99,14 @@ function oversized(value: unknown, scan: Scan): boolean {
   return Array.isArray(value) ? oversizedList(value, scan) : oversizedRecord(value, scan);
 }
 
-/** Whether the array `list` holds more than the scan allows, its length read before its entries. */
+/**
+ * Whether the array `list` holds more than the scan allows, its length read before its entries. A
+ * Proxy may report any length: one that is not a count within the budget left is refused.
+ */
 function oversizedList(list: object, scan: Scan): boolean {
   const length = lengthOf(list);
+  if (!Number.isSafeInteger(length) || length < 0 || length > scan.budget) return true;
   scan.budget -= length;
-  if (scan.budget < 0) return true;
   for (let index = 0; index < length; index += 1)
     if (oversized(Object.getOwnPropertyDescriptor(list, index)?.value, scan)) return true;
   return false;
@@ -110,8 +114,9 @@ function oversizedList(list: object, scan: Scan): boolean {
 
 /** Whether the record `record` holds more than the scan allows, its keys counted before sorted. */
 function oversizedRecord(record: object, scan: Scan): boolean {
-  scan.budget -= ownKeyCount(record);
-  if (scan.budget < 0) return true;
+  const count = ownKeyCount(record);
+  if (count > scan.budget) return true;
+  scan.budget -= count;
   return sortedOwnKeys(record).some(
     (key) =>
       key.length > SCAN_TEXT ||
