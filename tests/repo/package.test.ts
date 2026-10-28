@@ -153,8 +153,9 @@ describe("package.json", () => {
     expect(manifest.scripts.typecheck).toMatch(
       /^bunx --no-install --bun tsc (?=.*--noEmit)(?=.*-p tsconfig\.json)/,
     );
-    // Any argument, a path or an option such as --test-name-pattern, can narrow the suite CI runs.
-    expect(manifest.scripts.test).toBe("bun test");
+    // Only --parallel, which runs every file on one worker per core: any other argument, a path or
+    // an option such as --test-name-pattern, can narrow the suite CI runs.
+    expect(manifest.scripts.test).toBe("bun test --parallel");
   });
 
   test("lint runs both gates: Biome and the oxlint complexity rules", () => {

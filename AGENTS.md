@@ -25,7 +25,7 @@ Bun are allowed when they add value.
 | Typecheck | `bun run typecheck` |
 | Lint, format and complexity checks (Biome, oxlint) | `bun run lint` |
 | Apply formatting and safe fixes | `bun run format` |
-| Tests | `bun test` |
+| Tests | `bun test`; `bun run test`, which `check` and CI run, adds `--parallel`: one worker per CPU core, each test file isolated |
 | Engine benchmark (manual, not part of `check`) | `bun packages/engine/bench/step.ts` |
 | Worldgen benchmark (manual, not part of `check`) | `bun packages/engine/bench/worldgen.ts` |
 | Beings benchmark (manual, not part of `check`) | `bun packages/agents/bench/beings.ts` |
