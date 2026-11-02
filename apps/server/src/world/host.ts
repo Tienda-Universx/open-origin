@@ -2,9 +2,10 @@
  * The world host (ADR 0025): it owns the world a source gives it and steps it, one tick per call.
  * The engine is the reality: the host only stamps the source's commands with their tick and order,
  * steps, and hands what the tick did to the publication gate, so nothing here can change a step's
- * result. Every K-th tick it encodes the snapshot for the journal's checkpoint. When a step
- * throws, the host first has the gate append the valid ticks it has not appended yet, never the
- * faulted one, then halts, keeping only the error's code: its issues may name C3 data.
+ * result. Every K-th tick it encodes the snapshot for the journal's checkpoint. When the source or
+ * a step throws, the host first has the gate append the valid ticks it has not appended yet, never
+ * the faulted one, then halts. It keeps an engine error's code alone, since its issues may name C3
+ * data, and anything else as `unexpected_error` with what it threw.
  */
 import {
   type Command,
@@ -17,6 +18,7 @@ import {
   type Tick,
   type World,
 } from "@open-origin/engine";
+import { causeOf, type FaultCause } from "./fault.ts";
 import type { PublicationGate } from "./publication.ts";
 import { publishedTick } from "./published.ts";
 import type { CommandIntent, WorldSource } from "./source.ts";
@@ -28,8 +30,11 @@ export type HaltCode =
   | "journal_failed"
   | "unhandled_rejection";
 
-/** A halt: its code, and the first tick the world did not execute. */
-export type Halt = { readonly code: HaltCode; readonly tick: Tick };
+/**
+ * A halt: its code, the first tick the world did not execute, and, for a fault that is not an
+ * engine error, what it threw.
+ */
+export type Halt = { readonly code: HaltCode; readonly tick: Tick; readonly cause?: FaultCause };
 
 /** K: the ticks between two checkpoints (ADR 0007). */
 const CHECKPOINT_TICKS = 300;
@@ -51,11 +56,6 @@ function stamp(intents: readonly CommandIntent[], tick: Tick): Command[] {
     origin,
     payload,
   }));
-}
-
-/** The code of what a step threw. */
-function codeOf(error: unknown): HaltCode {
-  return EngineError.isEngineError(error) ? error.code : "unexpected_error";
 }
 
 /** Steps the world of one source and hands each tick to the publication gate. */
@@ -101,14 +101,16 @@ export class WorldHost {
       throw new Error(`the world halted at tick ${this.#halt.tick} with ${this.#halt.code}`);
     }
     const tick = this.#executed + 1;
-    const commands = stamp(this.#source.commandsAt(tick), tick);
+    let commands: Command[];
     let result: StepResult;
     let checkpoint: string | undefined;
     try {
+      commands = stamp(this.#source.commandsAt(tick), tick);
       result = step(this.#world, commands);
       checkpoint = tick % this.#checkpointTicks === 0 ? encodeSnapshot(this.#world) : undefined;
     } catch (error) {
-      this.halt(codeOf(error));
+      if (EngineError.isEngineError(error)) this.halt(error.code);
+      else this.halt("unexpected_error", causeOf(error));
       return;
     }
     this.#executed = tick;
@@ -118,12 +120,15 @@ export class WorldHost {
   }
 
   /**
-   * Halts the world with `code`: the gate first appends the ticks it holds, then nothing more
-   * runs. A second halt keeps the first one's code.
+   * Halts the world with `code` and, for a fault that is not an engine error, its `cause`: the gate
+   * first appends the ticks it holds, then nothing more runs. A second halt keeps the first one's
+   * reason, even one the flush causes: a journal that fails at once halts the host again from
+   * within it, so the reason is recorded before the flush.
    */
-  halt(code: HaltCode): void {
+  halt(code: HaltCode, cause?: FaultCause): void {
     if (this.#halt !== undefined) return;
+    const tick = this.#executed + 1;
+    this.#halt = cause === undefined ? { code, tick } : { code, tick, cause };
     void this.#gate.flush();
-    this.#halt = { code, tick: this.#executed + 1 };
   }
 }

@@ -101,9 +101,19 @@ The host reads nothing else and changes nothing in what `step` computes: over th
 of T5 and its script it reproduces the frozen trail of the determinism suite (`edb4c527…`), and over
 the default scenario every checksum of a direct step loop.
 
-When `step` or the snapshot throws, the host has the gate flush the ticks it holds, never the faulted
-one, and halts with the error's code only: an `EngineError`'s issues can name C3 data. A halt keeps
-the first code: an engine error's, `unexpected_error`, `journal_failed`, or `unhandled_rejection`.
+When the source's `commandsAt`, `step`, or the snapshot throws, the host has the gate flush the ticks
+it holds, never the faulted one, and halts. A halt records its code, the first tick the world did not
+execute, and, for a fault that is not an engine error, its `cause`:
+
+| Code | Cause |
+|---|---|
+| An `EngineError`'s | None: its issues can name C3 data, so only the code is kept |
+| `unexpected_error` | What the source, `step`, or the snapshot threw: its message, and its `code` when it carries a string one |
+| `journal_failed` | What the journal threw or rejected with, kept the same way |
+| `unhandled_rejection` | None |
+
+The first halt keeps its reason. The host records it before the flush, so a halt the flush itself
+causes, from a journal that fails at once, does not replace it.
 
 ## Journal
 
@@ -135,8 +145,9 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
   as `listenerFaults` and never stop publication.
 - **Flush.** `flush` appends what is left as partial batches and resolves once all of it is
   committed and published, or once the journal failed; it never rejects.
-- **Failure.** When an append rejects or throws, the gate fails: it drops the ticks it holds,
-  appends and publishes nothing more, and refuses further ticks. Nothing uncommitted is published.
+- **Failure.** When an append rejects or throws, the gate fails: it keeps what the journal threw or
+  rejected with as `failure`, drops the ticks it holds, appends and publishes nothing more, and
+  refuses further ticks. Nothing uncommitted is published.
 - **Window.** `stalled()` is `E − C > W`, with `W = 4F`.
 - **Change callback.** `onChange` runs after each acknowledgement and after a failure, so the
   scheduler can ask its hold again. A throw from it is counted as `changeFaults` and reaches neither
@@ -154,10 +165,11 @@ ephemeral journal unless given), the host, and the scheduler, and returns:
 | `subscribeToPublished(listener)` | Adds a listener of published ticks and returns the function that removes it |
 | `status()` | The server's status, shaped for `ServerStatus` of `@open-origin/protocol/admin` |
 | `unhandledRejection()` | Asks `rejectionPolicy(AI_MODE)`; with `off`, the world halts |
+| `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |
 
 `deps` carries the clock and the timer, which the entry point of T6-7 takes from `src/adapters/`,
 and, for tests, the journal, the source, and K. A journal failure halts the host with
-`journal_failed`. The status reads `E`, `C`, and `P` from the gate; the state is `halted` once the
+`journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P` from the gate; the state is `halted` once the
 host halted or the journal failed, and otherwise the scheduler's (`journalStall` is `stalled`).
 `projectionMicros` and `fanOutMicros` are 0 and `connections` is 0 until the planes that measure
 them exist.

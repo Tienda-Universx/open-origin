@@ -14,6 +14,7 @@
  * more, so nothing uncommitted is ever published. At boot `P = C = E = L`, the world's tick.
  */
 import type { Tick } from "@open-origin/engine";
+import { causeOf, type FaultCause } from "./fault.ts";
 import { type JournalBatch, OrderedJournal, type TickJournal, type TickRecord } from "./journal.ts";
 import type { PublishedListener, PublishedTick } from "./published.ts";
 
@@ -59,7 +60,8 @@ export class PublicationGate {
   #inFlight: readonly Executed[] | undefined;
   /** Whether partial batches are appended: from a flush until the queue is empty. */
   #draining = false;
-  #failed = false;
+  /** What the journal threw or rejected with, once it failed. */
+  #failure: FaultCause | undefined;
   #flushes: (() => void)[] = [];
   readonly #listeners = new Set<PublishedListener>();
   #listenerFaults = 0;
@@ -91,7 +93,12 @@ export class PublicationGate {
 
   /** Whether the journal failed: the world halts, and the gate publishes nothing more. */
   get failed(): boolean {
-    return this.#failed;
+    return this.#failure !== undefined;
+  }
+
+  /** What the journal threw or rejected with when it failed, or undefined while it has not. */
+  get failure(): FaultCause | undefined {
+    return this.#failure;
   }
 
   /** W = 4F: how far the journal may lag behind execution before the scheduler holds. */
@@ -121,7 +128,7 @@ export class PublicationGate {
 
   /** Takes the next executed tick. Throws when it does not follow E, or after a journal failure. */
   accept(entry: Executed): void {
-    if (this.#failed) throw new Error("the journal failed: the gate takes no more ticks");
+    if (this.failed) throw new Error("the journal failed: the gate takes no more ticks");
     const { tick } = entry.record;
     if (tick !== this.#executed + 1) {
       throw new Error(`tick ${tick} does not follow tick ${this.#executed}, the last executed`);
@@ -152,7 +159,7 @@ export class PublicationGate {
 
   /** Appends the next batch when none is in flight, or settles the flushes when nothing is left. */
   #pump(): void {
-    if (this.#failed) {
+    if (this.failed) {
       this.#settleFlushes();
       return;
     }
@@ -190,13 +197,13 @@ export class PublicationGate {
     let acknowledged: Promise<void>;
     try {
       acknowledged = this.#journal.append(batch);
-    } catch {
-      this.#fail();
+    } catch (error) {
+      this.#fail(error);
       return;
     }
     acknowledged.then(
       () => this.#commit(entries, last.record.tick),
-      () => this.#fail(),
+      (error: unknown) => this.#fail(error),
     );
   }
 
@@ -225,9 +232,12 @@ export class PublicationGate {
     this.#listenerFaults += 1;
   }
 
-  /** The journal failed: nothing it did not commit is published, and nothing more is appended. */
-  #fail(): void {
-    this.#failed = true;
+  /**
+   * The journal failed with `error`, which the gate keeps as the cause of the halt: nothing it did
+   * not commit is published, and nothing more is appended.
+   */
+  #fail(error: unknown): void {
+    this.#failure = causeOf(error);
     this.#inFlight = undefined;
     this.#queue.length = 0;
     this.#settleFlushes();

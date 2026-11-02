@@ -9,7 +9,7 @@
 import { readView } from "@open-origin/engine";
 import type { ServerStatus } from "@open-origin/protocol/admin";
 import type { Config } from "./config/config.ts";
-import { WorldHost } from "./world/host.ts";
+import { type Halt, WorldHost } from "./world/host.ts";
 import { EphemeralJournal, type TickJournal } from "./world/journal.ts";
 import { PublicationGate } from "./world/publication.ts";
 import type { PublishedListener } from "./world/published.ts";
@@ -42,6 +42,11 @@ export type WorldPlane = {
   status(): ServerStatus;
   /** What the process's `unhandledRejection` handler calls: the world halts under AI_MODE=off. */
   unhandledRejection(): void;
+  /**
+   * Why the world halted, for the entry point's log (C3), or undefined while it runs: the code, the
+   * first tick it did not execute, and, for a fault that is not an engine error, what it threw.
+   */
+  halted(): Halt | undefined;
 };
 
 /** Durations the world plane does not measure: projection arrives in T6-5, fan-out in T6-6a. */
@@ -86,7 +91,7 @@ function wire(config: Config, deps: WorldPlaneDeps): Parts {
   });
   /** A journal acknowledgement or failure: a failure halts the world; either may end a stall. */
   function afterJournal(): void {
-    if (gate.failed) host.halt("journal_failed");
+    if (gate.failed) host.halt("journal_failed", gate.failure);
     scheduler.wake();
   }
   return { gate, host, scheduler, hold };
@@ -129,6 +134,7 @@ export function compose(config: Config, deps: WorldPlaneDeps): WorldPlane {
       host.halt(rejectionPolicy(config.aiMode).code);
       scheduler.wake();
     },
+    halted: () => host.halted,
   });
 }
 

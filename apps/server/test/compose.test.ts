@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { ServerStatus } from "@open-origin/protocol/admin";
 import { compose, type WorldPlaneDeps } from "../src/compose.ts";
 import { type Config, parseConfig } from "../src/config/config.ts";
+import type { TickJournal } from "../src/world/journal.ts";
 import { ScriptedSource, type WorldSource } from "../src/world/source.ts";
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
@@ -87,6 +88,7 @@ describe("compose", () => {
       shortfallTicks: 0,
     });
     expect(published).toEqual(ticks(1, 10));
+    expect(world.halted()).toBeUndefined();
   });
 
   test("stop flushes the partial batch and publishes it, and start resumes", async () => {
@@ -154,8 +156,42 @@ describe("compose", () => {
     });
     expect(published).toEqual([]);
     expect(timer.pending).toBe(0);
+    // The halt keeps what the journal rejected with, for the entry point's log.
+    expect(world.halted()).toEqual({
+      code: "journal_failed",
+      tick: 8,
+      cause: { message: "the journal failed" },
+    });
     await timer.runUntilSettled(20 * P);
     expect(status().executedTick).toBe(7);
+  });
+
+  test("a journal that throws within a tick halts the world in that tick, with its cause", async () => {
+    const journal: TickJournal = {
+      level: "none",
+      append: () => {
+        throw Object.assign(new Error("no space left on the device"), { code: "ENOSPC" });
+      },
+    };
+    const config = configOf({ PUBLICATION_BATCH_TICKS: "1" });
+    const { timer, world, published, status } = plane({ journal, config });
+    world.start();
+    await timer.runUntilSettled(10 * P);
+    // Tick 1's batch of F = 1 threw within the tick: the gate failed, the host halted, and the
+    // scheduler, woken inside the tick, stopped before it armed another timer.
+    expect(status()).toMatchObject({
+      executedTick: 1,
+      committedTick: 0,
+      publishedTick: 0,
+      state: "halted",
+    });
+    expect(world.halted()).toEqual({
+      code: "journal_failed",
+      tick: 2,
+      cause: { code: "ENOSPC", message: "no space left on the device" },
+    });
+    expect(published).toEqual([]);
+    expect(timer.pending).toBe(0);
   });
 
   test("an engine fault halts the world once the valid ticks are committed", async () => {
@@ -172,6 +208,35 @@ describe("compose", () => {
     });
     expect(published).toEqual(ticks(1, 6));
     expect(timer.pending).toBe(0);
+    // An engine error leaves its code alone: its issues may name C3 data.
+    expect(world.halted()).toEqual({ code: "system_fault", tick: 7 });
+  });
+
+  test("a source that throws halts the world once the valid ticks are committed", async () => {
+    const counting = countingWorld(1_000_000);
+    const source: WorldSource = {
+      world: counting,
+      commandsAt: (tick) => {
+        if (tick === 7) throw new Error("a broken source");
+        return [];
+      },
+    };
+    const { timer, world, published, status } = plane({ source });
+    world.start();
+    await timer.runUntilSettled(20 * P);
+    expect(status()).toMatchObject({
+      executedTick: 6,
+      committedTick: 6,
+      publishedTick: 6,
+      state: "halted",
+    });
+    expect(published).toEqual(ticks(1, 6));
+    expect(timer.pending).toBe(0);
+    expect(world.halted()).toEqual({
+      code: "unexpected_error",
+      tick: 7,
+      cause: { message: "a broken source" },
+    });
   });
 
   test("an unhandled rejection halts the world under AI_MODE=off, flushing first", async () => {
@@ -188,6 +253,7 @@ describe("compose", () => {
     });
     expect(published).toEqual([1, 2, 3]);
     expect(timer.pending).toBe(0);
+    expect(world.halted()).toEqual({ code: "unhandled_rejection", tick: 4 });
     world.start();
     await timer.runUntilSettled(20 * P);
     expect(status().executedTick).toBe(3);

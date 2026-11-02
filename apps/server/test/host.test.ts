@@ -16,7 +16,7 @@ import {
   subjectScript,
 } from "../../../packages/agents/test/support/mind-subject.ts";
 import type { SuiteRuleset } from "../../../packages/engine/test/support/determinism-records.ts";
-import { WorldHost } from "../src/world/host.ts";
+import { type Halt, WorldHost } from "../src/world/host.ts";
 import type { JournalBatch, TickJournal, TickRecord } from "../src/world/journal.ts";
 import { PublicationGate } from "../src/world/publication.ts";
 import {
@@ -173,6 +173,35 @@ describe("WorldHost", () => {
     expect(recordsOf(journal.batches).map(({ tick }) => tick)).toEqual(ticks(1, 6));
     expect(() => host.stepOnce()).toThrow("the world halted at tick 7 with system_fault");
     expect(journal.batches).toHaveLength(2);
+  });
+
+  test("records a halt before its flush, so a halt the flush causes keeps the first reason", () => {
+    const seen: (Halt | undefined)[] = [];
+    let host: WorldHost | undefined;
+    const gate: PublicationGate = new PublicationGate({
+      journal: {
+        level: "none",
+        append: () => {
+          throw new Error("disk full");
+        },
+      },
+      batchTicks: 5,
+      boot: 0,
+      // As compose wires it: a journal failure halts the host, from within the flush.
+      onChange: () => {
+        host?.halt("journal_failed", gate.failure);
+        seen.push(host?.halted);
+      },
+    });
+    host = new WorldHost({ source: new ScriptedSource(countingWorld(3), []), gate });
+    host.stepOnce();
+    host.stepOnce();
+    // Tick 3 faults: the halt flushes ticks 1 and 2, and the journal throws at once.
+    host.stepOnce();
+    expect(gate.failed).toBe(true);
+    expect(gate.failure).toEqual({ message: "disk full" });
+    expect(seen).toEqual([{ code: "system_fault", tick: 3 }]);
+    expect(host.halted).toEqual({ code: "system_fault", tick: 3 });
   });
 
   test("halts on request, flushing first, and keeps the first halt's code", async () => {
