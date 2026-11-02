@@ -132,7 +132,7 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 
 | Path | Batch | Content |
 |---|---|---|
-| `apps/server/` | T6, T8 | T6: the world host, scheduler, publication gate, projections, presentation plane, and public listener ([0025](../decisions/0025-real-time-world-host.md), [0026](../decisions/0026-public-protocol-v1.md)); T8: the admin plane on its own listener ([0009](../decisions/0009-public-and-private-admin-interfaces.md); plan §G placed it in T6) |
+| `apps/server/` | T6, T8 | T6: the world host, scheduler, publication gate, projections, presentation plane, and public listener ([server](server.md); [0025](../decisions/0025-real-time-world-host.md), [0026](../decisions/0026-public-protocol-v1.md)); T8: the admin plane on its own listener ([0009](../decisions/0009-public-and-private-admin-interfaces.md); plan §G placed it in T6) |
 | `apps/web/` | T8 | Public interface (React + PixiJS) |
 | `apps/admin/` | T8, T9 | Local admin panel; AI controls in T9 |
 | `packages/ui/` | T8 | Design system: tokens + components (CSS Modules) |
