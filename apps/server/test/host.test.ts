@@ -2,11 +2,21 @@
  * The world host (ADR 0025; plan test 15: the server changes none of the frozen results of T2–T5):
  * over the `mind@1` subject and its script it reproduces the frozen trail of the determinism
  * suite, and over the default scenario it gives every tick the checksum a direct step loop gives;
- * it stamps commands, records every one, and checkpoints every K-th tick; and on an engine fault
- * the valid ticks reach the journal, the faulted one does not, and the host halts.
+ * it stamps commands, records every one, and checkpoints every K-th tick; and on an engine fault,
+ * or a projection that throws, a walk's refused record among them, the valid ticks reach the
+ * journal, the faulted one does not, and the host halts.
  */
 import { describe, expect, test } from "bun:test";
-import { digest, encodeSnapshot, step, worldStatus } from "@open-origin/engine";
+import {
+  beings,
+  createWorld,
+  digest,
+  encodeSnapshot,
+  type Ruleset,
+  step,
+  type World,
+  worldStatus,
+} from "@open-origin/engine";
 import { LABELS2, scenario2Of } from "@open-origin/scenarios";
 import { mindRuleset } from "../../../packages/agents/test/support/mind-ruleset.ts";
 import {
@@ -15,6 +25,8 @@ import {
   SUBJECT_TICKS,
   subjectScript,
 } from "../../../packages/agents/test/support/mind-subject.ts";
+import { testGenesis } from "../../../packages/engine/test/support/beings-world.ts";
+import { being2, chunksOf } from "../../../packages/engine/test/support/beings2-world.ts";
 import type { SuiteRuleset } from "../../../packages/engine/test/support/determinism-records.ts";
 import { BeingsProjection } from "../src/projection/projection.ts";
 import { type Halt, type Projector, WorldHost } from "../src/world/host.ts";
@@ -57,6 +69,42 @@ function hostOver(
   const gate = new PublicationGate({ journal, batchTicks, boot: 0 });
   const host = new WorldHost({ source, projector, gate, checkpointTicks });
   return { gate, host };
+}
+
+/**
+ * A world that holds being 1 of beings@2 on the first step of a walk, under a ruleset that validates
+ * nothing and whose one system, at the tick `at`, moves the walk past its last step: a walk the
+ * engine's validator never stores, planted so that it reaches the projection.
+ */
+function brokenWalkWorld(at: number): World {
+  const walk: beings.Activity = { kind: "walk", start: 0, dirs: "02", ms: [10, 20], done: 0 };
+  const ruleset: Ruleset<beings.BeingsGlobal, beings.BeingsChunk> = {
+    versions: { ruleset: "server-test@1", generator: "none@1", brain: "none@1" },
+    systems: [
+      {
+        name: "break",
+        streams: [],
+        run: (ctx) => {
+          if (ctx.tick !== at) return undefined;
+          const chunk = ctx.writeChunk("0,0");
+          chunk.beings = chunk.beings.map((being) => ({
+            ...being,
+            activity: { ...walk, done: walk.dirs.length },
+          }));
+          return undefined;
+        },
+      },
+    ],
+    commands: {},
+    validateGlobal: () => [],
+    validateChunk: () => [],
+  };
+  const global = {
+    ...beings.beingsGlobal(testGenesis(), beings.defaultLife2()),
+    occupancy: ["0,0"],
+  };
+  const chunks = chunksOf([{ ...being2(1, [3, 4]), activity: walk }]);
+  return createWorld({ seed: [1, 2], simSecondsPerTick: 12, global, chunks, ruleset });
 }
 
 /** The records of `batches`, in order. */
@@ -215,6 +263,26 @@ describe("WorldHost", () => {
       cause: { message: "a planted projection fault" },
     });
     expect(host.executedTick).toBe(2);
+    expect(recordsOf(journal.batches).map(({ tick }) => tick)).toEqual([1, 2]);
+    expect(published).toEqual([1, 2]);
+  });
+
+  test("halts on a walk past its last step, whose record the strict schema refuses: the fail-safe", async () => {
+    const journal = new RecordingJournal();
+    const world = brokenWalkWorld(3);
+    const projector = new BeingsProjection(world);
+    const { gate, host } = hostOver(new ScriptedSource(world, []), { journal, projector });
+    const published: number[] = [];
+    gate.subscribe(({ tick }) => {
+      published.push(tick);
+    });
+    for (let tick = 1; tick <= 3; tick += 1) host.stepOnce();
+    await settle();
+    expect(host.halted).toEqual({
+      code: "unexpected_error",
+      tick: 3,
+      cause: { message: "the being 1 has no valid public record: activity.dir (invalid_type)" },
+    });
     expect(recordsOf(journal.batches).map(({ tick }) => tick)).toEqual([1, 2]);
     expect(published).toEqual([1, 2]);
   });

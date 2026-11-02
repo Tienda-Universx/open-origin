@@ -110,7 +110,7 @@ execute, and, for a fault that is not an engine error, its `cause`:
 | Code | Cause |
 |---|---|
 | An `EngineError`'s | None: its issues can name C3 data, so only the code is kept |
-| `unexpected_error` | What the source, `step`, or the snapshot threw: its message, and its `code` when it carries a string one |
+| `unexpected_error` | What the source, `step`, the snapshot, or the projection threw: its message, and its `code` when it carries a string one |
 | `journal_failed` | What the journal threw or rejected with, kept the same way |
 | `unhandled_rejection` | None |
 
@@ -147,7 +147,10 @@ it publishes `{tick, clock, chunks, speech, feed}`, frozen at every level, and o
   reads every chunk once.
 - **Checks.** Every record that goes out, and every record boot holds, is checked by the protocol's
   strict `BeingPublic`; one that fails throws, naming the being and the fields, never their values,
-  and the host halts. Each event's payload is read through a schema of the members it uses.
+  and the host halts. That is the fail-safe of a walk whose `done` is not below the length of
+  `dirs`, or whose step is not a direction's digit: the engine's validator never stores one, and
+  should one reach the projection its `dir` is no direction, so the host halts rather than publish
+  a guessed one. Each event's payload is read through a schema of the members it uses.
 - **Events.** `C0_EVENT_DECISIONS` holds what the projection does with each event type the registry
   classifies C0: `being.spawned`, `being.died`, and `speech.uttered` are projected;
   `being.started` is excluded, since the kind of activity it reports is in the being's record.
@@ -162,11 +165,15 @@ it publishes `{tick, clock, chunks, speech, feed}`, frozen at every level, and o
 
 `projection.test.ts` checks the map against the registry both ways, the decision for every C0
 event type, versions that move only on C0 changes, a crossing that leaves one chunk and enters the
-other in the same tick, the clock against the calendar, `readTerrain` against worldgen, and that a
-projection pass changes no state root. `leak.test.ts` runs the `mind@1` subject, the default
-scenario, and a canary world through the host and the gate, reads every published tick back with
-the protocol's strict schemas, and finds in its text no taint, seed, terrain seed, seal, checksum,
-state root, or canary planted in C1 and C3 data.
+other in the same tick, each walker's `dir` over 700 ticks of the default scenario against the step
+it is on, the clock against the calendar and against values computed by hand, `readTerrain`
+against worldgen, a wet chunk cell by cell included, and that a projection pass changes no state
+root.
+
+`leak.test.ts` runs the `mind@1` subject, the default scenario, and a canary world through the
+host and the gate, reads every published tick back with the protocol's strict schemas, and finds
+in its text no taint, seed, terrain seed, seal, checksum, state root, or canary planted in C1 and
+C3 data.
 
 ## Journal
 

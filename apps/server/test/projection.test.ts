@@ -1,11 +1,12 @@
 /**
  * The C0 projection of a world of beings (ADR 0026, "Projections and classification"; plan tests 9
- * and 11 in part): a being's public record holds exactly the registry's C0 members, field by field;
- * every C0 event type is projected or excluded with a reason; a chunk's records go out only when
- * their C0 bytes change, so C1 changes emit nothing; a being that crosses chunks leaves one and
- * enters the other in the same published tick; speech carries plain text or is left out and
- * counted; the clock is the calendar's; readTerrain returns surface observables and materializes
- * nothing; and projecting never changes the world.
+ * and 11 in part): a being's public record holds exactly the registry's C0 members, field by field,
+ * a walker's direction that of the step it is on, and a walk on no such step is refused; every C0
+ * event type is projected or excluded with a reason; a chunk's records go out only when their C0
+ * bytes change, so C1 changes emit nothing; a being that crosses chunks leaves one and enters the
+ * other in the same published tick; speech carries plain text or is left out and counted; the
+ * clock is the calendar's, rounded down; readTerrain returns surface observables, a wet chunk's
+ * liquid depth included, and materializes nothing; and projecting never changes the world.
  */
 import { describe, expect, test } from "bun:test";
 import { renderAct, type UtteredAct } from "@open-origin/agents";
@@ -15,6 +16,7 @@ import {
   createWorld,
   EngineError,
   type EngineEvent,
+  type ReadView,
   type Ruleset,
   readView,
   type StepResult,
@@ -45,7 +47,7 @@ import { calendarClock } from "../src/projection/clock.ts";
 import { C0_EVENT_DECISIONS, projectEvents } from "../src/projection/events.ts";
 import { BeingsProjection, type ProjectionOptions } from "../src/projection/projection.ts";
 import type { PublishedChunk, PublishedTick } from "../src/world/published.ts";
-import type { CommandIntent } from "../src/world/source.ts";
+import { type CommandIntent, ScenarioSource } from "../src/world/source.ts";
 import {
   canaryScript,
   canaryWorld,
@@ -147,6 +149,9 @@ function subject() {
   return { world, script: subjectScript() };
 }
 
+/** How the host reads a world of beings. */
+type BeingsView = ReadView<beings.BeingsGlobal, beings.BeingsChunk>;
+
 /** A world at tick 0 whose global value holds `genesis`, under a ruleset that validates nothing. */
 function worldHolding(genesis: number): World {
   const ruleset: Ruleset<{ genesis: number }, { n: number }> = {
@@ -162,6 +167,22 @@ function worldHolding(genesis: number): World {
     global: { genesis },
     chunks: {},
     ruleset,
+  });
+}
+
+/**
+ * Each walker `published` upserts: its id, the direction its record carries, and the activity
+ * that `view`, read after the same step, holds for it.
+ */
+function walkersOf(published: PublishedTick, view: BeingsView) {
+  return published.chunks.flatMap(({ at, upsert }) => {
+    const held = view.readChunk(`${at[0]},${at[1]}`)?.beings ?? [];
+    return upsert.flatMap(({ id, activity }) => {
+      if (activity.kind !== "walk") return [];
+      const walk = held.find((being) => being.id === id)?.activity;
+      if (walk?.kind !== "walk") throw new Error(`the walker ${id} holds no walk`);
+      return [{ id, dir: activity.dir, walk }];
+    });
   });
 }
 
@@ -209,6 +230,44 @@ describe("the public record of a being", () => {
     expect(JSON.stringify(record(doing(2, WALK)))).toBe(
       JSON.stringify(publicRecordOf(doing(2, WALK))),
     );
+  });
+
+  test("derives a walk's direction from the step it is on, wherever in its route that falls", () => {
+    const route = (done: number): beings.Activity => ({
+      kind: "walk",
+      start: 1,
+      dirs: "0246",
+      ms: [10, 20, 30, 40],
+      done,
+    });
+    const activityAt = (done: number) =>
+      checkedRecord(5, publicRecordOf(doing(5, route(done)))).activity;
+    expect([0, 1, 2, 3].map(activityAt)).toEqual(
+      [0, 2, 4, 6].map((dir) => ({ kind: "walk", dir })),
+    );
+  });
+
+  test("refuses a walk past its last step or on a step that is no direction: the fail-safe", () => {
+    // The engine never stores such a walk; should one reach the projection, its record is refused,
+    // which halts the host (host.test.ts), rather than published with a guessed direction.
+    const refusal = (dirs: string, done: number) => {
+      const walk: beings.Activity = { kind: "walk", start: 1, dirs, ms: [10, 20], done };
+      try {
+        checkedRecord(6, publicRecordOf(doing(6, walk)));
+      } catch (error) {
+        return String(error);
+      }
+      return "accepted";
+    };
+    const refused = (code: string) =>
+      `Error: the being 6 has no valid public record: activity.dir (${code})`;
+    expect([refusal("02", 2), refusal("0x", 1), refusal("08", 1), refusal("0/", 1)]).toEqual([
+      refused("invalid_type"),
+      refused("too_big"),
+      refused("too_big"),
+      refused("too_small"),
+    ]);
+    expect(refusal("02", 1)).toBe("accepted");
   });
 
   test("refuses a record the schema rejects, naming the being and fields, never values", () => {
@@ -376,6 +435,26 @@ describe("the C0 projection of a world", () => {
     ]);
   });
 
+  test("rounds a day's permille down, over the default scenario's calendar", () => {
+    const { world } = new ScenarioSource();
+    const view: BeingsView = readView(world as World<beings.BeingsGlobal, beings.BeingsChunk>);
+    const prepared = worldgen.prepareGenesis(view.readGlobal().genesis);
+    // Its ticks last 12 simulated seconds and its days 75,600: few ticks fall on a whole permille.
+    const dayLength = worldgen.genesisOf(prepared).laws.day.length;
+    expect([view.simSecondsPerTick, dayLength]).toEqual([12, 75_600]);
+    // By hand, 1000 · 12t / 75,600: tick 1 is 0.16 permille into day 0, tick 7 1.11, tick 100
+    // 15.87, tick 6,299 999.84; tick 6,300 opens day 1, and tick 10,000 is 44,400 s into it, 587.30.
+    expect([1, 7, 100, 3150, 6299, 6300, 10_000].map(calendarClock(prepared, 12))).toEqual([
+      { tick: 1, day: 0, dayPermille: 0 },
+      { tick: 7, day: 0, dayPermille: 1 },
+      { tick: 100, day: 0, dayPermille: 15 },
+      { tick: 3150, day: 0, dayPermille: 500 },
+      { tick: 6299, day: 0, dayPermille: 999 },
+      { tick: 6300, day: 1, dayPermille: 0 },
+      { tick: 10_000, day: 1, dayPermille: 587 },
+    ]);
+  });
+
   test("never changes the world: its state root, its chunks, and its trail stay the same", () => {
     const projectedWorld = canaryWorld();
     const plain = canaryWorld();
@@ -411,6 +490,25 @@ describe("the C0 projection of a world", () => {
     );
     // A global value that holds a genesis the engine cannot prepare is the engine's to refuse.
     expect(() => new BeingsProjection(worldHolding(7))).toThrow(EngineError);
+  });
+
+  test("publishes for each walker the direction of the step it is on, over the default scenario", () => {
+    const source = new ScenarioSource();
+    const projection = new BeingsProjection(source.world);
+    const view: BeingsView = readView(
+      source.world as World<beings.BeingsGlobal, beings.BeingsChunk>,
+    );
+    const walkers = Array.from({ length: 700 }, (_, index) => {
+      const result = step(source.world, stamped(source.commandsAt(index + 1), index + 1));
+      return walkersOf(projection.project(result), view);
+    }).flat();
+    // The direction of the step that arrives next, as the engine's perception reads it.
+    for (const { id, dir, walk } of walkers)
+      expect([id, dir]).toEqual([id, Number(walk.dirs[walk.done])]);
+    // Not vacuous: walkers on a step that is not their route's last, and turns from it.
+    const turning = walkers.filter(({ walk }) => walk.dirs[walk.done] !== walk.dirs.at(-1));
+    expect(walkers.length).toBeGreaterThan(100);
+    expect(turning.length).toBeGreaterThan(9);
   });
 });
 
@@ -449,6 +547,21 @@ describe("readTerrain", () => {
       terrainWidth(range("liquid.depth"), false),
       1,
     ]);
+  });
+
+  test("returns the liquid depth of a wet chunk cell by cell, as worldgen observes it", () => {
+    const projection = new BeingsProjection(canaryWorld());
+    const wet: [number, number] = [6, 24];
+    const decoded = decodeTerrain(projection.readTerrain(wet));
+    const instant = { tick: 0, simSecondsPerTick: 12 };
+    const observed = Array.from({ length: 1024 }, (_, index) => {
+      const cell = { x: wet[0] * 32 + (index % 32), y: wet[1] * 32 + Math.floor(index / 32) };
+      return worldgen.observe(PREPARED, { id: "liquid.depth", cell, instant });
+    });
+    expect([...decoded.liquidDepth]).toEqual(observed);
+    // Not vacuous: the chunk holds cells under the liquid and cells above it.
+    const under = observed.filter((depth) => depth > 0).length;
+    expect([under, 1024 - under]).toEqual([924, 100]);
   });
 });
 

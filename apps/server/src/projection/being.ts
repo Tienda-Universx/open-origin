@@ -43,7 +43,9 @@ function activityOf(activity: Activity) {
     case "talk":
       return { kind: activity.kind, to: activity.to, act: activity.act };
     case "walk":
-      // A stored walk is always on a step: `done` stays below the number of its directions.
+      // A stored walk is always on a step: `done` stays below the number of its directions. Should
+      // one break that, or hold a step that is not a direction's digit, its `dir` is no direction,
+      // so checkedRecord refuses the record and the host halts: a fail-safe, never a guess.
       return { kind: activity.kind, dir: activity.dirs.charCodeAt(activity.done) - DIGIT_ZERO };
     default:
       return { kind: activity.kind };
