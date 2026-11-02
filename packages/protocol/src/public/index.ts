@@ -2,6 +2,7 @@
  * `@open-origin/protocol/public`: the public protocol v1 (ADR 0026, docs/architecture/protocol.md),
  * everything the public server and its clients share. It never imports the admin contracts.
  */
+export type { ChunkContent, ChunkDelta, Part, Transaction } from "./assemble.ts";
 export { RECONNECT_BACKOFF, reconnectDelayMs } from "./backoff.ts";
 export {
   CLIENT_MESSAGE_TYPES,
@@ -59,6 +60,20 @@ export {
   Speech,
   Tick,
 } from "./dto.ts";
+export {
+  type Anomaly,
+  type AnomalyKind,
+  type Applied,
+  applyMessage,
+  type ChunkView,
+  type ClientState,
+  type ClientView,
+  type Committed,
+  type Connection,
+  findBeing,
+  initialClientState,
+  type LocalSpeech,
+} from "./reducer.ts";
 export {
   AbortMessage,
   Clock,
