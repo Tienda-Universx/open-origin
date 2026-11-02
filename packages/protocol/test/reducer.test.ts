@@ -451,6 +451,18 @@ describe("fragments", () => {
     expect(applied.anomaly?.kind).toBe("bad_transaction");
     expect([session.ids(C), session.state.stale]).toEqual([undefined, true]);
   });
+
+  test("break the transaction when a being lies outside its chunk", () => {
+    const session = connected();
+    // Cell [5, 3] is in chunk A, not in C.
+    session.apply(snapshot(session.at(31, 2), [{ at: C, v: 30, beings: [being(7, [5, 3])] }]));
+    const applied = session.apply(commit(session.at(31, 2)));
+    expect(applied.anomaly).toEqual({
+      kind: "bad_transaction",
+      detail: "being 7 does not lie in chunk 0,1",
+    });
+    expect([session.ids(C), session.view.tick, session.state.stale]).toEqual([undefined, 12, true]);
+  });
 });
 
 describe("anomalies", () => {
@@ -512,6 +524,18 @@ describe("anomalies", () => {
     const closing = connected();
     closing.apply(events(closing.at(15, 2), []));
     expect(closing.apply(commit(closing.at(15, 3))).anomaly?.kind).toBe("bad_transaction");
+  });
+
+  test("a commit at another tick than its transaction's parts", () => {
+    const session = connected();
+    session.apply(delta(session.at(15, 2), [{ at: A, v: 15, gone: [1] }]));
+    // Tick 16 follows the last commit's, 12, so only the parts' tick, 15, tells it apart.
+    const applied = session.apply(commit(session.at(16, 2)));
+    expect(applied.anomaly).toEqual({
+      kind: "bad_transaction",
+      detail: "the commit of transaction 2 at tick 16 does not close the one in flight",
+    });
+    expect([session.ids(A), session.view.tick, session.state.stale]).toEqual([[1], 12, true]);
   });
 
   test("differences of a chunk that is not visible, or of a being that is not there", () => {
