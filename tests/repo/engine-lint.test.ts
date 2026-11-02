@@ -7,8 +7,9 @@ import { createLintHarness, type DeniedGlobals, pluginPaths } from "./lint-harne
  * Proves that each engine purity control fires under packages/engine/src and only there, that each
  * reviewed exception covers exactly its file and its rule, and that the engine's compiler settings
  * reject host globals. It also proves that packages/agents/src shares every purity rule of the
- * engine, with no exception, and has its own import rule (ADR 0023). Every fixture is checked with
- * the repository's own configuration.
+ * engine, with no exception, and has its own import rule (ADR 0023), and that packages/scenarios/src
+ * has its own import rule (ADR 0025). Every fixture is checked with the repository's own
+ * configuration.
  */
 
 // One linter run checks many fixtures; a cold CI runner can exceed Bun's 5-second default.
@@ -734,13 +735,9 @@ const SHARED_PLUGINS = [
   "./packages/engine/lint/global-map.grit",
 ];
 
-/**
- * packages/agents/src shares the engine's rules with no reviewed exception (ADR 0023): no Math,
- * Map, JSON, or key enumeration at all, and int-math.grit does not apply there. Each path that
- * names an engine exception file breaks every rule, under the agents' own import rule.
- */
 /** Starts the diagnostic of the scenarios' import rule. */
 const SCENARIOS_IMPORT_MESSAGE = "packages/scenarios imports only relative paths";
+const SCENARIOS_SRC = "packages/scenarios/src";
 
 /**
  * The scenarios' import rule (ADR 0025): relative paths and exactly the public entries
@@ -771,11 +768,13 @@ describe("packages/scenarios import rule", () => {
   let linted: Diagnostic[] | undefined;
   function importDiagnostics(): Diagnostic[] {
     if (linted === undefined) {
-      const { diagnostics } = lintSummary({
-        "packages/scenarios/src/allowed.ts": ALLOWED,
-        "packages/scenarios/src/rejected.ts": REJECTED,
+      const { checked, diagnostics } = lintSummary({
+        [`${SCENARIOS_SRC}/allowed.ts`]: ALLOWED,
+        [`${SCENARIOS_SRC}/rejected.ts`]: REJECTED,
         "packages/scenarios/test/outside.ts": REJECTED,
       });
+      // Biome linted all three files; a skipped one would pass the two tests that expect nothing.
+      expect(checked).toBe(3);
       linted = diagnostics.filter(({ category }) => RESTRICTED_IMPORT.includes(category));
     }
     return linted;
@@ -796,6 +795,11 @@ describe("packages/scenarios import rule", () => {
   });
 });
 
+/**
+ * packages/agents/src shares the engine's rules with no reviewed exception (ADR 0023): no Math,
+ * Map, JSON, or key enumeration at all, and int-math.grit does not apply there. Each path that
+ * names an engine exception file breaks every rule, under the agents' own import rule.
+ */
 describe("packages/agents/src has no reviewed exception", () => {
   const AGENTS_EVERY_RULE: Probe[] = [
     ...EVERY_RULE.filter((probe) => probe.name !== "package imports"),
@@ -864,7 +868,7 @@ describe("packages/agents/src has no reviewed exception", () => {
     expect(imports.map((override) => override.includes)).toEqual([
       [`${ENGINE_SRC}/**`],
       [`${AGENTS_SRC}/**`],
-      ["packages/scenarios/src/**"],
+      [`${SCENARIOS_SRC}/**`],
     ]);
   });
 });

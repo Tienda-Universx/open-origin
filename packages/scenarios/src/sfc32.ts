@@ -3,8 +3,10 @@
  * Chris Doty-Humphrey from the PractRand suite (https://pracrand.sourceforge.net/), in the 32-bit
  * JavaScript form collected at https://github.com/bryc/code/blob/master/jshash/PRNGs.md. The
  * scenarios of T4 and T5 were preregistered with the engine's test copy
- * (packages/engine/test/support/sfc32.ts); this is a copy of its `next`, so the engine's tests never
- * depend on this package (ADR 0025), and test/sfc32.test.ts checks that both give the same outputs.
+ * (packages/engine/test/support/sfc32.ts). This copies its constructor and `next`, the parts the
+ * recipes use, so this package's sources never import engine test code; the engine keeps its own
+ * copy, so its tests never depend on this package (ADR 0025). test/sfc32.test.ts checks that both
+ * give the same outputs.
  * Seeding: a = 0, b = seed, c = 0, counter = 1, then 12 outputs discarded.
  */
 export class Sfc32 {
