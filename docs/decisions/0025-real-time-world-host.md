@@ -40,8 +40,9 @@ What the code and Bun 1.4.4 show:
 - **Terrain is not stored.** It is generated from a C3 seed, at about 0.5 ms per chunk.
 - **Publishing to a topic hides who lagged.** Bun's `server.publish` reports backpressure or a drop if
   it happened for *any* subscriber, without saying which.
-- **Codespaces forwards local ports.** It forwards ports that listen on localhost, and every forwarded
-  connection arrives from 127.0.0.1.
+
+Expected from Codespaces' documentation, and measured in T6-7: Codespaces forwards the ports that
+listen on localhost, and forwarded connections are expected to arrive from 127.0.0.1.
 
 ## Decision
 
@@ -80,13 +81,17 @@ old support files become re-exports.
 The boundary is checked on the transitive import graph, by `tests/repo/server-boundaries.ts`, which has
 negative tests of its own:
 
-- only `compose.ts` and `main.ts` import `presentation/` or `transport/`;
-- `presentation/` and `transport/` import only `@open-origin/protocol/*` and, as a type only,
-  `world/published.ts`. They cannot reach the engine, the agents, the host, or a source;
-- `world/` and `projection/` import no `bun` and name no WebSocket.
+1. From outside `presentation/` and `transport/`, only `compose.ts` and `main.ts` import them.
+2. `presentation/` and `transport/` import only `@open-origin/protocol/*`, each other, and, as a type
+   only, `world/published.ts`. They cannot reach the engine, the agents, the host, or a source.
+3. `world/` and `projection/` import no `bun` and name no WebSocket.
+4. `config/` is imported only by `compose.ts` and `main.ts`. The planes receive their settings as
+   parameters.
 
-Rule 1 also covers the cognitive allocator of T9, wherever it lives ([0005](0005-observer-independence.md),
-control 2).
+`tools/` and `bench/` sit outside `src/`; the terminal probe imports only the public protocol.
+
+Rule 1 realizes control 2 of [0005](0005-observer-independence.md) for the cognitive allocator of T9
+anywhere in `apps/server`. T9 extends the scan to the AI gateway's package.
 
 The presentation plane never receives the `World`, the host, or a source. It receives two functions
 only:
@@ -119,8 +124,8 @@ the event loop. It handles lateness like this:
 
 - **Late by one period or less** (`now − d_n ≤ P`): the schedule holds, and the next tick runs at
   `max(d_{n+1}, now)`. Ticks may then run back to back, but only to recover less than one period.
-- **Late by more than a period** (`now − d_n > P`): the schedule is rebased with `t0 ← now − n·P`, and
-  `shortfall += ⌊(now − d_n) / P⌋`.
+- **Late by more than a period** (`now − d_n > P`): first `shortfall += ⌊(now − d_n) / P⌋`, from the
+  deadline before the rebase; then the schedule is rebased with `t0 ← now − n·P`.
 - The tick always advances by exactly 1: there are no bursts, skipped ticks, or jumps. Under overload,
   the world runs slower for everyone alike.
 - `lateness`, `shortfallTicks`, `rebases`, and `achievedHz` are recorded as C3 metrics.
@@ -189,12 +194,19 @@ a rewind of the same one. A public universe needs T7's durable journal.
 ### Playout
 
 The gate releases up to F ticks at a time. A playout queue in the presentation plane hands at most
-**one** published tick to the mirror per period, and coalesces when it holds more than F. Fan-out runs
-in its own macrotask, never inside the step's callback, with a budget per period: clients that do not
-fit move to the next period, in rotating order.
+**one** published tick to the mirror per period. When the queue holds more than F, it releases the
+newest tick, after the mirror has applied every tick before it in order; the rings of speech and feed
+keep every tick. Fan-out runs in its own macrotask, never inside the step's callback, with a budget of
+40 ms per period: clients that do not fit move to the next period, in rotating order.
 
-Clients therefore receive a steady stream at the tick rate, about F periods behind publication, with no
-bursts. The delay from execution to playout is at most 2F ticks plus the acknowledgement.
+A client that is up to date therefore receives one `commit` per period, about F periods behind
+publication, with no bursts. A client whose transaction spans several periods sees fewer, larger steps
+([0026](0026-public-protocol-v1.md)).
+
+The delay from execution to playout is at most 2F ticks plus the acknowledgement. This refines
+[0022](0022-single-shared-public-universe.md), which bounds the public lag at one batch of F ticks
+plus the commit. The playout adds up to F periods, and a client's own multi-period transaction adds
+its duration.
 
 ### Configuration
 
@@ -233,6 +245,10 @@ For **every tick**, these must be equal across the runs:
 At the end, the snapshot bytes must be equal. A WebSocket variant with 10 real clients runs too. The
 checksums are read in process, never through the protocol.
 
+This refines control 1 of [0005](0005-observer-independence.md), which compares hashes at every tick.
+A hash cannot see an extra tick or a rejected command, so the test also compares the timeline and the
+commands.
+
 Three permanent negative controls must make this test fail at their exact tick:
 
 | Control | Leak |
@@ -254,7 +270,8 @@ A planted forbidden import must also fail the boundary scan.
   world and epochs. The scheduler, the gate, projections, presentation, and transport stay as they are.
 - In T6 the server is a local development server. It is not a public universe, and says so on every
   connection.
-- The view trails execution by up to about 2F ticks.
+- The view trails execution by about 2F ticks, plus the duration of a client's own multi-period
+  transaction.
 - A constraint passes to T9: an AI result must apply at a deterministic tick (trigger + k), and
   whether it is accepted must never depend on wall-clock time that spectator load affects. T9 chooses
   between waiting for due results and moving presentation to a Worker.

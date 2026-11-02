@@ -30,7 +30,7 @@ packages/ui ── shared by apps/web and apps/admin (presentational)
 
 - **Public plane.** Protocol v1 is in [0026](../decisions/0026-public-protocol-v1.md).
   - Server → client: `hello`, then transactions of `delta`, `snapshot`, and `events` parts, each
-    closed by a `commit` that carries the authoritative clock.
+    closed by a `commit` that carries the authoritative clock, or cancelled by an `abort`.
   - Client → server: exactly `subscribe(chunks)`, `follow(beingId)`, `ping`, and `resync`.
   - Clients are read-only in v0.1 (§I.3, §E.4).
 - **One shared universe.** No client message controls time, and a test of the allowlist rejects

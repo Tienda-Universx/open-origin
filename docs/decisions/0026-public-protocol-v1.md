@@ -10,7 +10,9 @@ T6 builds the per-audience protocol and its projections ([0008](0008-data-classi
 
 - **Server to client:** `hello`, `snapshot`, `delta`, `events`.
 - **Client to server:** `subscribe(chunks)`, `follow(beingId)`, `ping`.
-- **Rules:** pub/sub by chunk, every message carries its tick, and a gap triggers a resync.
+- **Rules:** pub/sub by chunk, every message carries its tick, and a gap triggers a resync. This ADR
+  refines all three below: sends per client, a tick defined per message, and a resync only on an
+  anomaly.
 
 Other documents fix the rest:
 
@@ -29,7 +31,7 @@ Code and review added these facts (tracker L67):
 |---|---|
 | Bun's topic publish reports status in aggregate | It cannot tell which client lagged |
 | A chunk holds up to 1,024 beings under `beings@2` and 65,536 under `beings@1` (`packages/engine/src/beings/chunk.ts`) | One dense chunk can outgrow any per-message or per-period limit |
-| Terrain takes about 7 KB per chunk | Even 64 empty chunks do not fit in 256 KB |
+| Terrain is estimated at about 7 KB per chunk, to be measured once its DTO exists | Even 64 empty chunks would not fit in 256 KB |
 | Raw `depletion` (`{cell, taken, since}`) shows how much each being ate (C1) and when food regrows (C3) | It cannot be public |
 | `changedChunks` lists every write, and about 97 % of writes change only a being's body | Versioning by engine dirtiness would leak when C1 and C3 change |
 | `simSecondsPerTick`, sent with the day's position, gives the day's length in seconds | That is a law parameter, C3 under [0008](0008-data-classification-and-audience-projections.md) (O-15) |
@@ -52,7 +54,8 @@ versions.
 - **Wire.** Text JSON, uncompressed in v1. The client asks for the subprotocol
   `open-origin.public.v1`; anything else gets HTTP 426 before the upgrade.
 - **Versioning.** The server speaks exactly one version. Any change of shape raises the version and
-  updates this ADR and the allowlist tests. In v0.1, web and server ship together.
+  updates this ADR, `docs/architecture/protocol.md`, and the allowlist tests. In v0.1, web and server
+  ship together.
 
 ### Client to server: an exact allowlist of four types
 
@@ -68,15 +71,15 @@ Any other type, including any that names pause, speed, step, seek, rewind, tick,
 
 ### Server to client
 
-Every message carries `type`, `seq` (counted per connection from 0), and `tick`:
+Every message carries `type`, `seq`, and `tick`, defined under Ordering and liveness:
 
 | Type | Fields | When |
 |---|---|---|
-| `hello` | `protocol`, `audience: "public"`, `world{id}`, `durability`, `state`, `clock`, `limits` | On connect. `world.id` is random per boot, never derived from the seed, a label, or the genesis |
+| `hello` | `protocol`, `audience: "public"`, `world{id}`, `durability`, `state`, `clock`, `limits` | On connect. `world.id` is random at the world's creation, never derived from the seed, a label, or the genesis; in ephemeral mode every boot creates a world |
 | `delta` | `txn`, `chunks[{at, v, gone[], upsert[], speech[], speechMissed?}]`, `drop[]` | Parts of a transaction: differences of visible chunks |
 | `snapshot` | `txn`, `reset`, `chunks[{at, v, terrain?, beings[], frag{i, n}}]`, `followed?` | Parts of a transaction: chunks entering the view, or the whole view in a `reset` |
 | `events` | `txn`, `items[]`, `missed?` | The feed in the transaction's range |
-| `commit` | `txn`, `clock{tick, day, dayPermille}` | Closes and applies the transaction; sent every period, even when empty |
+| `commit` | `txn`, `clock{tick, day, dayPermille}` | Closes and applies the transaction. An empty transaction still gets its `commit`, so a client that is up to date gets one per period: heartbeat and clock |
 | `abort` | `txn` | Memory protection cancelled the transaction; the client discards its parts |
 | `notice` | `code: "interest_trimmed"`, `chunks[]` | The view limit trimmed the interest |
 | `pong` | `nonce` | Answer to `ping` |
@@ -95,6 +98,28 @@ Every message carries `type`, `seq` (counted per connection from 0), and `tick`:
 
 Capacity is refused at the upgrade, with HTTP 503 and `Retry-After`.
 
+### Ordering and liveness
+
+- **`seq`** starts at 0 with `hello` and grows by exactly 1 per message.
+- **`tick`.** The messages of a transaction (`delta`, `snapshot`, `events`, `commit`, `abort`) carry
+  its target tick `L'`. Every other message carries the client's visible tick `L` when it is sent.
+  The ticks of successive commits strictly increase. A gap between them is normal: a transaction
+  covers every tick in `(L, L']`.
+- **The client's rules.**
+  - Any message resets a silence timer of `STALE_AFTER_MS`. When it expires, the client reconnects
+    with backoff.
+  - A `seq` gap, or a `commit` whose tick does not exceed the previous one, is an anomaly. The client
+    then sends `resync`.
+- **The server's duty.** While a client is not lagging, it gets at least one message per period: a
+  part or a `commit`. A lagging client is quiet only while its own buffer is full, and Bun's idle
+  timeout and pings still apply.
+- **Fields.**
+  - `v` is the tick at which a chunk's C0 content last changed.
+  - `followed` is the followed being's `BeingPublic`, or `null` when it is outside the view or gone.
+  - `hello.state` takes the values of `status.state`.
+  - `limits` holds `maxChunks`, `maxFollowChunks`, `maxMessageBytes`, `messagesPerSecond`, `burst`,
+    `newChunksPer2s`, and `maxViewBytes`: limits on the client, none on the world's rate.
+
 ### The authoritative clock
 
 The server computes `clock{tick, day, dayPermille}` with worldgen's calendar functions, from the state of
@@ -104,7 +129,9 @@ the published tick. It sends the clock in `hello` and in every `commit`:
 - it interpolates only what is drawn between commits, from measured arrival times;
 - it never extrapolates the clock.
 
-No public field carries a rate. The silence threshold is the protocol constant
+No public field carries the tick rate or the simulated seconds per tick. The cadence of commits still
+reveals the tick rate to a patient observer, as the sun reveals the day's length in ticks: the class
+removes the field, not the inference. The silence threshold is the protocol constant
 `STALE_AFTER_MS = 3000`, and `CHUNK_CELLS = 32` is a protocol constant tested against the engine's.
 
 | Field | Class | Why |
@@ -115,22 +142,33 @@ No public field carries a rate. The silence threshold is the protocol constant
 | `TICK_RATE_HZ` | C3 | Configuration of the scheduler's operation ([0022](0022-single-shared-public-universe.md)). Admin only |
 | `world.id`, `durability`, `state` | C0 | An opaque random id, an honesty notice, a state shared by everyone |
 
+This refines [0022](0022-single-shared-public-universe.md), whose clients show "the server's tick and
+simulated time": the simulated time they show is the day and its position, computed by the server.
+Simulated seconds stay internal. It also refines [0008](0008-data-classification-and-audience-projections.md)
+with the classes of the clock's fields, and with those of the chunk and global members below.
+
 ### Interest and transactions
 
 - **Interest.** A client's effective interest is its camera (at most 64 chunks) plus its follow window
   (the followed being's chunk ± 1, at most 9).
+  - When the followed being crosses chunks, the follow window moves with it in the next transaction:
+    the chunks that enter come in full, and those that leave go in `drop`.
+  - A being that crosses between two visible chunks leaves one and enters the other in the same
+    transaction.
 - **Immutable versions.** At each played-out tick, the mirror makes a new immutable version of every
   chunk whose **C0 bytes** changed: `{v, records}`, with being records sorted by id and already encoded.
   Engine dirtiness that changes nothing public moves no version. Clients that are up to date share the
   same versions, and a replaced version is freed once no client pins it.
 - **What a transaction is.** Each client has a visible tick `L` and pins the versions it shows. A
   transaction `txn` takes its whole view from `L` to `L'`, the playout tick at which it **starts**, and
-  pins the versions of `L'` for its interest. Its content, in order:
+  pins the versions of `L'` for its interest. A transaction starts only after the previous one
+  committed and while the client is not lagging. Its content, in order:
   1. `drop` for the chunks that leave;
   2. the differences by id between the pinned versions at `L` and at `L'` of every visible chunk
      (`upsert`, `gone`), computed once per pair of versions and shared;
   3. the full content, with terrain, of the chunks that enter, or of the whole view in a `reset`;
-  4. speech and the feed of `(L, L']`;
+  4. the local speech of `(L, L']` for the chunks that stay visible, in `delta.chunks[].speech` (chunks
+     that enter, and a reset, carry no speech history), and the feed of `(L, L']`, in `events`;
   5. `commit`.
 - **Fragmentation.** Parts are at most 64 KB and break on record boundaries, and a being record is at
   most 256 B by schema. One chunk may span **several parts and several periods** (`frag{i, n}`). Every
@@ -139,7 +177,8 @@ No public field carries a rate. The silence threshold is the protocol constant
   `commit`. The visible view is always at one tick, and a chunk is never half shown.
 - **One transaction in flight per client.** Interest changes during a transaction go to the next one,
   which takes the view from `L'` to the current tick. A transaction's content is fixed and finite, so
-  it ends in ⌈bytes / budget⌉ periods while the client drains.
+  it ends while the client drains: in at least ⌈bytes / budget⌉ periods, and more when it waits for
+  the terrain queue or its turn in the fan-out.
 - **Reset.** A resync, a reconnect, or the loss of the versions pinned at `L` starts a full transaction
   against an empty view. The old view stays shown, consistent and marked stale, until its `commit`.
 - **Rings.** Local speech and the feed are kept in rings of H = 300 ticks, with at most 2,048 items.
@@ -150,7 +189,7 @@ No public field carries a rate. The silence threshold is the protocol constant
 ### The feed
 
 The feed reaches every client: `arrival{being, species, chunk}`, `death{being, chunk}`, and
-`greeting{from, to, chunk}` (a `greet` act). It carries no text. The text of speech is local: it goes in
+`greeting{from, to, chunk}` (every `greet` act). It carries no text. The text of speech is local: it goes in
 the speaker's chunk, as `speech[{tick, speaker, to, act, text}]`.
 
 At most 64 feed items go out per tick, and the rest are counted in `missed`. The feed is encoded once
@@ -190,11 +229,13 @@ per tick and shared by all clients.
 | Idle | `idleTimeout` 120 s, with `sendPings` |
 | Origin | Exact match against `PUBLIC_ORIGINS`. A request without `Origin` is accepted, for non-browser tools |
 | Host | Must be on an allowlist |
-| Send per client and period | At most 256 KB, and only while `getBufferedAmount()` is under 256 KB, so a client's buffer never passes 512 KB |
+| Send per client and period | At most 256 KB, counting every message to that client (parts, commits, `pong`, `status`, `error`, `notice`, `abort`, and sends that `drain` triggers), and only while `getBufferedAmount()` is under 256 KB, so a client's buffer never passes 512 KB |
+| Fan-out | At most 40 ms per period across all clients. Clients that do not fit wait for the next period, in rotating order |
 | Bun's own limit | `backpressureLimit` 1 MB, with `closeOnBackpressureLimit` |
-| View per client | At most 32 MB encoded. A larger interest is trimmed deterministically, the follow window first and then the camera in the order the client sent it, and the client gets a `notice` |
-| Retained replaced versions | At most 128 MB in all, configurable, with exact accounting. Above that, the client with the oldest pin gets `abort`, and 3 aborts in 60 s close with 1013 |
+| View per client | At most 32 MB encoded, measured at `L'`. A larger interest is trimmed deterministically: the follow window is kept first, then camera chunks in the order the client sent them, until 32 MB. The rest are listed in a `notice` |
+| Retained replaced versions | At most 128 MB in all, configurable, with exact accounting, checked after each period's fan-out. While above it, the oldest retained version is taken, and every client that pins it gets `abort`. The abort releases that client's transaction pins and, if it pins that version at `L`, its `L` pins too, so its next transaction is a reset. Each aborted client counts one abort; 3 in 60 s close with 1013, and the client reconnects with a smaller interest |
 | Terrain | At most 16 chunks generated per period across all clients, from a fair queue, with an LRU of 2,048 entries |
+| HTTP | Only `/ws` and `/healthz` (`{ok}`). Everything else is 404, with no CORS headers |
 
 ### Reconnecting
 
@@ -217,8 +258,8 @@ T8 builds the listener that serves them.
 
 - Every public byte has a class and an allowlist. The tests parse every serialized message strictly
   and scan them for planted C1, C3, and C4 canaries.
-- Two spectators of the same region receive the same transactions and, after each `commit`, see the
-  same view at the same tick.
+- Two spectators of the same region whose views are at the same tick see the same view. Their
+  transactions may split the ticks differently, never reach a different state.
 - How dense a chunk is changes how long a transaction takes, never whether the view is consistent.
   Memory per client and in all is bounded.
 - The clock cannot be computed by a client, and no message can change it.
