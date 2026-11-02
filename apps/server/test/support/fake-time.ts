@@ -81,6 +81,21 @@ export class FakeTimer implements Timer {
     this.#clock.time = Math.max(this.#clock.time, until);
   }
 
+  /**
+   * As runUntil, but lets every microtask and immediate run after each callback, as the event loop
+   * does between two real timers: the journal's acknowledgements arrive between ticks.
+   */
+  async runUntilSettled(until: number): Promise<void> {
+    let fires = 0;
+    for (let next = this.next; next !== undefined && next <= until; next = this.next) {
+      fires += 1;
+      if (fires > MAX_FIRES) throw new Error(`more than ${MAX_FIRES} timers fired before ${until}`);
+      this.fireNext();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    this.#clock.time = Math.max(this.#clock.time, until);
+  }
+
   #earliest(): Pending | undefined {
     return this.#pending.reduce<Pending | undefined>(
       (best, timer) =>

@@ -6,15 +6,7 @@
  * the valid ticks reach the journal, the faulted one does not, and the host halts.
  */
 import { describe, expect, test } from "bun:test";
-import {
-  createWorld,
-  digest,
-  encodeSnapshot,
-  type Ruleset,
-  step,
-  type World,
-  worldStatus,
-} from "@open-origin/engine";
+import { digest, encodeSnapshot, step, worldStatus } from "@open-origin/engine";
 import { LABELS2, scenario2Of } from "@open-origin/scenarios";
 import { mindRuleset } from "../../../packages/agents/test/support/mind-ruleset.ts";
 import {
@@ -33,6 +25,7 @@ import {
   ScriptedSource,
   type WorldSource,
 } from "../src/world/source.ts";
+import { countingWorld } from "./support/counting-world.ts";
 import { ControlledJournal, RecordingJournal, settle } from "./support/journals.ts";
 
 /**
@@ -60,40 +53,6 @@ const ranges = (batches: readonly JournalBatch[]) =>
 
 const ticks = (from: number, to: number) =>
   Array.from({ length: to - from + 1 }, (_, index) => from + index);
-
-type Count = { n: number };
-
-/**
- * A world at tick 0 whose one system counts its ticks in the global value and throws at the tick
- * `faultAt`, which step reports as a system_fault.
- */
-function countingWorld(faultAt: number): World {
-  const ruleset: Ruleset<Count, Count> = {
-    versions: { ruleset: "server-test@1", generator: "none@1", brain: "none@1" },
-    systems: [
-      {
-        name: "count",
-        streams: [],
-        run: (ctx) => {
-          const global = ctx.writeGlobal();
-          global.n += 1;
-          if (global.n === faultAt) throw new Error("a planted fault");
-          return undefined;
-        },
-      },
-    ],
-    commands: {},
-    validateGlobal: () => [],
-    validateChunk: () => [],
-  };
-  return createWorld({
-    seed: [1, 2],
-    simSecondsPerTick: 12,
-    global: { n: 0 },
-    chunks: {},
-    ruleset,
-  });
-}
 
 describe("WorldHost", () => {
   test("reproduces the frozen trail of the mind@1 subject, stamping its script exactly", async () => {

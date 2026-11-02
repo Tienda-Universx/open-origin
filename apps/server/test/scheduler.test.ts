@@ -203,6 +203,37 @@ describe("FixedRateScheduler", () => {
     });
   });
 
+  test("halts at once when woken between ticks by a halt, cancelling the next timer", () => {
+    const { timer, ran, scheduler, setHold } = harness();
+    scheduler.start();
+    timer.runUntil(P);
+    expect(timer.pending).toBe(1);
+    // A running world that is woken without a hold keeps its schedule.
+    scheduler.wake();
+    expect(timer.pending).toBe(1);
+    setHold("halted");
+    scheduler.wake();
+    expect(timer.pending).toBe(0);
+    timer.runUntil(5 * P);
+    expect(ran).toEqual([0, P]);
+    expect(scheduler.metrics()).toMatchObject({
+      state: "halted",
+      stops: { journalStall: 0, paused: 0, halted: 1 },
+    });
+  });
+
+  test("a stall found when woken between ticks waits for the next deadline", () => {
+    const { timer, ran, scheduler, setHold } = harness();
+    scheduler.start();
+    timer.runUntil(P);
+    setHold("journalStall");
+    scheduler.wake();
+    expect(scheduler.metrics().state).toBe("running");
+    timer.runUntil(5 * P);
+    expect(ran).toEqual([0, P]);
+    expect(scheduler.metrics().state).toBe("journalStall");
+  });
+
   test("stops at once when a tick leaves the world held, without arming another timer", () => {
     const clock = new FakeClock();
     const timer = new FakeTimer(clock);

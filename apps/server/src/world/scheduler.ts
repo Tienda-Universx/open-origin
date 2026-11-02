@@ -107,12 +107,16 @@ export class FixedRateScheduler {
     this.#stop("paused");
   }
 
-  /** Asks again whether a stalled world may run: called when the journal acknowledges a batch. */
+  /**
+   * Asks the hold again between ticks: called when the journal acknowledges a batch or fails, and
+   * when the world halts. A halt stops the scheduler at once; a stalled world whose journal caught
+   * up resumes; a running world keeps its schedule, and a new stall stops it at its next deadline.
+   */
   wake(): void {
-    if (this.#state !== "journalStall") return;
+    if (this.#state !== "running" && this.#state !== "journalStall") return;
     const hold = this.#hold();
     if (hold === "halted") this.#stop("halted");
-    else if (hold === undefined) this.#resume();
+    else if (hold === undefined && this.#state === "journalStall") this.#resume();
   }
 
   metrics(): SchedulerMetrics {
