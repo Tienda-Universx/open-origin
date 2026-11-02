@@ -1,0 +1,37 @@
+/**
+ * `@open-origin/protocol/public`: the public protocol v1 (ADR 0026, docs/architecture/protocol.md),
+ * everything the public server and its clients share. It never imports the admin contracts.
+ */
+export { RECONNECT_BACKOFF, reconnectDelayMs } from "./backoff.ts";
+export {
+  ACTIVITY_KINDS,
+  ACTS,
+  AUDIENCE,
+  CHUNK_AREA,
+  CHUNK_CELLS,
+  CLIENT_LIMITS,
+  CLOSE_CODES,
+  DIRECTION_COUNT,
+  DURABILITIES,
+  ERROR_CODES,
+  type ErrorCode,
+  MAX_BEING_RECORD_BYTES,
+  MAX_CELL,
+  MAX_CHUNK,
+  MAX_CHUNK_BEINGS,
+  MAX_FEED_ITEMS_PER_TICK,
+  MAX_NONCE,
+  MAX_PART_BYTES,
+  MAX_TEXT_LENGTH,
+  MAX_VIEW_CHUNKS,
+  MIN_CELL,
+  MIN_CHUNK,
+  PROTOCOL_ID,
+  RESYNC_INTERVAL_MS,
+  RING_ITEMS,
+  RING_TICKS,
+  STAGES,
+  STALE_AFTER_MS,
+  SUBSTRATE_CODES,
+  WORLD_STATES,
+} from "./constants.ts";
