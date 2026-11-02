@@ -122,9 +122,11 @@ causes, from a journal that fails at once, does not replace it.
 `BeingsProjection` is the C0 projection of a world of beings@1 or beings@2
 ([ADR 0026](../decisions/0026-public-protocol-v1.md#projections-and-classification)). Composition
 builds it over the source's world, and it runs once per executed tick in the world plane, whoever
-observes. It reads the world only through `readView`, whose reads are detached copies, so a
-projection pass changes neither the state root nor the trail of checksums. Each tick it publishes
-`{tick, clock, chunks, speech, feed}`, frozen at every level, and only C0:
+observes. Over a world whose global value holds no genesis, which is not a world of beings, it
+throws `the world is not a world of beings: its global value holds no genesis`, so composition
+fails with that cause. It reads the world only through `readView`, whose reads are detached
+copies, so a projection pass changes neither the state root nor the trail of checksums. Each tick
+it publishes `{tick, clock, chunks, speech, feed}`, frozen at every level, and only C0:
 
 | Member | What it holds |
 |---|---|

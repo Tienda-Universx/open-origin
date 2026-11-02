@@ -12,8 +12,10 @@ import { renderAct, type UtteredAct } from "@open-origin/agents";
 import {
   beings,
   type Command,
+  createWorld,
   EngineError,
   type EngineEvent,
+  type Ruleset,
   readView,
   type StepResult,
   stateRoot,
@@ -143,6 +145,24 @@ function projected(
 function subject() {
   const world = mindWorld(SUBJECT_SEEDS[0], mindRuleset() as unknown as SuiteRuleset, false);
   return { world, script: subjectScript() };
+}
+
+/** A world at tick 0 whose global value holds `genesis`, under a ruleset that validates nothing. */
+function worldHolding(genesis: number): World {
+  const ruleset: Ruleset<{ genesis: number }, { n: number }> = {
+    versions: { ruleset: "server-test@1", generator: "none@1", brain: "none@1" },
+    systems: [],
+    commands: {},
+    validateGlobal: () => [],
+    validateChunk: () => [],
+  };
+  return createWorld({
+    seed: [1, 2],
+    simSecondsPerTick: 12,
+    global: { genesis },
+    chunks: {},
+    ruleset,
+  });
 }
 
 /** An event of the tick `tick`, as step reports it. */
@@ -386,7 +406,11 @@ describe("the C0 projection of a world", () => {
     expect(() => projection.project(result)).toThrow(
       "the projection is at tick 1 and cannot project tick 1",
     );
-    expect(() => new BeingsProjection(countingWorld(9))).toThrow(EngineError);
+    expect(() => new BeingsProjection(countingWorld(9))).toThrow(
+      "the world is not a world of beings: its global value holds no genesis",
+    );
+    // A global value that holds a genesis the engine cannot prepare is the engine's to refuse.
+    expect(() => new BeingsProjection(worldHolding(7))).toThrow(EngineError);
   });
 });
 

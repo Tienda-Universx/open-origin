@@ -43,6 +43,17 @@ export type ProjectionOptions = {
 /** The encoded public record of each being of a chunk, by id, in the chunk's order of ids. */
 type Shown = Map<number, string>;
 
+/**
+ * The genesis that `global`, the global value of a world, holds. Throws when it holds none: the
+ * world is then not a world of beings, and nothing here could read its beings or its calendar.
+ */
+function genesisIn(global: unknown): unknown {
+  if (typeof global !== "object" || global === null || !("genesis" in global)) {
+    throw new Error("the world is not a world of beings: its global value holds no genesis");
+  }
+  return global.genesis;
+}
+
 /** The C0 projection of a world of beings@1 or beings@2, booted at the world's tick. */
 export class BeingsProjection implements WorldProjection {
   readonly #view: ReadView<beings.BeingsGlobal, beings.BeingsChunk>;
@@ -56,13 +67,14 @@ export class BeingsProjection implements WorldProjection {
 
   /**
    * The projection of `world`, a world of beings whose state it reads as it is now. Throws an
-   * EngineError when its global value holds no valid genesis, as a world of another ruleset's
-   * does, and an Error when one of its beings has no valid public record.
+   * Error saying it is not a world of beings when its global value holds no genesis, as a world of
+   * another ruleset's does; an EngineError when the genesis it holds is not valid; and an Error
+   * when one of its beings has no valid public record.
    */
   constructor(world: World, { render = renderAct }: ProjectionOptions = {}) {
-    // A world of beings holds these values; prepareGenesis refuses a global value without a genesis.
+    // A world of beings holds these values; genesisIn refuses a global value without a genesis.
     this.#view = readView(world as World<beings.BeingsGlobal, beings.BeingsChunk>);
-    const prepared = worldgen.prepareGenesis(this.#view.readGlobal().genesis);
+    const prepared = worldgen.prepareGenesis(genesisIn(this.#view.readGlobal()));
     this.#clock = calendarClock(prepared, this.#view.simSecondsPerTick);
     this.#terrain = terrainReader(prepared);
     this.#render = render;

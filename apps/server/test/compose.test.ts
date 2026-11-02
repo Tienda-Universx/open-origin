@@ -4,7 +4,8 @@
  * rate and publishes only what the journal committed; stop flushes the partial batch; a lagging
  * journal stalls the scheduler without shortfall; a journal failure, an engine fault, and an
  * unhandled rejection halt the world; the source's world is projected once per tick, timed, and
- * its terrain served; and the status validates against the admin contract.
+ * its terrain served, and one that is not a world of beings is refused; and the status validates
+ * against the admin contract.
  */
 import { describe, expect, test } from "bun:test";
 import { readView, type World, worldgen } from "@open-origin/engine";
@@ -291,6 +292,15 @@ describe("compose", () => {
     expect(journal.batches[0]?.checkpoint).toStartWith("{");
     expect(journal.batches[0]?.records[0]?.commands).toHaveLength(8);
     expect(TerrainPublic.safeParse(world.readTerrain([0, 0])).success).toBe(true);
+  });
+
+  test("refuses a source whose world is not a world of beings, naming the cause", () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const source = new ScriptedSource(countingWorld(1_000_000), []);
+    expect(() => compose(configOf(), { clock, timer, source })).toThrow(
+      "the world is not a world of beings: its global value holds no genesis",
+    );
   });
 
   test("projects every tick of the source's world, times each projection, and serves terrain", async () => {
