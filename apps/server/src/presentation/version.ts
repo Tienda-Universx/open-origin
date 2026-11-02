@@ -6,8 +6,9 @@
  * versions is computed once per pair and shared too.
  */
 import type { BeingPublic, ChunkCoord } from "@open-origin/protocol/public";
-import { chunkKey, utf8Length } from "@open-origin/protocol/public";
+import { chunkKey } from "@open-origin/protocol/public";
 import type { PublishedChunk } from "../world/published.ts";
+import { byteLength } from "./bytes.ts";
 
 /** A being's public record, with its JSON text and that text's size in UTF-8 bytes. */
 export type EncodedBeing = {
@@ -29,7 +30,7 @@ const NO_DIFF: VersionDiff = Object.freeze({ gone: NO_IDS, upsert: Object.freeze
 /** `record`, encoded once. */
 export function encodeBeing(record: BeingPublic): EncodedBeing {
   const json = JSON.stringify(record);
-  return Object.freeze({ id: record.id, record, json, bytes: utf8Length(json) });
+  return Object.freeze({ id: record.id, record, json, bytes: byteLength(json) });
 }
 
 /**

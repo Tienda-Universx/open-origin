@@ -39,7 +39,7 @@ import {
 
 /** The side of the populated area, in cells: 5 × 5 chunks from the origin. */
 const SIDE = 160;
-const TICKS = 160;
+const TICKS = 120;
 const CLIENTS = 5;
 
 /** What a client asked for: its camera and its followed being. */

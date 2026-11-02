@@ -6,7 +6,8 @@
  * tick, so a transaction reads the items after it, and the items it can no longer read, evicted
  * or never kept, are counted exactly as missed.
  */
-import { RING_ITEMS, RING_TICKS, utf8Length } from "@open-origin/protocol/public";
+import { RING_ITEMS, RING_TICKS } from "@open-origin/protocol/public";
+import { byteLength } from "./bytes.ts";
 
 /** An item kept in a ring: its stream, its tick, its number in its stream from 1, and its JSON. */
 export type RingItem = {
@@ -75,7 +76,7 @@ export class TickRing {
         tick,
         n: before + index + 1,
         json,
-        bytes: utf8Length(json),
+        bytes: byteLength(json),
       });
       items.push(item);
       this.#items.push(item);

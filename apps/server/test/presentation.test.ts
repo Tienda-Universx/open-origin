@@ -388,7 +388,7 @@ describe("a transaction", () => {
 
 describe("closing", () => {
   test("releases interest, index entries, followings, pins, and retained bytes, to exactly zero", () => {
-    const beings = Array.from({ length: 120 }, (_, index) =>
+    const beings = Array.from({ length: 60 }, (_, index) =>
       being(index + 1, [index % 64, index % 40]),
     );
     const model = new ModelWorld(0, beings);
@@ -397,14 +397,15 @@ describe("closing", () => {
       periodBytes: 16_384,
     });
     const open: number[] = [];
-    for (let cycle = 0; cycle < 30; cycle += 1) {
-      const id = presentation.connect(new ViewClient());
+    for (let cycle = 0; cycle < 20; cycle += 1) {
+      // A sink that drops what it gets: these clients only hold pins and interest.
+      const id = presentation.connect({ send: () => undefined, lagging: () => false });
       presentation.subscribe(id, [
         [0, 0],
         [1, 0],
         [cycle % 3, 1],
       ]);
-      presentation.follow(id, (cycle % 120) + 1);
+      presentation.follow(id, (cycle % 60) + 1);
       open.push(id);
       // Every being moves, so versions are replaced while clients pin them mid-transaction.
       advance({

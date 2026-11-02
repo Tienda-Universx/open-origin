@@ -11,9 +11,9 @@ import {
   type DURABILITIES,
   PROTOCOL_ID,
   type SERVER_MESSAGE_TYPES,
-  utf8Length,
   type WORLD_STATES,
 } from "@open-origin/protocol/public";
+import { byteLength } from "./bytes.ts";
 
 /** A type of server message. */
 export type MessageType = (typeof SERVER_MESSAGE_TYPES)[number];
@@ -40,7 +40,7 @@ export function headBytes(type: MessageType): number {
 
 /** A frame of `type` whose rest is the JSON text `rest`, from `"tick"` to the closing brace. */
 export function frameOf(type: MessageType, rest: string): Frame {
-  return Object.freeze({ type, rest, restBytes: utf8Length(rest) });
+  return Object.freeze({ type, rest, restBytes: byteLength(rest) });
 }
 
 /** A frame of `type` whose members after `seq` are those of `body`, whose first is `tick`. */

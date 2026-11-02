@@ -4,12 +4,8 @@
  * world plane, and encoded once; the most recently used entries are kept. The fair queue that caps
  * how many chunks are generated per period comes in T6-6b.
  */
-import {
-  type ChunkCoord,
-  chunkKey,
-  type TerrainPublic,
-  utf8Length,
-} from "@open-origin/protocol/public";
+import { type ChunkCoord, chunkKey, type TerrainPublic } from "@open-origin/protocol/public";
+import { byteLength } from "./bytes.ts";
 import type { EncodedText } from "./parts.ts";
 
 /** The entries the cache keeps. */
@@ -44,7 +40,7 @@ export class TerrainCache {
     }
     this.#reads += 1;
     const json = JSON.stringify(this.#read(at));
-    const encoded = Object.freeze({ json, bytes: utf8Length(json) });
+    const encoded = Object.freeze({ json, bytes: byteLength(json) });
     this.#cache.set(key, encoded);
     for (const oldest of this.#cache.keys()) {
       if (this.#cache.size <= this.#entries) break;

@@ -17,13 +17,19 @@ import {
   MIN_CELL,
   MIN_CHUNK,
 } from "@open-origin/protocol/public";
+import { Presentation } from "../src/presentation/presentation.ts";
+import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import {
   being,
+  clockAt,
   expected,
   ModelWorld,
+  Publisher,
   presentationOver,
   shown,
+  terrainAt,
   ViewClient,
+  WORLD_ID,
   withinParts,
 } from "./support/presentation.ts";
 
@@ -122,8 +128,24 @@ describe("a view of dense chunks", () => {
     const beings = Array.from({ length: MAX_CHUNK_BEINGS }, (_, n) =>
       being(n + 1, [n % 32, Math.floor(n / 32) % 32]),
     );
-    const model = new ModelWorld(0, beings);
-    const { presentation } = presentationOver(model);
+    // The boot record alone: the world never moves in this test.
+    const publisher = new Publisher({
+      tick: 0,
+      clock: clockAt(0),
+      chunks: [{ at: [0, 0], v: 0, upsert: beings, gone: [] }],
+      speech: [],
+      feed: [],
+    });
+    const clock = new FakeClock();
+    const presentation = new Presentation({
+      subscribeToPublished: publisher.subscribe,
+      readTerrain: terrainAt,
+      clock,
+      timer: new FakeTimer(clock),
+      tickRateHz: 5,
+      batchTicks: 5,
+      world: { id: WORLD_ID, durability: "ephemeral" },
+    });
     const client = new ViewClient();
     presentation.subscribe(presentation.connect(client), [[0, 0]]);
     let periods = 0;
@@ -131,13 +153,10 @@ describe("a view of dense chunks", () => {
       presentation.period();
       periods += 1;
     }
-    const chunk = client.state.view?.chunks.get("0,0");
-    expect(chunk?.beings.size).toBe(MAX_CHUNK_BEINGS);
-    expect(
-      [...(chunk?.beings.values() ?? [])].every((record) =>
-        Bun.deepEquals(record, model.beings.get(record.id)),
-      ),
-    ).toBe(true);
+    const shownBeings = [...(client.state.view?.chunks.get("0,0")?.beings.values() ?? [])];
+    expect(shownBeings.length).toBe(MAX_CHUNK_BEINGS);
+    expect(shownBeings.every((record, index) => Bun.deepEquals(record, beings[index]))).toBe(true);
+    // About 6 MB in parts of 64 KiB, 256 KiB a period.
     expect(periods).toBeGreaterThan(20);
     expect(withinParts(client)).toBe(true);
     expect(client.anomalies).toEqual([]);

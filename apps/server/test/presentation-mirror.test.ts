@@ -12,7 +12,9 @@ import {
   type ChunkCoord,
   type FeedItem,
   PlainText,
+  utf8Length,
 } from "@open-origin/protocol/public";
+import { byteLength } from "../src/presentation/bytes.ts";
 import { FEED, Mirror } from "../src/presentation/mirror.ts";
 import { Playout } from "../src/presentation/playout.ts";
 import { TickRing } from "../src/presentation/ring.ts";
@@ -114,6 +116,9 @@ describe("chunk versions", () => {
     const encoded = encodeBeing(being(7, [-3, 40]));
     expect(encoded.json).toBe(JSON.stringify(being(7, [-3, 40])));
     expect(encoded.bytes).toBe(encoded.json.length);
+    // A text that is not ASCII counts its UTF-8 bytes: two for é, four for a character beyond the BMP.
+    expect(["plain", "café", "a𝄞b", ""].map(byteLength)).toEqual([5, 5, 6, 0]);
+    expect(["café", "a𝄞b"].map(byteLength)).toEqual(["café", "a𝄞b"].map(utf8Length));
   });
 });
 
