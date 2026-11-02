@@ -22,15 +22,18 @@ import {
   type World,
   worldgen,
 } from "@open-origin/engine";
-import type { BeingPublic, Clock } from "@open-origin/protocol/public";
+import type { BeingPublic, ChunkCoord, Clock, TerrainPublic } from "@open-origin/protocol/public";
 import type { Projector } from "../world/host.ts";
 import { deepFrozen, type PublishedChunk, type PublishedTick } from "../world/published.ts";
 import { checkedRecord, publicRecordOf } from "./being.ts";
 import { calendarClock } from "./clock.ts";
 import { projectEvents, type Render } from "./events.ts";
+import { type ReadTerrain, terrainReader } from "./terrain.ts";
 
-/** A projection of a world: each tick's published record. */
-export type WorldProjection = Projector;
+/** A projection of a world: each tick's published record, and the public terrain of a chunk. */
+export interface WorldProjection extends Projector {
+  readTerrain(chunk: ChunkCoord): TerrainPublic;
+}
 
 export type ProjectionOptions = {
   /** How an act of speech becomes text: speech@1's renderAct unless a test replaces it. */
@@ -44,6 +47,7 @@ type Shown = Map<number, string>;
 export class BeingsProjection implements WorldProjection {
   readonly #view: ReadView<beings.BeingsGlobal, beings.BeingsChunk>;
   readonly #clock: (tick: number) => Clock;
+  readonly #terrain: ReadTerrain;
   readonly #render: Render;
   /** The records last emitted, or held at boot, of the beings of each chunk that holds any. */
   readonly #shown = new Map<ChunkKey, Shown>();
@@ -60,6 +64,7 @@ export class BeingsProjection implements WorldProjection {
     this.#view = readView(world as World<beings.BeingsGlobal, beings.BeingsChunk>);
     const prepared = worldgen.prepareGenesis(this.#view.readGlobal().genesis);
     this.#clock = calendarClock(prepared, this.#view.simSecondsPerTick);
+    this.#terrain = terrainReader(prepared);
     this.#render = render;
     this.#tick = this.#view.tick;
     for (const key of this.#view.chunkKeys()) this.#changeOf(key);
@@ -85,6 +90,10 @@ export class BeingsProjection implements WorldProjection {
     const { speech, feed, omitted } = projectEvents(tick, result.events, this.#render);
     this.#omittedSpeech += omitted;
     return deepFrozen({ tick, clock: this.#clock(tick), chunks, speech, feed });
+  }
+
+  readTerrain(chunk: ChunkCoord): TerrainPublic {
+    return this.#terrain(chunk);
   }
 
   /**

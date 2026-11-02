@@ -17,7 +17,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 |---|---|---|
 | `src/config/` | — | `parseConfig`: the environment, parsed and deep-frozen |
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
-| `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, and `clock.ts`: the C0 projection of a world of beings |
+| `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane |
 
@@ -153,11 +153,15 @@ projection pass changes neither the state root nor the trail of checksums. Each 
 - **Plain text.** A rendered text that is not `PlainText` is left out and counted in
   `omittedSpeech` (C3); the greeting of a `greet` still reaches the feed. The admin status does not
   carry the count yet.
+- **Terrain.** `readTerrain(chunk)` is a pure closure over the prepared genesis: it generates the
+  chunk with worldgen, never in the world's state, and returns `TerrainPublic` with only the
+  `surface` observables that vary by cell, `elevation`, `liquidDepth` (max(0, L − elevation)), and
+  `substrate`, each as wide as the world's declared range of it asks.
 
 `projection.test.ts` checks the map against the registry both ways, the decision for every C0
 event type, versions that move only on C0 changes, a crossing that leaves one chunk and enters the
-other in the same tick, the clock against the calendar, and that a projection pass changes no state
-root. `leak.test.ts` runs the `mind@1` subject, the default
+other in the same tick, the clock against the calendar, `readTerrain` against worldgen, and that a
+projection pass changes no state root. `leak.test.ts` runs the `mind@1` subject, the default
 scenario, and a canary world through the host and the gate, reads every published tick back with
 the protocol's strict schemas, and finds in its text no taint, seed, terrain seed, seal, checksum,
 state root, or canary planted in C1 and C3 data.
@@ -211,6 +215,7 @@ host, and the scheduler, and returns:
 | `start()` | Starts the scheduler, or resumes it after `stop` |
 | `stop()` | Pauses the scheduler and flushes the gate: every executed tick is committed and published (RPO 0 once the journal is durable) |
 | `subscribeToPublished(listener)` | Adds a listener of published ticks and returns the function that removes it |
+| `readTerrain(chunk)` | The projection's `readTerrain`: the public terrain of a chunk, never materialized |
 | `status()` | The server's status, shaped for `ServerStatus` of `@open-origin/protocol/admin` |
 | `unhandledRejection()` | Asks `rejectionPolicy(AI_MODE)`; with `off`, the world halts |
 | `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |

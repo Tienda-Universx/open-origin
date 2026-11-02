@@ -1,14 +1,15 @@
 /**
  * The composition root of the world plane (ADR 0025): it wires the source, the C0 projection of
  * its world, the host, the publication gate, the journal, and the scheduler, and hands the rest of
- * the server only what the presentation plane may hold: a subscription to frozen published ticks.
- * The entry point (T6-7) passes the real clock and timer; tests
+ * the server only what the presentation plane may hold: a subscription to frozen published ticks
+ * and the public terrain of a chunk. The entry point (T6-7) passes the real clock and timer; tests
  * pass fake ones, and may replace the journal, the source, its projection, and K. The planes
  * receive their settings as parameters: only this module and the entry point read the
  * configuration.
  */
 import { readView, type World } from "@open-origin/engine";
 import type { ServerStatus } from "@open-origin/protocol/admin";
+import type { ChunkCoord, TerrainPublic } from "@open-origin/protocol/public";
 import type { Config } from "./config/config.ts";
 import { BeingsProjection, type WorldProjection } from "./projection/projection.ts";
 import { type Halt, type Projector, WorldHost } from "./world/host.ts";
@@ -43,6 +44,8 @@ export type WorldPlane = {
   stop(): Promise<void>;
   /** Adds a listener of published ticks; returns the function that removes it. */
   subscribeToPublished(listener: PublishedListener): () => void;
+  /** The public terrain of `chunk`, from the world's genesis; it never materializes a chunk. */
+  readTerrain(chunk: ChunkCoord): TerrainPublic;
   /** The server's status (C3), shaped for the admin contract; this plane has no connections. */
   status(): ServerStatus;
   /** What the process's `unhandledRejection` handler calls: the world halts under AI_MODE=off. */
@@ -71,6 +74,7 @@ type Parts = {
   readonly host: WorldHost;
   readonly scheduler: FixedRateScheduler;
   readonly hold: () => Hold | undefined;
+  readonly projection: WorldProjection;
   /** How long the projection of each of the last ticks took, in microseconds (C3). */
   readonly projections: SampleWindow;
 };
@@ -121,7 +125,7 @@ function wire(config: Config, deps: WorldPlaneDeps): Parts {
     if (gate.failed) host.halt("journal_failed", gate.failure);
     scheduler.wake();
   }
-  return { gate, host, scheduler, hold, projections };
+  return { gate, host, scheduler, hold, projection, projections };
 }
 
 /** The status of the wired world plane of `config`. */
@@ -149,7 +153,7 @@ function statusOf(config: Config, parts: Parts): ServerStatus {
 /** Wires the world plane of `config`. Nothing runs until `start`. */
 export function compose(config: Config, deps: WorldPlaneDeps): WorldPlane {
   const parts = wire(config, deps);
-  const { gate, host, scheduler } = parts;
+  const { gate, host, scheduler, projection } = parts;
   return Object.freeze({
     start: () => scheduler.start(),
     stop: () => {
@@ -157,6 +161,7 @@ export function compose(config: Config, deps: WorldPlaneDeps): WorldPlane {
       return gate.flush();
     },
     subscribeToPublished: (listener: PublishedListener) => gate.subscribe(listener),
+    readTerrain: (chunk: ChunkCoord) => projection.readTerrain(chunk),
     status: () => statusOf(config, parts),
     unhandledRejection: () => {
       host.halt(rejectionPolicy(config.aiMode).code);

@@ -66,9 +66,10 @@ const SPEECH_KEYS = ["at", "speech"];
 /**
  * Checks `published` as a client would read it, once serialized: every record parses with its
  * strict schema, every envelope holds only its own keys, and a delta, the feed's events, a commit,
- * and a snapshot built from it parse as server messages of the public protocol.
+ * and a snapshot with the terrain `projection` reads, built from it, parse as server messages of
+ * the public protocol.
  */
-function expectWire(published: PublishedTick, seq: number) {
+function expectWire(published: PublishedTick, seq: number, projection: BeingsProjection) {
   const read: PublishedTick = JSON.parse(JSON.stringify(published));
   expect(Object.keys(read).sort()).toEqual(TICK_KEYS);
   expect(Clock.safeParse(read.clock).success).toBe(true);
@@ -88,6 +89,7 @@ function expectWire(published: PublishedTick, seq: number) {
   const snapshot = read.chunks.map(({ at, v, upsert }) => ({
     at,
     v,
+    terrain: projection.readTerrain(at),
     beings: upsert,
     frag: { i: 0, n: 1 },
   }));
@@ -163,7 +165,8 @@ describe("what the world plane publishes", () => {
     expect(run.published.map(({ tick }) => tick)).toEqual(
       Array.from({ length: SUBJECT_TICKS }, (_, index) => index + 1),
     );
-    for (const [index, published] of run.published.entries()) expectWire(published, index + 1);
+    for (const [index, published] of run.published.entries())
+      expectWire(published, index + 1, projection);
     const forbidden = [
       ...FORBIDDEN_NAMES,
       ...sealsOf(world),
@@ -186,7 +189,8 @@ describe("what the world plane publishes", () => {
     expect(seeds.world.every((word) => word > 0xff_ffff)).toBe(true);
     // Its eight spawns arrive at tick 1, each in the feed with its species and chunk.
     expect(run.published[0]?.feed.map(({ kind }) => kind)).toEqual(Array(8).fill("arrival"));
-    for (const [index, published] of run.published.entries()) expectWire(published, index + 1);
+    for (const [index, published] of run.published.entries())
+      expectWire(published, index + 1, projection);
     const forbidden = [
       ...FORBIDDEN_NAMES,
       ...seedTexts(seeds.world),
@@ -211,7 +215,8 @@ describe("what the world plane publishes", () => {
     // sitter heard and, having no thought for it, let go. Records went out all along.
     expect(found(stateText(world) + JSON.stringify(run.records), canaries)).toEqual(canaries);
     expect(run.published.flatMap(({ chunks }) => chunks).length).toBeGreaterThan(8);
-    for (const [index, published] of run.published.entries()) expectWire(published, index + 1);
+    for (const [index, published] of run.published.entries())
+      expectWire(published, index + 1, projection);
     const forbidden = [
       ...FORBIDDEN_NAMES,
       ...canaries,

@@ -4,7 +4,8 @@
  * every C0 event type is projected or excluded with a reason; a chunk's records go out only when
  * their C0 bytes change, so C1 changes emit nothing; a being that crosses chunks leaves one and
  * enters the other in the same published tick; speech carries plain text or is left out and
- * counted; the clock is the calendar's; and projecting never changes the world.
+ * counted; the clock is the calendar's; readTerrain returns surface observables and materializes
+ * nothing; and projecting never changes the world.
  */
 import { describe, expect, test } from "bun:test";
 import { renderAct, type UtteredAct } from "@open-origin/agents";
@@ -20,7 +21,13 @@ import {
   type World,
   worldgen,
 } from "@open-origin/engine";
-import { type BeingPublic, PlainText } from "@open-origin/protocol/public";
+import {
+  type BeingPublic,
+  decodeTerrain,
+  PlainText,
+  TerrainPublic,
+  terrainWidth,
+} from "@open-origin/protocol/public";
 import { mindRuleset } from "../../../packages/agents/test/support/mind-ruleset.ts";
 import {
   mindWorld,
@@ -358,6 +365,7 @@ describe("the C0 projection of a world", () => {
       const result = step(projectedWorld, stamped(script[tick - 1] ?? [], tick));
       const root = stateRoot(projectedWorld);
       projection.project(result);
+      projection.readTerrain([2, -1]);
       expect(stateRoot(projectedWorld)).toBe(root);
       expect(result.checksum).toBe(step(plain, stamped(script[tick - 1] ?? [], tick)).checksum);
     }
@@ -379,6 +387,44 @@ describe("the C0 projection of a world", () => {
       "the projection is at tick 1 and cannot project tick 1",
     );
     expect(() => new BeingsProjection(countingWorld(9))).toThrow(EngineError);
+  });
+});
+
+describe("readTerrain", () => {
+  test("returns the surface observables of a far chunk exactly, and materializes nothing", () => {
+    const world = canaryWorld();
+    const projection = new BeingsProjection(world);
+    const keys = readView(world).chunkKeys();
+    const root = stateRoot(world);
+    const far: [number, number] = [-40, 37];
+    const terrain = projection.readTerrain(far);
+    expect(readView(world).chunkKeys()).toEqual(keys);
+    expect(stateRoot(world)).toBe(root);
+    expect(Object.keys(terrain)).toEqual(["elevation", "liquidDepth", "substrate"]);
+    expect(TerrainPublic.safeParse(terrain).success).toBe(true);
+    expect(Object.isFrozen(terrain) && Object.isFrozen(terrain.elevation)).toBe(true);
+    // Its values are worldgen's, cell by cell: the generated chunk and the observable liquid.depth.
+    const decoded = decodeTerrain(terrain);
+    const generated = worldgen.generateChunk(PREPARED, "-40,37");
+    expect([...decoded.elevation]).toEqual([...generated.elevation]);
+    expect([...decoded.substrate]).toEqual([...generated.substrate]);
+    const instant = { tick: 0, simSecondsPerTick: 12 };
+    for (const index of [0, 31, 517, 1023]) {
+      const cell = { x: -40 * 32 + (index % 32), y: 37 * 32 + Math.floor(index / 32) };
+      const depth = worldgen.observe(PREPARED, { id: "liquid.depth", cell, instant });
+      expect([index, decoded.liquidDepth[index]]).toEqual([index, depth]);
+    }
+    // Each width follows the world's declared range of its observable, never the chunk's values.
+    const range = (id: string) =>
+      worldgen.observableCatalog(PREPARED).find((entry) => entry.id === id)?.range ?? {
+        min: 0,
+        max: 0,
+      };
+    expect([terrain.elevation.width, terrain.liquidDepth.width, terrain.substrate.width]).toEqual([
+      terrainWidth(range("elevation"), true),
+      terrainWidth(range("liquid.depth"), false),
+      1,
+    ]);
   });
 });
 

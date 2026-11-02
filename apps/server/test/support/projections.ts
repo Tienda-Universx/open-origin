@@ -11,7 +11,12 @@ export function publishedAt(tick: number): PublishedTick {
   return deepFrozen({ tick, clock, chunks: [], speech: [], feed: [] });
 }
 
-/** The projection of a world that holds no beings, such as the counting world. */
+/** The projection of a world that holds no beings and no terrain, such as the counting world. */
 export function emptyProjection(_world: World): WorldProjection {
-  return { project: ({ tick }) => publishedAt(tick) };
+  return {
+    project: ({ tick }) => publishedAt(tick),
+    readTerrain: () => {
+      throw new Error("a world without beings has no terrain");
+    },
+  };
 }
