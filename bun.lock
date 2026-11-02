@@ -11,6 +11,17 @@
         "typescript": "7.0.2",
       },
     },
+    "apps/server": {
+      "name": "@open-origin/server",
+      "version": "0.1.0",
+      "dependencies": {
+        "@open-origin/agents": "workspace:*",
+        "@open-origin/engine": "workspace:*",
+        "@open-origin/protocol": "workspace:*",
+        "@open-origin/scenarios": "workspace:*",
+        "zod": "4.6.7",
+      },
+    },
     "packages/agents": {
       "name": "@open-origin/agents",
       "version": "0.1.0",
@@ -68,6 +79,8 @@
     "@open-origin/protocol": ["@open-origin/protocol@workspace:packages/protocol"],
 
     "@open-origin/scenarios": ["@open-origin/scenarios@workspace:packages/scenarios"],
+
+    "@open-origin/server": ["@open-origin/server@workspace:apps/server"],
 
     "@oxlint/binding-android-arm-eabi": ["@oxlint/binding-android-arm-eabi@1.88.0", "", { "os": "android", "cpu": "arm" }, "sha512-k6Fgkf86ubfeH4GvqYsRolfuVAp0pfYVZvifSlXNHPdMaWUOfxUrmLEeDD7hF6U2oJuhsVxhSWq86/xCJ+9MmA=="],
 

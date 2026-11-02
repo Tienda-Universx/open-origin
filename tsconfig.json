@@ -3,5 +3,11 @@
   "compilerOptions": {
     "types": ["bun"]
   },
-  "include": ["tests/**/*.ts", "packages/*/test/**/*.ts", "packages/*/bench/**/*.ts"]
+  "include": [
+    "tests/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "packages/*/bench/**/*.ts",
+    "apps/*/test/**/*.ts",
+    "apps/*/bench/**/*.ts"
+  ]
 }
