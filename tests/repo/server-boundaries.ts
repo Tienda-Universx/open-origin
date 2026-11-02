@@ -107,7 +107,7 @@ function isUnder(path: string, directory: string): boolean {
 }
 
 /** Whether `path` is a TypeScript module under `directory`. */
-export function isModuleOf(directory: string, path: string): boolean {
+function isModuleOf(directory: string, path: string): boolean {
   return isUnder(path, directory) && TYPESCRIPT.test(path);
 }
 

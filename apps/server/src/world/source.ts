@@ -29,7 +29,7 @@ function intentOf({ type, origin, payload }: Command): CommandIntent {
 }
 
 /** The label of the default world: the preregistered scenario of T5. */
-export const DEFAULT_LABEL = LABELS2.default;
+const DEFAULT_LABEL = LABELS2.default;
 
 /**
  * A preregistered scenario of T5 (`@open-origin/scenarios`), the default one unless another label

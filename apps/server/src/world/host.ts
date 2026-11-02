@@ -32,7 +32,7 @@ export type HaltCode =
 export type Halt = { readonly code: HaltCode; readonly tick: Tick };
 
 /** K: the ticks between two checkpoints (ADR 0007). */
-export const CHECKPOINT_TICKS = 300;
+const CHECKPOINT_TICKS = 300;
 
 export type HostOptions = {
   readonly source: WorldSource;
