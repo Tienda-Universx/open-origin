@@ -78,7 +78,7 @@ carry its target tick; every other message carries the client's visible tick whe
 | `events` | `txn`, `items[]`, `missed?` | Items are FeedItem records |
 | `commit` | `txn`, `clock{tick, day, dayPermille}` | `clock.tick` equals `tick`; `dayPermille` from 0 to 999 |
 | `abort` | `txn` | |
-| `notice` | `code: "interest_trimmed"`, `chunks[]` | At least one chunk |
+| `notice` | `code: "interest_trimmed"`, `chunks[]` | At least one chunk, each once |
 | `pong` | `nonce` | From 0 to 2^31 − 1 |
 | `status` | `state`, `reason?` | `reason` is plain text |
 | `error` | `code` | One of `ERROR_CODES` |
