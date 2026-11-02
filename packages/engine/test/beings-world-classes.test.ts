@@ -36,6 +36,13 @@ function placedChunks(placed: readonly beings.Being[]) {
   return { chunks, occupancy: Object.keys(chunks).sort() };
 }
 
+/** The ruleset of the worlds of beings@1 here: its one species idles. */
+const ruleset1 = () => beings.createBeingsRuleset({ controllers: { [SPECIES.id]: idler(1000) } });
+
+/** The ruleset of the worlds of beings@2 here: its one species idles. */
+const ruleset2 = () =>
+  beings.createBeingsRuleset({ controllers: { [SPECIES2.id]: idler2(1000) }, rules: "beings@2" });
+
 /** A world of beings@1 with two beings, one where food was eaten, stepped three ticks. */
 function world1(): BeingsWorld {
   const { chunks, occupancy } = placedChunks([being1(1, [0, 0]), being1(2, [40, 0])]);
@@ -44,7 +51,7 @@ function world1(): BeingsWorld {
     simSecondsPerTick: 12,
     global: { ...beings.beingsGlobal(testGenesis(), beings.defaultLife()), occupancy },
     chunks,
-    ruleset: beings.createBeingsRuleset({ controllers: { [SPECIES.id]: idler(1000) } }),
+    ruleset: ruleset1(),
   });
   runTo(world, 3);
   return world;
@@ -75,8 +82,8 @@ function valuesOf(world: BeingsWorld) {
 }
 
 const WORLDS = [
-  { version: "beings@1", world: world1 },
-  { version: "beings@2", world: world2 },
+  { version: "beings@1", world: world1, ruleset: ruleset1 },
+  { version: "beings@2", world: world2, ruleset: ruleset2 },
 ] as const;
 
 describe("the classes of a chunk and of the global value", () => {
@@ -104,27 +111,26 @@ describe("the classes of a chunk and of the global value", () => {
     expect(unclassified(GLOBAL_CLASSES, { ...global, extra: 1 })).toEqual(["/extra"]);
   });
 
-  test("name exactly the members the validators of a chunk and of the global value accept", () => {
-    const { chunks, global } = valuesOf(world2());
-    const chunk = chunks[0]?.chunk as beings.BeingsChunk;
-    const ruleset = beings.createBeingsRuleset({
-      controllers: { [SPECIES2.id]: idler2(1000) },
-      rules: "beings@2",
+  for (const { version, world, ruleset } of WORLDS) {
+    test(`name exactly the members the validators of a chunk and of the global value of ${version} accept`, () => {
+      const { chunks, global } = valuesOf(world());
+      const chunk = chunks[0]?.chunk as beings.BeingsChunk;
+      const chunkIssues = (value: unknown) => beings.beingsChunkIssues("0,0", value, version);
+      // A deliberately invalid global value, which the validator's type cannot describe.
+      const rules = ruleset();
+      const globalIssues = (value: object) => rules.validateGlobal(value as never);
+      expect(chunkIssues(chunk)).toEqual([]);
+      expect(globalIssues(global)).toEqual([]);
+      // Every member the registry names is one the validator requires.
+      for (const { name } of CHUNK_CLASSES.members ?? [])
+        expect([name, chunkIssues(withoutMember(chunk, name)).length > 0]).toEqual([name, true]);
+      for (const { name } of GLOBAL_CLASSES.members ?? [])
+        expect([name, globalIssues(withoutMember(global, name)).length > 0]).toEqual([name, true]);
+      // And a member it does not name is one the validator refuses.
+      expect(chunkIssues({ ...chunk, extra: 1 }).map(({ path }) => path)).toContain("/extra");
+      expect(globalIssues({ ...global, extra: 1 }).map(({ path }) => path)).toContain("/extra");
     });
-    const chunkIssues = (value: unknown) => beings.beingsChunkIssues("0,0", value, "beings@2");
-    // A deliberately invalid global value, which the validator's type cannot describe.
-    const globalIssues = (value: object) => ruleset.validateGlobal(value as never);
-    expect(chunkIssues(chunk)).toEqual([]);
-    expect(globalIssues(global)).toEqual([]);
-    // Every member the registry names is one the validator requires.
-    for (const { name } of CHUNK_CLASSES.members ?? [])
-      expect([name, chunkIssues(withoutMember(chunk, name)).length > 0]).toEqual([name, true]);
-    for (const { name } of GLOBAL_CLASSES.members ?? [])
-      expect([name, globalIssues(withoutMember(global, name)).length > 0]).toEqual([name, true]);
-    // And a member it does not name is one the validator refuses.
-    expect(chunkIssues({ ...chunk, extra: 1 }).map(({ path }) => path)).toContain("/extra");
-    expect(globalIssues({ ...global, extra: 1 }).map(({ path }) => path)).toContain("/extra");
-  });
+  }
 
   test("classify the beings of a chunk by BEING_CLASSES, and its depletion and due as C3", () => {
     expect(CHUNK_CLASSES.class).toBe("C0");
