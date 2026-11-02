@@ -28,12 +28,14 @@ export { type Body, bodyAt } from "./body.ts";
 export { type BeingsChunk, beingsChunkIssues, CHUNK_BOUNDS, dueOf } from "./chunk.ts";
 export {
   BEING_CLASSES,
+  CHUNK_CLASSES,
   type ClassKind,
   type ClassMember,
   type ClassNode,
   COMMAND_CLASSES,
   type DataClass,
   EVENT_CLASSES,
+  GLOBAL_CLASSES,
 } from "./classes.ts";
 export {
   type Controller,

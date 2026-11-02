@@ -22,6 +22,28 @@ rest of the being, C3 the laws of life) are listed in [Beings](beings.md#a-being
 episodes, beliefs, and relationships are C1, an act of speech is C0, and the taints and exposure
 of every record are C3, because C1 may reach the inhabitant itself and taints must not.
 
+The same registry classifies a chunk of the beings layer and the world's global value
+(`CHUNK_CLASSES` and `GLOBAL_CLASSES` in `packages/engine/src/beings/classes.ts`,
+[0026](../decisions/0026-public-protocol-v1.md#projections-and-classification)):
+
+| Member | Class | Why |
+|---|---|---|
+| A chunk's `beings` | C0, each being by its own classes | Who stands in a chunk is what an observer sees |
+| A chunk's `depletion` (`{cell, taken, since}`) | C3 | It shows how much each being ate (C1) and when food regrows (C3) |
+| A chunk's `due` | C3 | The engine's schedule of when its beings are next processed |
+| The whole global value: `genesis`, `genesisSeal`, `life`, `lifeSeal`, `occupancy`, `prunedDay` | C3 | The terrain seed and the laws, their seals, and the system's own records |
+
+`beings-world-classes.test.ts` checks that both name exactly the members their validators accept,
+under beings@1 and beings@2.
+
+The clock follows the same line between a law's effect and its parameters
+([0026](../decisions/0026-public-protocol-v1.md#the-authoritative-clock)):
+
+| Field | Class | Why |
+|---|---|---|
+| `clock.tick`, `clock.day`, `clock.dayPermille` | C0 | The shared tick and the observable effect of the day's law, computed in the world plane from the world's genesis |
+| `simSecondsPerTick`, the day's length | C3 | Law parameters: they stay in the world plane, and only the admin status carries `simSecondsPerTick` |
+
 ## Access by interface
 
 | Interface | Classes (plan §E.6) |

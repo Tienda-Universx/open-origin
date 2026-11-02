@@ -3,17 +3,25 @@
  * the journal's acknowledgements run between ticks, as the event loop does: the world runs at its
  * rate and publishes only what the journal committed; stop flushes the partial batch; a lagging
  * journal stalls the scheduler without shortfall; a journal failure, an engine fault, and an
- * unhandled rejection halt the world; and the status validates against the admin contract.
+ * unhandled rejection halt the world; the source's world is projected once per tick, timed, and
+ * its terrain served, and one that is not a world of beings is refused; and the status validates
+ * against the admin contract.
  */
 import { describe, expect, test } from "bun:test";
+import { readView, type World, worldgen } from "@open-origin/engine";
 import { ServerStatus } from "@open-origin/protocol/admin";
+import { TerrainPublic } from "@open-origin/protocol/public";
 import { compose, type WorldPlaneDeps } from "../src/compose.ts";
 import { type Config, parseConfig } from "../src/config/config.ts";
+import { calendarClock } from "../src/projection/clock.ts";
+import { BeingsProjection, type WorldProjection } from "../src/projection/projection.ts";
 import type { TickJournal } from "../src/world/journal.ts";
-import { ScriptedSource, type WorldSource } from "../src/world/source.ts";
+import type { PublishedTick } from "../src/world/published.ts";
+import { ScenarioSource, ScriptedSource, type WorldSource } from "../src/world/source.ts";
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import { ControlledJournal, settle } from "./support/journals.ts";
+import { emptyProjection } from "./support/projections.ts";
 
 /** One period at 5 Hz, in microseconds. */
 const P = 200_000;
@@ -31,7 +39,10 @@ type Options = Omit<WorldPlaneDeps, "clock" | "timer" | "source"> & {
   readonly source?: WorldSource | "default";
 };
 
-/** A world plane over a fake clock, by default over a counting world that never faults. */
+/**
+ * A world plane over a fake clock, by default over a counting world that never faults, which holds
+ * no beings and so takes the empty projection; the default source takes compose's own.
+ */
 function plane({
   config = configOf(),
   source = new ScriptedSource(countingWorld(1_000_000), []),
@@ -42,8 +53,8 @@ function plane({
   const world = compose(config, {
     clock,
     timer,
+    ...(source === "default" ? {} : { source, projectionOf: emptyProjection }),
     ...deps,
-    ...(source === "default" ? {} : { source }),
   });
   const published: number[] = [];
   world.subscribeToPublished(({ tick }) => {
@@ -280,5 +291,51 @@ describe("compose", () => {
     expect(journal.batches[0]?.toTick).toBe(2);
     expect(journal.batches[0]?.checkpoint).toStartWith("{");
     expect(journal.batches[0]?.records[0]?.commands).toHaveLength(8);
+    expect(TerrainPublic.safeParse(world.readTerrain([0, 0])).success).toBe(true);
+  });
+
+  test("refuses a source whose world is not a world of beings, naming the cause", () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const source = new ScriptedSource(countingWorld(1_000_000), []);
+    expect(() => compose(configOf(), { clock, timer, source })).toThrow(
+      "the world is not a world of beings: its global value holds no genesis",
+    );
+  });
+
+  test("projects every tick of the source's world, times each projection, and serves terrain", async () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const source = new ScenarioSource();
+    const genesis = readView(source.world as World<{ genesis: worldgen.Genesis }>).readGlobal();
+    const calendar = calendarClock(worldgen.prepareGenesis(genesis.genesis), 12);
+    // A projection that takes 137 microseconds of the fake clock.
+    const projectionOf = (world: World): WorldProjection => {
+      const projection = new BeingsProjection(world);
+      return {
+        project: (result) => {
+          clock.advance(137);
+          return projection.project(result);
+        },
+        readTerrain: (chunk) => projection.readTerrain(chunk),
+      };
+    };
+    const plane = compose(configOf(), { clock, timer, source, projectionOf });
+    const published: PublishedTick[] = [];
+    plane.subscribeToPublished((tick) => {
+      published.push(tick);
+    });
+    plane.start();
+    await timer.runUntilSettled(9 * P);
+    expect(published.map(({ tick }) => tick)).toEqual(ticks(1, 10));
+    expect(published.map(({ clock: at }) => at)).toEqual(ticks(1, 10).map(calendar));
+    expect(published[0]?.feed.map(({ kind }) => kind)).toEqual(Array(8).fill("arrival"));
+    const status = ServerStatus.parse(plane.status());
+    expect(status.projectionMicros).toEqual({ p50: 137, p95: 137, p99: 137 });
+    // A step's duration covers its whole tick, the projection included.
+    expect(status.stepMicros.p50).toBeGreaterThanOrEqual(137);
+    expect(plane.readTerrain([1, -1])).toEqual(
+      new BeingsProjection(source.world).readTerrain([1, -1]),
+    );
   });
 });

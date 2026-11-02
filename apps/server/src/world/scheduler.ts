@@ -19,7 +19,7 @@
  * ⌊(n − anchorTick) · 1,000,000 / tickRateHz⌋`. Here `n` counts the ticks this scheduler ran.
  */
 import { causeOf, type FaultCause } from "./fault.ts";
-import { type Percentiles, SampleWindow } from "./samples.ts";
+import { type Percentiles, SampleWindow, TICK_SAMPLES } from "./samples.ts";
 import type { CancelTimer, Clock, Timer } from "./time.ts";
 
 /** Why the world may not run a tick now: the journal lags too far behind, or the world halted. */
@@ -63,8 +63,6 @@ export type SchedulerOptions = {
 };
 
 const MICROS_PER_SECOND = 1_000_000;
-/** The samples the lateness and step percentiles read. */
-const WINDOW = 1024;
 /** The tick starts the achieved rate reads. */
 const RATE_WINDOW = 64;
 
@@ -85,8 +83,8 @@ export class FixedRateScheduler {
   #rebases = 0;
   #fault: FaultCause | undefined;
   readonly #stops = { journalStall: 0, paused: 0, halted: 0 };
-  readonly #lateness = new SampleWindow(WINDOW);
-  readonly #steps = new SampleWindow(WINDOW);
+  readonly #lateness = new SampleWindow(TICK_SAMPLES);
+  readonly #steps = new SampleWindow(TICK_SAMPLES);
   readonly #starts = new SampleWindow(RATE_WINDOW);
 
   constructor({ clock, timer, tickRateHz, runTick, hold }: SchedulerOptions) {
