@@ -33,7 +33,11 @@ const headers = (messages: readonly ServerMessage[]) =>
   messages.map(({ type, seq, tick }) => [type, seq, tick]);
 
 /** An arrival of the being `id` at `tick` in the chunk `at`. */
-function arrival(tick: number, id: number, at: ChunkCoord = [0, 0]): FeedItem {
+function arrival(
+  tick: number,
+  id: number,
+  at: ChunkCoord = [0, 0],
+): Extract<FeedItem, { kind: "arrival" }> {
   return { kind: "arrival", tick, being: id, species: "s1", chunk: at };
 }
 
@@ -260,6 +264,50 @@ describe("the feed", () => {
   });
 });
 
+describe("parts", () => {
+  test("fill up to the part's bytes and never past them, broken on items", () => {
+    const model = new ModelWorld(0, [being(1, [3, 3])]);
+    const { presentation, advance } = presentationOver(model, {
+      partBytes: 16_384,
+      periodBytes: 1 << 20,
+    });
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.subscribe(id, [[0, 0]]);
+    presentation.period();
+    // While the client lags, 16 ticks of 64 feed items each and of speech: 1,024 items of each.
+    client.lag = true;
+    const feed: FeedItem[] = [];
+    for (let tick = 1; tick <= 16; tick += 1) {
+      const items = Array.from({ length: 64 }, (_, index) =>
+        arrival(tick, 1000 + tick * 64 + index),
+      );
+      const speech = items.map(({ being: speaker }) => ({
+        at: [0, 0] as ChunkCoord,
+        speech: { tick, speaker, to: 1, act: "tell" as const, text: plain(`news of ${speaker}`) },
+      }));
+      feed.push(...items);
+      advance({ feed: items, speech });
+    }
+    client.lag = false;
+    presentation.period();
+    const sizes = (type: string) =>
+      client.messages.flatMap((message, index) =>
+        message.type === type ? [client.sizes[index] ?? 0] : [],
+      );
+    // Each run of parts but its last is full to within one item.
+    for (const type of ["delta", "events"]) {
+      const parts = sizes(type);
+      expect(parts.length).toBeGreaterThan(3);
+      expect(Math.max(...parts)).toBeLessThanOrEqual(16_384);
+      expect(Math.min(...parts.slice(0, -1))).toBeGreaterThan(16_384 - 400);
+    }
+    expect(client.commits.at(-1)?.feed).toEqual(feed);
+    expect(client.commits.at(-1)?.speech).toHaveLength(1024);
+    expect(client.anomalies).toEqual([]);
+  });
+});
+
 describe("a lost message", () => {
   test("is detected by the reducer as a seq gap, and a resync restores a correct view", () => {
     const model = new ModelWorld(0, [being(1, [3, 3]), being(2, [5, 5])]);
@@ -381,7 +429,7 @@ describe("a transaction", () => {
     expect(client.commits[commits]).toMatchObject({ reset: true });
     expect(shown(client.state)).toEqual(expected(model, tickOf(client), ["0,0"], 0));
     expect(client.anomalies).toEqual([]);
-    expect(withinParts(client)).toBe(true);
+    expect(withinParts(client, 16_384)).toBe(true);
     expect(presentation.usage().pins).toBe(1);
   });
 });

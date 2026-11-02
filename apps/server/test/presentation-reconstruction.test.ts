@@ -41,6 +41,8 @@ import {
 const SIDE = 160;
 const TICKS = 120;
 const CLIENTS = 5;
+/** Parts of 16 KiB, in a budget of 18 KiB a period: views of a few chunks span several periods. */
+const PART_BYTES = 16_384;
 
 /** What a client asked for: its camera and its followed being. */
 type Declared = { readonly camera: readonly ChunkCoord[]; readonly target: number | null };
@@ -345,7 +347,7 @@ function tally(tracked: Tracked, coverage: Coverage): void {
   // Only the messages deliberately lost made anomalies, each a seq gap.
   coverage.lost += tracked.client.anomalies.length;
   expect(tracked.client.anomalies.every(({ kind }) => kind === "seq_gap")).toBe(true);
-  expect(withinParts(tracked.client)).toBe(true);
+  expect(withinParts(tracked.client, PART_BYTES)).toBe(true);
   for (const periods of tracked.periods.values()) if (periods.size > 1) coverage.multiPeriod += 1;
 }
 

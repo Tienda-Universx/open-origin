@@ -268,9 +268,9 @@ export class ViewClient implements ClientSink {
   }
 }
 
-/** Every frame `client` received was at most MAX_PART_BYTES. */
-export function withinParts(client: ViewClient): boolean {
-  return client.largest <= MAX_PART_BYTES;
+/** Every frame `client` received was at most `limit` bytes: MAX_PART_BYTES unless given. */
+export function withinParts(client: ViewClient, limit = MAX_PART_BYTES): boolean {
+  return client.largest <= limit;
 }
 
 /** The world plane's side of a presentation: its boot record, then each published tick. */
