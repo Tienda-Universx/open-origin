@@ -57,6 +57,19 @@ const ranges = (batches: readonly JournalBatch[]) =>
 const ticks = (from: number, to: number) =>
   Array.from({ length: to - from + 1 }, (_, index) => from + index);
 
+/** A journal whose append throws instead of returning a promise. */
+const throwingJournal = (error: unknown) => ({
+  level: "none" as const,
+  append: (): Promise<void> => {
+    throw error;
+  },
+});
+
+/** A change callback that always throws. */
+const brokenOnChange = () => {
+  throw new Error("a broken change callback");
+};
+
 describe("PublicationGate", () => {
   test("boots with P = C = E = L and takes the ticks that follow, one by one", () => {
     const { gate, counters } = harness(5, 40);
@@ -202,12 +215,7 @@ describe("PublicationGate", () => {
 
   test("halts when the journal throws instead of rejecting", async () => {
     const gate = new PublicationGate({
-      journal: {
-        level: "none",
-        append: () => {
-          throw new Error("disk full");
-        },
-      },
+      journal: throwingJournal(new Error("disk full")),
       batchTicks: 1,
       boot: 0,
     });
@@ -215,6 +223,36 @@ describe("PublicationGate", () => {
     await settle();
     expect(gate.failed).toBe(true);
     expect([gate.executed, gate.committed, gate.published]).toEqual([1, 0, 0]);
+  });
+
+  test("counts a change callback that throws after an acknowledgement or a failure", async () => {
+    const journal = new ControlledJournal();
+    const gate = new PublicationGate({ journal, batchTicks: 1, boot: 0, onChange: brokenOnChange });
+    // Both calls run in the append's promise handlers. Bun's test runner fails the test in which a
+    // promise rejection goes unhandled, before any process handler sees it: a throw that escaped
+    // a handler would fail this test.
+    gate.accept(executed(1));
+    journal.ack();
+    await settle();
+    gate.accept(executed(2));
+    journal.fail();
+    await settle();
+    expect([gate.executed, gate.committed, gate.published]).toEqual([2, 1, 1]);
+    expect(gate.failed).toBe(true);
+    expect(gate.changeFaults).toBe(2);
+  });
+
+  test("counts a change callback that throws when the journal throws, so accept does not", () => {
+    const gate = new PublicationGate({
+      journal: throwingJournal(new Error("disk full")),
+      batchTicks: 1,
+      boot: 0,
+      onChange: brokenOnChange,
+    });
+    expect(gate.changeFaults).toBe(0);
+    expect(() => gate.accept(executed(1))).not.toThrow();
+    expect(gate.failed).toBe(true);
+    expect(gate.changeFaults).toBe(1);
   });
 
   test("stalls once E − C exceeds the window W = 4F", async () => {

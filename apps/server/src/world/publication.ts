@@ -32,7 +32,10 @@ export type GateOptions = {
   readonly batchTicks: number;
   /** L: the world's tick at boot. */
   readonly boot: Tick;
-  /** Called after each acknowledgement and after a failure, so the scheduler can ask again. */
+  /**
+   * Called after each acknowledgement and after a failure, so the scheduler can ask again. A throw
+   * is counted as a change fault: it reaches neither `accept` nor the append's promise.
+   */
   readonly onChange?: () => void;
 };
 
@@ -60,6 +63,7 @@ export class PublicationGate {
   #flushes: (() => void)[] = [];
   readonly #listeners = new Set<PublishedListener>();
   #listenerFaults = 0;
+  #changeFaults = 0;
 
   constructor({ journal, batchTicks, boot, onChange = () => undefined }: GateOptions) {
     if (!Number.isSafeInteger(batchTicks) || batchTicks < 1) {
@@ -98,6 +102,11 @@ export class PublicationGate {
   /** How many listener calls threw or returned a promise that rejected. */
   get listenerFaults(): number {
     return this.#listenerFaults;
+  }
+
+  /** How many calls of `onChange` threw. */
+  get changeFaults(): number {
+    return this.#changeFaults;
   }
 
   /** E − C: the executed ticks the journal has not committed. */
@@ -197,7 +206,7 @@ export class PublicationGate {
     this.#committed = tick;
     for (const entry of entries) this.#publish(entry.record.tick, entry.published);
     this.#pump();
-    this.#onChange();
+    this.#changed();
   }
 
   #publish(tick: Tick, published: PublishedTick): void {
@@ -222,7 +231,19 @@ export class PublicationGate {
     this.#inFlight = undefined;
     this.#queue.length = 0;
     this.#settleFlushes();
-    this.#onChange();
+    this.#changed();
+  }
+
+  /**
+   * Calls `onChange`, counting a throw: from an append's promise handler it would be an unhandled
+   * rejection, and from a journal that throws it would reach the caller of `accept`.
+   */
+  #changed(): void {
+    try {
+      this.#onChange();
+    } catch {
+      this.#changeFaults += 1;
+    }
   }
 
   #settleFlushes(): void {

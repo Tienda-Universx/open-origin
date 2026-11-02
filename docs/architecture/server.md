@@ -138,6 +138,9 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
 - **Failure.** When an append rejects or throws, the gate fails: it drops the ticks it holds,
   appends and publishes nothing more, and refuses further ticks. Nothing uncommitted is published.
 - **Window.** `stalled()` is `E − C > W`, with `W = 4F`.
+- **Change callback.** `onChange` runs after each acknowledgement and after a failure, so the
+  scheduler can ask its hold again. A throw from it is counted as `changeFaults` and reaches neither
+  the caller of `accept` nor the append's promise, where it would be an unhandled rejection.
 
 ## Composition
 
