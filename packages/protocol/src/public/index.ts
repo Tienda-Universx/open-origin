@@ -35,3 +35,33 @@ export {
   SUBSTRATE_CODES,
   WORLD_STATES,
 } from "./constants.ts";
+export {
+  Act,
+  ActivityPublic,
+  BeingPublic,
+  Cell,
+  ChunkCoord,
+  EntityId,
+  FeedItem,
+  Identifier,
+  Speech,
+  Tick,
+} from "./dto.ts";
+export {
+  type DecodedTerrain,
+  decodeTerrain,
+  encodeTerrain,
+  type IntRange,
+  TERRAIN_WIDTHS,
+  TerrainPublic,
+  type TerrainRanges,
+  type TerrainValues,
+  type TerrainWidth,
+  terrainWidth,
+} from "./terrain.ts";
+export {
+  FORBIDDEN_CODE_POINTS,
+  PlainText,
+  type PlainTextProblem,
+  plainTextProblem,
+} from "./text.ts";

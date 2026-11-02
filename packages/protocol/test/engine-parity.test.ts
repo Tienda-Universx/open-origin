@@ -3,6 +3,8 @@ import { beings, mind, worldgen } from "../../engine/src/index.ts";
 import {
   ACTIVITY_KINDS,
   ACTS,
+  ActivityPublic,
+  BeingPublic,
   CHUNK_AREA,
   CHUNK_CELLS,
   DIRECTION_COUNT,
@@ -22,6 +24,14 @@ import {
  */
 
 type ClassNode = typeof beings.BEING_CLASSES;
+
+/** The names of the C0 members of the record `node`, sorted. */
+function publicMembers(node: ClassNode): string[] {
+  return (node.members ?? [])
+    .filter((member) => member.node.class === "C0")
+    .map((member) => member.name)
+    .sort();
+}
 
 /** The C0 activity node of a being of beings@2: one record per kind. */
 function activityNode(): ClassNode {
@@ -65,5 +75,31 @@ describe("the vocabularies of a being", () => {
     const kinds = (activityNode().kinds ?? []).map(({ kind }) => kind);
     const ours: readonly string[] = ACTIVITY_KINDS;
     expect(ours).toEqual(kinds);
+    const schemaKinds: readonly string[] = ActivityPublic.options.map(
+      (option) => option.shape.kind.value,
+    );
+    expect(schemaKinds).toEqual(kinds);
+  });
+
+  test("BeingPublic holds exactly the C0 members of a being", () => {
+    expect(Object.keys(BeingPublic.shape).sort()).toEqual(publicMembers(beings.BEING_CLASSES));
+  });
+
+  test("each activity holds its C0 members, and a walk the direction observers derive", () => {
+    const fromRegistry = Object.fromEntries(
+      (activityNode().kinds ?? []).map(({ kind, node }) => [
+        kind,
+        // A walk's direction is the C0 direction of its current step, derived from dirs and done.
+        kind === "walk" ? [...publicMembers(node), "dir"].sort() : publicMembers(node),
+      ]),
+    );
+    const fromSchema = Object.fromEntries(
+      ActivityPublic.options.map((option) => [
+        option.shape.kind.value,
+        Object.keys(option.shape).sort(),
+      ]),
+    );
+    expect(fromSchema).toEqual(fromRegistry);
+    expect(fromSchema.talk).toEqual(["act", "kind", "to"]);
   });
 });
