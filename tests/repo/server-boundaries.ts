@@ -10,19 +10,24 @@
  *
  * Each rule holds for what a module reaches through any chain of imports, not only for what it
  * imports itself: a world module that imports compose.ts reaches the presentation plane through it.
- * Every import counts, type-only ones included; for rule 2's exception, a type-only import is an
- * `import type` or `export type` statement, or a `typeof import("…")`. An import every specifier of
- * which carries an inline `type` is still a runtime import under verbatimModuleSyntax, so it does
- * not count as one. Specifiers are relative paths with their extension, which must name a module
- * of apps/server/src, or package names; a computed dynamic specifier is rejected.
+ * Every import counts, type-only ones included: static imports, re-exports, `import x =
+ * require("…")`, `import("…")`, and the `require("…")` and `import.meta.require("…")` that Bun's types
+ * declare. For rule 2's exception, a type-only import is an `import type` or `export type`
+ * statement, an `import type x = require("…")`, or a `typeof import("…")`. An import every specifier
+ * of which carries an inline `type` is still a runtime import under verbatimModuleSyntax, so it does
+ * not count as one. Specifiers are relative paths with their extension, which must name a module of
+ * apps/server/src, or package names, `bun:*` and `node:*` included; an absolute path, any other
+ * URL (`file://` among them), and a computed specifier are rejected, and so is every triple-slash
+ * reference directive, which pulls a file into the program without an import.
  *
  * The same reader checks the import rules of packages/scenarios/src and packages/protocol/src in
- * the two places Biome's rule for each cannot: a relative path that leaves `src`, and a type-level
- * `import("…")`.
+ * the places Biome's rule for each cannot: a relative path that leaves `src`, a type-level
+ * `import("…")`, a `require`, and a triple-slash reference directive.
  *
  * The scan is lexical, as tests/repo/engine-purity.ts's is: comments are blanked and string literals
  * kept, so a string that reads like an import counts as one, which errs on the side of rejecting. A
- * type-level `import("…")` without `typeof` reads as a runtime import.
+ * type-level `import("…")` without `typeof` reads as a runtime import. A `require` reached through
+ * another name (`const load = require`, `module.require`) is left to review.
  */
 import { posix } from "node:path";
 
@@ -47,18 +52,23 @@ const FROM_CLAUSE = new RegExp(
 );
 /** `import "x"`. */
 const SIDE_EFFECT_IMPORT = new RegExp(String.raw`${KEYWORD}import\s*${STRING}`, "g");
-/** `import name = require("x")`, and `import type name = require("x")`. */
-const IMPORT_EQUALS = new RegExp(
-  String.raw`${KEYWORD}import\s+(?:type\s+)?[\w$]+\s*=\s*require\s*\(\s*${STRING}`,
+/**
+ * A call that loads a module: `import(…)`, dynamic or type-level, whose group 1 is `import`, and
+ * `require(…)` and `import.meta.require(…)`, `import name = require(…)` among them.
+ */
+const LOADING_CALL = new RegExp(
+  String.raw`${KEYWORD}(import|(?:import\.meta\.)?require)\s*\(`,
   "g",
 );
-/** `import(…)`, dynamic or type-level. */
-const DYNAMIC_IMPORT = new RegExp(String.raw`${KEYWORD}import\s*\(`, "g");
 const LITERAL_ARGUMENT = new RegExp(String.raw`^\s*${STRING}\s*[,)]`);
 /** A statement that imports or re-exports types only. */
 const TYPE_ONLY_STATEMENT = /^(?:import|export)\s+type\b/;
 /** `typeof` right before an `import(…)`: a type-level import, which loads nothing. */
 const TYPE_QUERY = /\btypeof\s*$/;
+/** `import type name =` right before a `require(…)`: an import of types only. */
+const TYPE_IMPORT_EQUALS = /\bimport\s+type\s+[\w$]+\s*=\s*$/;
+/** A triple-slash reference directive, which the reader of imports would blank as a comment. */
+const REFERENCE_DIRECTIVE = /^[ \t]*\/\/\/[ \t]*<reference\b/gm;
 
 /** String and template literals (kept) and comments (blanked, keeping line breaks). */
 const LITERAL_OR_COMMENT =
@@ -76,31 +86,47 @@ function lineAt(text: string, index: number): number {
   return text.slice(0, index).split("\n").length;
 }
 
+/** Whether the call `match` of LOADING_CALL in `code` loads types only. */
+function loadsTypesOnly(code: string, match: RegExpExecArray): boolean {
+  const before = code.slice(0, match.index);
+  return match[1] === "import" ? TYPE_QUERY.test(before) : TYPE_IMPORT_EQUALS.test(before);
+}
+
 /** Every import of `content`, in the order of its lines. */
 export function importsOf(content: string): ImportEdge[] {
   const code = blankComments(content);
-  const literal = [FROM_CLAUSE, SIDE_EFFECT_IMPORT, IMPORT_EQUALS].flatMap((pattern) =>
+  const statements = [FROM_CLAUSE, SIDE_EFFECT_IMPORT].flatMap((pattern) =>
     [...code.matchAll(pattern)].map((match) => ({
       specifier: match[1] ?? match[2] ?? "",
       typeOnly: TYPE_ONLY_STATEMENT.test(match[0]),
       line: lineAt(code, match.index),
     })),
   );
-  const dynamic = [...code.matchAll(DYNAMIC_IMPORT)].map((match) => {
+  const calls = [...code.matchAll(LOADING_CALL)].map((match) => {
     const argument = LITERAL_ARGUMENT.exec(code.slice(match.index + match[0].length));
     return {
       specifier: argument === null ? undefined : (argument[1] ?? argument[2] ?? ""),
-      typeOnly: TYPE_QUERY.test(code.slice(0, match.index)),
+      typeOnly: loadsTypesOnly(code, match),
       line: lineAt(code, match.index),
     };
   });
-  return [...literal, ...dynamic].sort((a, b) => a.line - b.line);
+  return [...statements, ...calls].sort((a, b) => a.line - b.line);
+}
+
+/** The lines of the triple-slash reference directives of `content`, which importsOf cannot see. */
+export function referencesOf(content: string): number[] {
+  return [...content.matchAll(REFERENCE_DIRECTIVE)].map((match) => lineAt(content, match.index));
 }
 
 /** A TypeScript source of any extension. */
 const TYPESCRIPT = /\.[cm]?tsx?$/;
 const RELATIVE = /^\.\.?(?:\/|$)/;
-const COMPUTED = "a dynamic import with a computed specifier cannot be checked";
+const COMPUTED = "a dynamic import or a require with a computed specifier cannot be checked";
+const REFERENCE = "a triple-slash reference directive cannot be checked: use an import";
+/** A specifier with a URL scheme, such as `file:`, `data:`, or `https:`. */
+const URL_SCHEME = /^[A-Za-z][A-Za-z\d+.-]*:/;
+/** The schemes of the runtime's own modules, which name packages, not files. */
+const RUNTIME_SCHEME = /^(?:bun|node):/;
 
 function isUnder(path: string, directory: string): boolean {
   return path.startsWith(`${directory}/`);
@@ -114,6 +140,11 @@ function isModuleOf(directory: string, path: string): boolean {
 /** `specifier`, imported from `file`, as a repository-relative path. */
 function resolveFrom(file: string, specifier: string): string {
   return posix.normalize(posix.join(posix.dirname(file), specifier));
+}
+
+/** The findings of the triple-slash reference directives of `file`. */
+function referenceFindings({ path, content }: SourceFile): Finding[] {
+  return referencesOf(content).map((line) => ({ file: path, line, message: REFERENCE }));
 }
 
 /** The sources of the TypeScript modules under `directory` among `paths`, read with `read`. */
@@ -155,12 +186,23 @@ const isPresentation = inZone("presentation", "transport");
 const isRoot = inZone("compose.ts", "main.ts");
 const PUBLISHED = `${SERVER_SRC}/world/published.ts`;
 
-/** Why the import `specifier` of `file` cannot join the graph; undefined when it can. */
-function edgeProblem(file: string, specifier: string, modules: ReadonlySet<string>) {
+/** Why the specifier, which is not a relative path, cannot name a package; undefined when it can. */
+function nonRelativeProblem(specifier: string): string | undefined {
   if (specifier === "@open-origin/server" || specifier.startsWith("@open-origin/server/")) {
     return `"${specifier}" names the server's own package: import its modules by relative path`;
   }
-  if (!RELATIVE.test(specifier)) return undefined;
+  // A path or a URL would join the graph as a package, out of reach of every rule.
+  const byPath = `import the modules of ${SERVER_SRC} by relative path`;
+  if (specifier.startsWith("/")) return `"${specifier}" is an absolute path: ${byPath}`;
+  if (URL_SCHEME.test(specifier) && !RUNTIME_SCHEME.test(specifier)) {
+    return `"${specifier}" is a URL: ${byPath}`;
+  }
+  return undefined;
+}
+
+/** Why the import `specifier` of `file` cannot join the graph; undefined when it can. */
+function edgeProblem(file: string, specifier: string, modules: ReadonlySet<string>) {
+  if (!RELATIVE.test(specifier)) return nonRelativeProblem(specifier);
   const resolved = resolveFrom(file, specifier);
   if (!isUnder(resolved, SERVER_SRC)) return `"${specifier}" resolves outside ${SERVER_SRC}`;
   if (!modules.has(resolved)) return `"${specifier}" resolves to no module of ${SERVER_SRC}`;
@@ -185,12 +227,13 @@ function graphOf(files: readonly SourceFile[]) {
   const modules = new Set(files.map(({ path }) => path));
   const graph = new Map<string, readonly Edge[]>();
   const findings: Finding[] = [];
-  for (const { path, content } of files) {
-    const results = importsOf(content).map((imported) => edgeOf(path, imported, modules));
+  for (const file of files) {
+    const results = importsOf(file.content).map((imported) => edgeOf(file.path, imported, modules));
     graph.set(
-      path,
+      file.path,
       results.flatMap((result) => ("edge" in result ? [result.edge] : [])),
     );
+    findings.push(...referenceFindings(file));
     findings.push(...results.flatMap((result) => ("finding" in result ? [result.finding] : [])));
   }
   return { graph, findings };
@@ -350,18 +393,20 @@ function packageProblem({ src, packages }: PackagePolicy, file: string, specifie
 }
 
 /**
- * Every import of `files` that breaks `policy`, in every form, type-level `import("…")` included:
- * Biome's rule for these packages does not see a relative path that leaves `src` nor a type-level
- * import.
+ * Every import of `files` that breaks `policy`, in every form, and every triple-slash reference
+ * directive, in line order within each file: Biome's rule for these packages does not see a
+ * relative path that leaves `src`, a type-level import, a `require`, nor a directive.
  */
 export function checkPackageImports(
   policy: PackagePolicy,
   files: readonly SourceFile[],
 ): Finding[] {
-  return files.flatMap(({ path, content }) =>
-    importsOf(content).flatMap(({ specifier, line }) => {
-      const message = specifier === undefined ? COMPUTED : packageProblem(policy, path, specifier);
-      return message === undefined ? [] : [{ file: path, line, message }];
-    }),
-  );
+  return files.flatMap((file) => {
+    const imports = importsOf(file.content).flatMap(({ specifier, line }) => {
+      const message =
+        specifier === undefined ? COMPUTED : packageProblem(policy, file.path, specifier);
+      return message === undefined ? [] : [{ file: file.path, line, message }];
+    });
+    return [...referenceFindings(file), ...imports].sort((a, b) => a.line - b.line);
+  });
 }

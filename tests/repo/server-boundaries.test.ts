@@ -26,7 +26,8 @@ const RULE_2 =
   "presentation/ and transport/ import only @open-origin/protocol/*, each other, and, as a type only, world/published.ts (ADR 0025, rule 2)";
 const RULE_3 = "world/ and projection/ import no bun and name no WebSocket (ADR 0025, rule 3)";
 const RULE_4 = "config/ is imported only by compose.ts and main.ts (ADR 0025, rule 4)";
-const COMPUTED = "a dynamic import with a computed specifier cannot be checked";
+const COMPUTED = "a dynamic import or a require with a computed specifier cannot be checked";
+const REFERENCE = "a triple-slash reference directive cannot be checked: use an import";
 
 /** A legal tree of every plane of ADR 0025, by path relative to apps/server/src. */
 const LEGAL: Readonly<Record<string, string>> = {
@@ -86,6 +87,18 @@ const plus = (path: string, line: string) => ({ [path]: `${LEGAL[path] ?? ""}\n$
 
 /** The number of lines of `path`'s legal text, plus one: the line `plus` adds. */
 const added = (path: string) => (LEGAL[path] ?? "").split("\n").length + 1;
+
+/**
+ * For each rule, a module it covers and a target that would break it if the graph followed an
+ * absolute path or a URL there: such a specifier joins the graph as a package, out of every rule's
+ * reach, so it is rejected on its own.
+ */
+const ESCAPES = [
+  ["rule 1", "world/host.ts", "apps/server/src/presentation/fan-out.ts"],
+  ["rule 2", "presentation/playout.ts", "apps/server/src/world/host.ts"],
+  ["rule 3", "projection/terrain.ts", "node_modules/bun/index.js"],
+  ["rule 4", "adapters/clock.ts", "apps/server/src/config/config.ts"],
+] as const;
 
 describe("the server's planes", () => {
   test("the real tree keeps every rule, and the scan reads every module of src", async () => {
@@ -273,6 +286,96 @@ describe("the server's planes", () => {
     });
   });
 
+  describe("every form that loads a module, under every rule", () => {
+    test.each([
+      [
+        "world/host.ts",
+        'const { fanOut } = require("../presentation/fan-out.ts");',
+        [
+          `reaches presentation/fan-out.ts: ${RULE_1}`,
+          `reaches a WebSocket in presentation/fan-out.ts: ${RULE_3}`,
+        ],
+      ],
+      [
+        "adapters/clock.ts",
+        'const { serve } = import.meta.require("../transport/serve.ts");',
+        [`reaches transport/serve.ts: ${RULE_1}`],
+      ],
+      [
+        "presentation/playout.ts",
+        'const { WorldHost } = require("../world/host.ts");',
+        [`reaches world/host.ts: ${RULE_2}`],
+      ],
+      [
+        "transport/serve.ts",
+        'const published = import.meta.require("../world/published.ts");',
+        [`imports world/published.ts as a value: ${RULE_2}`],
+      ],
+      ["world/host.ts", 'const { serve } = require("bun");', [`reaches "bun": ${RULE_3}`]],
+      [
+        "projection/terrain.ts",
+        'const jsc = import.meta.require("bun:jsc");',
+        [`reaches "bun:jsc": ${RULE_3}`],
+      ],
+      [
+        "world/host.ts",
+        'const { parseConfig } = require("../config/config.ts");',
+        [`reaches config/config.ts: ${RULE_4}`],
+      ],
+      [
+        "adapters/clock.ts",
+        'const config = import.meta.require("../config/config.ts");',
+        [`reaches config/config.ts: ${RULE_4}`],
+      ],
+    ])("rejects in %s: %p", (path, line, messages) => {
+      expect(findingsOf(plus(path, line))).toEqual(
+        messages.map((message) => ({ file: path, line: added(path), message })),
+      );
+    });
+
+    test.each(
+      ESCAPES.flatMap(([rule, path, target]) => [
+        [rule, path, `/repo/${target}`, "is an absolute path"],
+        [rule, path, `file:///repo/${target}`, "is a URL"],
+      ]),
+    )("rejects under %s, in %s, the specifier %p", (_rule, path, specifier, what) => {
+      for (const line of [
+        `import { a } from "${specifier}";`,
+        `const a = require("${specifier}");`,
+      ]) {
+        expect(findingsOf(plus(path, line))).toEqual([
+          {
+            file: path,
+            line: added(path),
+            message: `"${specifier}" ${what}: import the modules of ${SERVER_SRC} by relative path`,
+          },
+        ]);
+      }
+    });
+
+    test.each([
+      ["world/host.ts", '/// <reference path="../presentation/fan-out.ts" />'],
+      ["presentation/playout.ts", '/// <reference path="../world/host.ts" />'],
+      ["projection/terrain.ts", '/// <reference types="bun" />'],
+      ["adapters/clock.ts", '///<reference path="../config/config.ts"/>'],
+    ])("rejects a triple-slash reference directive in %s: %p", (path, directive) => {
+      expect(findingsOf({ [path]: `${directive}\n${LEGAL[path]}` })).toEqual([
+        { file: path, line: 1, message: REFERENCE },
+      ]);
+    });
+
+    test("keeps bun: and node: specifiers as packages, which the rules then judge", () => {
+      expect(findingsOf(plus("config/config.ts", 'import { stat } from "node:fs";'))).toEqual([]);
+      expect(findingsOf(plus("world/host.ts", 'import { gc } from "bun:jsc";'))).toEqual([
+        {
+          file: "world/host.ts",
+          line: added("world/host.ts"),
+          message: `reaches "bun:jsc": ${RULE_3}`,
+        },
+      ]);
+    });
+  });
+
   test("rejects imports the graph cannot follow", () => {
     const lines = [
       "export const later = (name: string) => import(name);",
@@ -328,6 +431,10 @@ describe("importsOf", () => {
       "import {",
       "  n,",
       '} from "./n.ts";',
+      'const o = require("./o.ts");',
+      'const p = import.meta.require("./p.ts");',
+      "const q = (name: string) => require(name);",
+      'const r = loader.require("./r.ts");',
     ].join("\n");
     expect(importsOf(source)).toEqual([
       { specifier: "./a.ts", typeOnly: false, line: 1 },
@@ -342,6 +449,10 @@ describe("importsOf", () => {
       { specifier: "./j.ts", typeOnly: true, line: 10 },
       { specifier: undefined, typeOnly: false, line: 11 },
       { specifier: "./n.ts", typeOnly: false, line: 14 },
+      { specifier: "./o.ts", typeOnly: false, line: 17 },
+      { specifier: "./p.ts", typeOnly: false, line: 18 },
+      // A require of a computed name; a method that is only named require is no import.
+      { specifier: undefined, typeOnly: false, line: 19 },
     ]);
   });
 });
@@ -388,9 +499,46 @@ describe("the imports Biome cannot check in packages/scenarios and packages/prot
       '"node:fs" is neither a relative path nor zod: packages/protocol/src imports nothing else',
     ],
     [PROTOCOL_POLICY, "export const later = (name: string) => import(name);", COMPUTED],
+    [
+      SCENARIOS_POLICY,
+      'const engine = require("../../engine/src/index.ts");',
+      '"../../engine/src/index.ts" resolves outside packages/scenarios/src',
+    ],
+    [
+      PROTOCOL_POLICY,
+      'const tick = import.meta.require("../../engine/src/time/tick.ts");',
+      '"../../engine/src/time/tick.ts" resolves outside packages/protocol/src',
+    ],
+    [
+      PROTOCOL_POLICY,
+      'const fs = require("node:fs");',
+      '"node:fs" is neither a relative path nor zod: packages/protocol/src imports nothing else',
+    ],
+    [SCENARIOS_POLICY, "export const later = (name: string) => require(name);", COMPUTED],
+    [
+      SCENARIOS_POLICY,
+      'import { step } from "/repo/packages/engine/src/index.ts";',
+      '"/repo/packages/engine/src/index.ts" is neither a relative path nor @open-origin/engine or @open-origin/agents: packages/scenarios/src imports nothing else',
+    ],
+    [
+      PROTOCOL_POLICY,
+      'import { z } from "file:///repo/node_modules/zod/index.js";',
+      '"file:///repo/node_modules/zod/index.js" is neither a relative path nor zod: packages/protocol/src imports nothing else',
+    ],
   ])("rejects %#: %p", (policy, line, message) => {
     expect(check(policy, line)).toEqual([{ file: `${policy.src}/later.ts`, line: 2, message }]);
   });
+
+  test.each([SCENARIOS_POLICY, PROTOCOL_POLICY].map((policy) => [policy.src, policy] as const))(
+    "rejects a triple-slash reference directive in %s",
+    (_src, policy) => {
+      const file = `${policy.src}/later.ts`;
+      const content = '/// <reference path="../../engine/src/index.ts" />\nexport const a = 1;';
+      expect(checkPackageImports(policy, [{ path: file, content }])).toEqual([
+        { file, line: 1, message: REFERENCE },
+      ]);
+    },
+  );
 
   test("allows relative paths inside src and the packages each rule names", () => {
     expect(

@@ -172,14 +172,20 @@ included.
 | 3 | A module of `world/` or `projection/` that reaches `bun` or `bun:*`, or names a WebSocket, or reaches a module outside those folders that does |
 | 4 | A module other than `compose.ts`, `main.ts`, and those of `config/` that reaches `config/` |
 
-A type-only import is an `import type` or `export type` statement or a `typeof import("…")`; an
-import whose every specifier carries an inline `type` is still a runtime import. Every relative
-specifier must name a module of `src/` with its extension; a path that leaves `src/`, the server's
-own package name, and a computed specifier are rejected. The scan is lexical, so a string that reads
-like an import or names a WebSocket counts. Until `presentation/` and `transport/` exist, each rule
-is proved on planted trees whose legal version passes. The same reader rejects, in
-`packages/scenarios/src` and `packages/protocol/src`, a relative path that leaves `src`, a
-type-level `import()`, and a computed specifier, which their Biome rules cannot see.
+Every form that loads a module counts: static imports, re-exports, `import x = require("…")`,
+`import("…")`, and the `require("…")` and `import.meta.require("…")` that Bun's types declare. A
+type-only import is an `import type` or `export type` statement, an `import type x = require("…")`,
+or a `typeof import("…")`; an import whose every specifier carries an inline `type` is still a
+runtime import. Every relative specifier must name a module of `src/` with its extension; a path
+that leaves `src/`, the server's own package name, an absolute path, a URL other than `bun:` and
+`node:` (`file://` among them), a computed specifier, and a triple-slash reference directive are
+rejected: a path or a URL would join the graph as a package, out of every rule's reach. The scan is
+lexical, so a string that reads like an import or names a WebSocket counts, and a `require` reached
+through another name (`const load = require`) is left to review. Until `presentation/` and
+`transport/` exist, each rule is proved on planted trees whose legal version passes. The same
+reader rejects, in `packages/scenarios/src` and `packages/protocol/src`, a relative path that leaves
+`src`, a type-level `import()`, a `require()` or `import.meta.require()`, a computed specifier, and a
+triple-slash reference directive, which their Biome rules cannot see.
 
 `published.ts` imports nothing, so a type-only import of it gives the presentation plane no path to
 the engine: in T6-4 a published tick is `{ tick }`, a number, not the engine's `Tick` type.
