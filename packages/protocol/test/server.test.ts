@@ -85,7 +85,11 @@ const FULL: Record<string, Record<string, unknown>> = {
     ],
     followed: being(5, [3, 3]),
   },
-  events: { ...MINIMAL.events, items: [{ kind: "death", being: 4, chunk: [0, 0] }], missed: 3 },
+  events: {
+    ...MINIMAL.events,
+    items: [{ kind: "death", tick: 7, being: 4, chunk: [0, 0] }],
+    missed: 3,
+  },
   status: { ...MINIMAL.status, reason: "Maintenance of the journal." },
 };
 

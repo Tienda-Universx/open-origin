@@ -224,7 +224,7 @@ describe("a transaction", () => {
     const session = connected();
     const greet = { tick: 14, speaker: 1, to: 2, act: "greet", text: "Being 1 greets being 2." };
     session.apply(delta(session.at(15, 2), [{ at: A, v: 11, speech: [greet], speechMissed: 2 }]));
-    const item = { kind: "greeting", from: 1, to: 2, chunk: A };
+    const item = { kind: "greeting", tick: 3, from: 1, to: 2, chunk: A };
     session.apply(events(session.at(15, 2), [item], 5));
     const committed: unknown = session.apply(commit(session.at(15, 2))).committed;
     expect(committed).toEqual({

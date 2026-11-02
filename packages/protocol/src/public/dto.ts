@@ -90,16 +90,24 @@ export type Speech = z.output<typeof Speech>;
 
 /**
  * An item of the feed, which reaches every client and carries no text: a being arrived, a being
- * died, or one being greeted another (every `greet` act), each with the chunk where it happened.
+ * died, or one being greeted another (every `greet` act), each with the tick and the chunk where it
+ * happened. A transaction covers several ticks, so each item says its own.
  */
 export const FeedItem = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("arrival"),
+    tick: Tick,
     being: EntityId,
     species: Identifier,
     chunk: ChunkCoord,
   }),
-  z.strictObject({ kind: z.literal("death"), being: EntityId, chunk: ChunkCoord }),
-  z.strictObject({ kind: z.literal("greeting"), from: EntityId, to: EntityId, chunk: ChunkCoord }),
+  z.strictObject({ kind: z.literal("death"), tick: Tick, being: EntityId, chunk: ChunkCoord }),
+  z.strictObject({
+    kind: z.literal("greeting"),
+    tick: Tick,
+    from: EntityId,
+    to: EntityId,
+    chunk: ChunkCoord,
+  }),
 ]);
 export type FeedItem = z.output<typeof FeedItem>;

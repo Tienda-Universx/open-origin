@@ -188,8 +188,9 @@ with the classes of the clock's fields, and with those of the chunk and global m
 
 ### The feed
 
-The feed reaches every client: `arrival{being, species, chunk}`, `death{being, chunk}`, and
-`greeting{from, to, chunk}` (every `greet` act). It carries no text. The text of speech is local: it goes in
+The feed reaches every client: `arrival{tick, being, species, chunk}`, `death{tick, being, chunk}`, and
+`greeting{tick, from, to, chunk}` (every `greet` act). Each item carries the tick it happened at,
+because a transaction covers several ticks. It carries no text. The text of speech is local: it goes in
 the speaker's chunk, as `speech[{tick, speaker, to, act, text}]`.
 
 At most 64 feed items go out per tick, and the rest are counted in `missed`. The feed is encoded once

@@ -121,8 +121,9 @@ encodes to 206 bytes of JSON, under `MAX_BEING_RECORD_BYTES`, 256 (`dto.test.ts`
 
 - **Speech** `{tick, speaker, to, act, text}`: local speech, heard in the speaker's chunk and sent
   in `delta.chunks[].speech`. `act` is `greet`, `ask`, `tell`, or `unknown`; `text` is plain text.
-- **FeedItem**, which reaches every client and carries no text: `arrival{being, species, chunk}`,
-  `death{being, chunk}`, and `greeting{from, to, chunk}`, each with `kind`.
+- **FeedItem**, which reaches every client and carries no text: `arrival{tick, being, species,
+  chunk}`, `death{tick, being, chunk}`, and `greeting{tick, from, to, chunk}`, each with `kind`. A
+  transaction covers several ticks, so each item carries the tick it happened at.
 
 ### TerrainPublic
 

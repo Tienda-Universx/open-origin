@@ -138,9 +138,9 @@ describe("Speech", () => {
 
 describe("FeedItem", () => {
   const ITEMS = [
-    { kind: "arrival", being: 4, species: "s1", chunk: [0, -1] },
-    { kind: "death", being: 4, chunk: [MIN_CHUNK, MAX_CHUNK] },
-    { kind: "greeting", from: 4, to: 5, chunk: [3, 3] },
+    { kind: "arrival", tick: 1, being: 4, species: "s1", chunk: [0, -1] },
+    { kind: "death", tick: 9, being: 4, chunk: [MIN_CHUNK, MAX_CHUNK] },
+    { kind: "greeting", tick: 12, from: 4, to: 5, chunk: [3, 3] },
   ];
 
   test("accepts an arrival, a death, and a greeting", () => {
@@ -151,9 +151,10 @@ describe("FeedItem", () => {
     const cases = [
       ...ITEMS.map((item) => ({ ...item, text: "Being 4 greets being 5." })),
       { kind: "speech", from: 4, to: 5, chunk: [3, 3] },
-      { kind: "death", being: 4, chunk: [MAX_CHUNK + 1, 0] },
-      { kind: "death", being: 4, chunk: [0, MIN_CHUNK - 1] },
-      { kind: "greeting", from: 4, chunk: [3, 3] },
+      { kind: "death", tick: 9, being: 4, chunk: [MAX_CHUNK + 1, 0] },
+      { kind: "death", tick: 9, being: 4, chunk: [0, MIN_CHUNK - 1] },
+      { kind: "death", being: 4, chunk: [0, 0] },
+      { kind: "greeting", tick: 12, from: 4, chunk: [3, 3] },
     ];
     expect(cases.map((item) => FeedItem.safeParse(item).success)).toEqual(cases.map(() => false));
   });
