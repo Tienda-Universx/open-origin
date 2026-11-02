@@ -7,8 +7,9 @@ import { createLintHarness, type DeniedGlobals, pluginPaths } from "./lint-harne
  * Proves that each engine purity control fires under packages/engine/src and only there, that each
  * reviewed exception covers exactly its file and its rule, and that the engine's compiler settings
  * reject host globals. It also proves that packages/agents/src shares every purity rule of the
- * engine, with no exception, and has its own import rule (ADR 0023). Every fixture is checked with
- * the repository's own configuration.
+ * engine, with no exception, and has its own import rule (ADR 0023), and that packages/scenarios/src
+ * has its own import rule (ADR 0025). Every fixture is checked with the repository's own
+ * configuration.
  */
 
 // One linter run checks many fixtures; a cold CI runner can exceed Bun's 5-second default.
@@ -734,6 +735,66 @@ const SHARED_PLUGINS = [
   "./packages/engine/lint/global-map.grit",
 ];
 
+/** Starts the diagnostic of the scenarios' import rule. */
+const SCENARIOS_IMPORT_MESSAGE = "packages/scenarios imports only relative paths";
+const SCENARIOS_SRC = "packages/scenarios/src";
+
+/**
+ * The scenarios' import rule (ADR 0025): relative paths and exactly the public entries
+ * `@open-origin/engine` and `@open-origin/agents`. Host modules, other packages, deep paths into
+ * either entry, and lookalikes are rejected under packages/scenarios/src, and nowhere else.
+ */
+describe("packages/scenarios import rule", () => {
+  const ALLOWED = [
+    'import { createWorld, type Command } from "@open-origin/engine";',
+    'import { mindController } from "@open-origin/agents";',
+    'import { Sfc32 } from "./sfc32.ts";',
+    'export { labelSeeds } from "./scenario.ts";',
+    "export const parts = [createWorld, mindController, Sfc32];",
+    "export type Parts = Command;\n",
+  ].join("\n");
+  const REJECTED = [
+    'import { readFileSync } from "node:fs";',
+    'import { serve } from "bun";',
+    'import { parse } from "some-package";',
+    'import { encode } from "@open-origin/protocol/public";',
+    'import { floorDiv } from "@open-origin/engine/src/int.ts";',
+    'import { mind } from "@open-origin/agents/src/brain/mind.ts";',
+    'import { a } from "@open-origin/engines";',
+    'import { b } from "@open-origin/agents-tools";',
+    "export const parts = [readFileSync, serve, parse, encode, floorDiv, mind, a, b];\n",
+  ].join("\n");
+
+  let linted: Diagnostic[] | undefined;
+  function importDiagnostics(): Diagnostic[] {
+    if (linted === undefined) {
+      const { checked, diagnostics } = lintSummary({
+        [`${SCENARIOS_SRC}/allowed.ts`]: ALLOWED,
+        [`${SCENARIOS_SRC}/rejected.ts`]: REJECTED,
+        "packages/scenarios/test/outside.ts": REJECTED,
+      });
+      // Biome linted all three files; a skipped one would pass the two tests that expect nothing.
+      expect(checked).toBe(3);
+      linted = diagnostics.filter(({ category }) => RESTRICTED_IMPORT.includes(category));
+    }
+    return linted;
+  }
+
+  test("rejects every host module, other package, deep path, and lookalike under src", () => {
+    const rejected = importDiagnostics().filter(({ file }) => file.endsWith("src/rejected.ts"));
+    expect(rejected).toHaveLength(8);
+    for (const { text } of rejected) expect(text).toContain(SCENARIOS_IMPORT_MESSAGE);
+  });
+
+  test("allows relative paths and the public entries of the engine and the agents", () => {
+    expect(importDiagnostics().filter(({ file }) => file.endsWith("src/allowed.ts"))).toEqual([]);
+  });
+
+  test("does not apply outside src", () => {
+    expect(importDiagnostics().filter(({ file }) => file.includes("/test/"))).toEqual([]);
+  });
+});
+
 /**
  * packages/agents/src shares the engine's rules with no reviewed exception (ADR 0023): no Math,
  * Map, JSON, or key enumeration at all, and int-math.grit does not apply there. Each path that
@@ -804,10 +865,11 @@ describe("packages/agents/src has no reviewed exception", () => {
     const imports = (CONTROL_OVERRIDES ?? []).filter(
       (override) => override.linter?.rules?.style?.noRestrictedImports !== undefined,
     );
-    expect(imports.map((override) => override.includes)).toEqual(
-      expect.arrayContaining([[`${ENGINE_SRC}/**`], [`${AGENTS_SRC}/**`]]),
-    );
-    expect(imports).toHaveLength(2);
+    expect(imports.map((override) => override.includes)).toEqual([
+      [`${ENGINE_SRC}/**`],
+      [`${AGENTS_SRC}/**`],
+      [`${SCENARIOS_SRC}/**`],
+    ]);
   });
 });
 

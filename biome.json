@@ -199,6 +199,32 @@
       }
     },
     {
+      "includes": ["packages/scenarios/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**",
+                      "!./**",
+                      "!../**",
+                      "!@open-origin/engine",
+                      "!@open-origin/agents"
+                    ],
+                    "message": "packages/scenarios imports only relative paths inside packages/scenarios/src and the public entries `@open-origin/engine` and `@open-origin/agents`, never a path inside them (ADR 0025)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["packages/engine/src/**", "!packages/engine/src/canonical/order.ts"],
       "plugins": ["./packages/engine/lint/key-order.grit"]
     },

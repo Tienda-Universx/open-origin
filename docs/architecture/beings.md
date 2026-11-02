@@ -18,7 +18,7 @@ beside this one, with perception, memory, beliefs, relationships, and speech ([M
 | Contests, incapacity, fuzz, and call counts | `packages/engine/test`: `beings-contest.test.ts`, `beings-fuzz.test.ts` | T4-5b |
 | Cooldowns that an intention adds | `packages/engine/src/beings`: `intention.ts`, `advance.ts` | T4-6 |
 | The brain `utility@1` | `packages/agents/src/brain`: `curves.ts`, `parameters.ts`, `recipes.ts`, `utility.ts` | T4-6 |
-| The preregistered scenario and the calibration | `packages/agents/test/support`: `scenario.ts`, `metrics.ts`; `packages/agents/bench/calibration.ts`; `defaultLife` in `laws.ts` | T4-6 |
+| The preregistered scenario and the calibration | `packages/scenarios/src/scenario.ts` (in the agents test support until T6-2); `packages/agents/test/support/metrics.ts`; `packages/agents/bench/calibration.ts`; `defaultLife` in `laws.ts` | T4-6 |
 | The evaluation: survival, negative controls, scarcity, determinism, observers, and the soak | `packages/agents/test`: `survival.test.ts`, `scarcity.test.ts`, `beings-determinism.test.ts`, and their support; `packages/agents/bench/soak.ts` | T4-7 |
 | The cost: the complexity test, the count of the system's calls, and the scale benchmark | `packages/engine/test/beings-cost.test.ts` and `support/beings-cost.ts`; `packages/agents/bench`: `beings.ts`, `scale.ts` | T4-8 |
 
@@ -651,7 +651,7 @@ The spawn areas, computed with this rule on `worldgen@1` before any law of life 
 | `heldout/5` | 89,380 (8.52%) | 786 | (10, −10) | 9,216 | 901 |
 | `heldout/6` | 83,655 (7.98%) | 736 | (−5, −5) | 9,216 | 1,766 |
 
-`packages/agents/test/support/scenario.ts` builds the scenario of a label by this rule, and
+`packages/scenarios/src/scenario.ts` builds the scenario of a label by this rule, and
 `packages/agents/test/scenario.test.ts` recomputes this table from the terrain alone and pins it.
 
 ### Ecological targets
