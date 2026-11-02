@@ -37,9 +37,9 @@ naming the variable and its rule, never its value.
 | `TICK_RATE_HZ` | `5` | An integer from 1 to 1000, the bounds of the admin contract's `tickRateHz` |
 | `PUBLICATION_BATCH_TICKS` | `5` | F, an integer from 1 to 300, so a batch never spans more than one checkpoint interval |
 | `PUBLIC_ORIGINS` | empty | A comma-separated list of exact `http` or `https` origins |
-| `ALLOWED_HOSTS` | `localhost:<port>` and `<host>:<port>`, with an IPv6 host in brackets | A comma-separated list of `Host` header values |
+| `ALLOWED_HOSTS` | `localhost:<port>` and `<host>:<port>`, with an IPv6 host in brackets | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
 | `MAX_CONNECTIONS` | `1024` | An integer from 1 to 65536 |
-| `MAX_CONNECTIONS_PER_IP` | `16` | An integer from 1 to 65536, at most `MAX_CONNECTIONS` |
+| `MAX_CONNECTIONS_PER_IP` | `16`, or `MAX_CONNECTIONS` when that is lower | An integer from 1 to 65536; when set, at most `MAX_CONNECTIONS`, compared only when both are valid, so a cap at fault is reported alone |
 | `AI_MODE` | `off` | Only `off`: any other value refuses to start until T9 |
 
 Integers are plain decimal text: no sign, fraction, exponent, or leading zero. With `CODESPACES=true`

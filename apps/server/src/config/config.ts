@@ -39,7 +39,10 @@ export type ConfigResult =
 const MAX_TICK_RATE_HZ = 1000;
 /** A batch never spans more than one checkpoint interval of K = 300 ticks (ADR 0007). */
 const MAX_BATCH_TICKS = 300;
+const MAX_PORT = 65_535;
 const MAX_CONNECTIONS = 65_536;
+/** The cap per IP when MAX_CONNECTIONS_PER_IP is unset, unless the global cap is lower. */
+const DEFAULT_PER_IP = 16;
 
 /** A decimal integer from `min` to `max`, read from text: no sign, no fraction, no exponent. */
 function integerIn(min: number, max: number) {
@@ -55,9 +58,20 @@ const OCTET = String.raw`(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)`;
 /** A loopback address: IPv4 127.0.0.0/8 or IPv6 ::1. Names are refused: they resolve elsewhere. */
 const LOOPBACK = new RegExp(String.raw`^(?:127(?:\.${OCTET}){3}|::1)$`);
 
-/** A `Host` header value: a name or an IPv4 address, or a bracketed IPv6 address, and a port. */
+/**
+ * A `Host` header value: a name or an IPv4 address, or a bracketed IPv6 address, and a port, which
+ * group 1 holds.
+ */
 const HOST_HEADER =
-  /^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/;
+  /^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])(?::(\d{1,5}))?$/;
+
+/** Whether `text` is a `Host` header value whose port, when it has one, is from 1 to 65535. */
+function isHostHeader(text: string): boolean {
+  const match = HOST_HEADER.exec(text);
+  if (match === null) return false;
+  const port = match[1];
+  return port === undefined || (Number(port) >= 1 && Number(port) <= MAX_PORT);
+}
 
 /** Whether `text` is exactly an http or https origin: a scheme, a host, a port, and no path. */
 function isOrigin(text: string): boolean {
@@ -86,8 +100,8 @@ const HOST: Variable<string> = {
   rule: "must be a loopback address (127.0.0.0/8 or ::1): an ephemeral server listens only on this machine",
 };
 const PORT: Variable<number> = {
-  schema: integerIn(1, 65_535).default(8080),
-  rule: "must be an integer from 1 to 65535",
+  schema: integerIn(1, MAX_PORT).default(8080),
+  rule: `must be an integer from 1 to ${MAX_PORT}`,
 };
 const TICK_RATE: Variable<number> = {
   schema: integerIn(1, MAX_TICK_RATE_HZ).default(5),
@@ -102,15 +116,19 @@ const ORIGINS: Variable<string[]> = {
   rule: "must be a comma-separated list of http or https origins, such as http://localhost:5173",
 };
 const HOSTS: Variable<string[] | undefined> = {
-  schema: listOf(z.string().regex(HOST_HEADER)).optional(),
-  rule: "must be a comma-separated list of Host header values, such as localhost:8080",
+  // Empty, the list would let no Host header through; unset, it allows the listener's own.
+  schema: listOf(z.string().refine(isHostHeader))
+    .refine((hosts) => hosts.length > 0)
+    .optional(),
+  rule: `must be a non-empty comma-separated list of Host header values, each port from 1 to ${MAX_PORT}, such as localhost:8080`,
 };
 const GLOBAL_CAP: Variable<number> = {
   schema: integerIn(1, MAX_CONNECTIONS).default(1024),
   rule: `must be an integer from 1 to ${MAX_CONNECTIONS}`,
 };
-const PER_IP_CAP: Variable<number> = {
-  schema: integerIn(1, MAX_CONNECTIONS).default(16),
+/** Unset, the cap per IP is DEFAULT_PER_IP, or the global cap when that is lower. */
+const PER_IP_CAP: Variable<number | undefined> = {
+  schema: integerIn(1, MAX_CONNECTIONS).optional(),
   rule: `must be an integer from 1 to ${MAX_CONNECTIONS}`,
 };
 const AI_MODE: Variable<"off"> = {
@@ -128,7 +146,7 @@ class Reader {
   }
 
   /** The value of `name`, or `fallback` after recording that it breaks its rule. */
-  read<T>(name: string, { schema, rule }: Variable<T>, fallback: T): T {
+  read<T, F>(name: string, { schema, rule }: Variable<T>, fallback: F): T | F {
     const result = schema.safeParse(this.#env[name]);
     if (result.success) return result.data;
     this.errors.push(`${name} ${rule}`);
@@ -140,6 +158,20 @@ class Reader {
 function defaultAllowedHosts(host: string, port: number): string[] {
   const address = host.includes(":") ? `[${host}]` : host;
   return [`localhost:${port}`, `${address}:${port}`];
+}
+
+/**
+ * The connection caps, or undefined when one of them is at fault. A cap per IP that was set must
+ * not exceed the global cap; they are compared only when both were read, so a cap at fault reports
+ * itself alone. Unset, the cap per IP is DEFAULT_PER_IP, or the global cap when that is lower, so
+ * MAX_CONNECTIONS alone is never refused for the default of its neighbor.
+ */
+function capsOf(reader: Reader, global: number | undefined, perIp: number | undefined) {
+  if (global === undefined) return undefined;
+  if (perIp === undefined) return { global, perIp: Math.min(DEFAULT_PER_IP, global) };
+  if (perIp <= global) return { global, perIp };
+  reader.errors.push("MAX_CONNECTIONS_PER_IP must not exceed MAX_CONNECTIONS");
+  return undefined;
 }
 
 /** What the operator must know at start, from the environment. */
@@ -163,11 +195,14 @@ export function parseConfig(env: Environment): ConfigResult {
   const publicationBatchTicks = reader.read("PUBLICATION_BATCH_TICKS", BATCH_TICKS, 1);
   const publicOrigins = reader.read("PUBLIC_ORIGINS", ORIGINS, []);
   const allowedHosts = reader.read("ALLOWED_HOSTS", HOSTS, []);
-  const global = reader.read("MAX_CONNECTIONS", GLOBAL_CAP, 1);
-  const perIp = reader.read("MAX_CONNECTIONS_PER_IP", PER_IP_CAP, 1);
+  const global = reader.read("MAX_CONNECTIONS", GLOBAL_CAP, undefined);
+  const perIp = reader.read("MAX_CONNECTIONS_PER_IP", PER_IP_CAP, undefined);
   const aiMode = reader.read("AI_MODE", AI_MODE, "off");
-  if (perIp > global) reader.errors.push("MAX_CONNECTIONS_PER_IP must not exceed MAX_CONNECTIONS");
-  if (reader.errors.length > 0) return { ok: false, errors: Object.freeze(reader.errors) };
+  const connections = capsOf(reader, global, perIp);
+  // A cap at fault leaves no caps, and an error that names it.
+  if (reader.errors.length > 0 || connections === undefined) {
+    return { ok: false, errors: Object.freeze(reader.errors) };
+  }
   const config: Config = Object.freeze({
     durability,
     host,
@@ -176,7 +211,7 @@ export function parseConfig(env: Environment): ConfigResult {
     publicationBatchTicks,
     publicOrigins: Object.freeze(publicOrigins),
     allowedHosts: Object.freeze(allowedHosts ?? defaultAllowedHosts(host, port)),
-    connections: Object.freeze({ global, perIp }),
+    connections: Object.freeze(connections),
     aiMode,
   });
   return { ok: true, config, warnings: Object.freeze(warningsOf(env)) };

@@ -88,8 +88,6 @@ describe("parseConfig", () => {
   });
 
   test("bounds every number, and accepts each bound itself", () => {
-    // The caps are read with both at their bound, so the cap per IP never exceeds the global one.
-    const caps = { MAX_CONNECTIONS: "65536", MAX_CONNECTIONS_PER_IP: "1" };
     const bounds: [string, number, number][] = [
       ["OPEN_ORIGIN_PORT", 1, 65_535],
       ["TICK_RATE_HZ", 1, 1000],
@@ -98,10 +96,12 @@ describe("parseConfig", () => {
       ["MAX_CONNECTIONS_PER_IP", 1, 65_536],
     ];
     for (const [name, low, high] of bounds) {
+      // Each variable is read alone, with its neighbors at their defaults, except that the cap per
+      // IP is read under the highest global cap, which its own highest bound must not exceed.
       const env = (text: string) =>
-        name === "MAX_CONNECTIONS"
-          ? { ...EPHEMERAL, MAX_CONNECTIONS_PER_IP: "1", [name]: text }
-          : { ...EPHEMERAL, ...caps, [name]: text };
+        name === "MAX_CONNECTIONS_PER_IP"
+          ? { ...EPHEMERAL, MAX_CONNECTIONS: "65536", [name]: text }
+          : { ...EPHEMERAL, [name]: text };
       expect(configOf(env(String(low)))).toBeDefined();
       expect(configOf(env(String(high)))).toBeDefined();
       const rule = `${name} must be an integer from ${low} to ${high}`;
@@ -115,13 +115,45 @@ describe("parseConfig", () => {
   });
 
   test("reads both connection caps and keeps the cap per IP within the global one", () => {
+    const exceeds = "MAX_CONNECTIONS_PER_IP must not exceed MAX_CONNECTIONS";
     const caps = { ...EPHEMERAL, MAX_CONNECTIONS: "64", MAX_CONNECTIONS_PER_IP: "64" };
     expect(configOf(caps).connections).toEqual({ global: 64, perIp: 64 });
-    expect(errorsOf({ ...caps, MAX_CONNECTIONS_PER_IP: "65" })).toEqual([
-      "MAX_CONNECTIONS_PER_IP must not exceed MAX_CONNECTIONS",
-    ]);
+    expect(errorsOf({ ...caps, MAX_CONNECTIONS_PER_IP: "65" })).toEqual([exceeds]);
     expect(errorsOf({ ...EPHEMERAL, MAX_CONNECTIONS_PER_IP: "0" })).toEqual([
       "MAX_CONNECTIONS_PER_IP must be an integer from 1 to 65536",
+    ]);
+    // A cap per IP that is set is held to the global cap, its default of 1024 included.
+    expect(configOf({ ...EPHEMERAL, MAX_CONNECTIONS_PER_IP: "1024" }).connections).toEqual({
+      global: 1024,
+      perIp: 1024,
+    });
+    expect(errorsOf({ ...EPHEMERAL, MAX_CONNECTIONS_PER_IP: "1025" })).toEqual([exceeds]);
+  });
+
+  test("defaults the cap per IP to 16, or to a lower global cap, so it never exceeds it", () => {
+    expect(configOf({ ...EPHEMERAL, MAX_CONNECTIONS: "100" }).connections).toEqual({
+      global: 100,
+      perIp: 16,
+    });
+    expect(configOf({ ...EPHEMERAL, MAX_CONNECTIONS: "16" }).connections).toEqual({
+      global: 16,
+      perIp: 16,
+    });
+    expect(configOf({ ...EPHEMERAL, MAX_CONNECTIONS: "8" }).connections).toEqual({
+      global: 8,
+      perIp: 8,
+    });
+  });
+
+  test("compares the caps only when both were read, so a cap at fault reports itself alone", () => {
+    const globalRule = "MAX_CONNECTIONS must be an integer from 1 to 65536";
+    const perIpRule = "MAX_CONNECTIONS_PER_IP must be an integer from 1 to 65536";
+    expect(errorsOf({ ...EPHEMERAL, MAX_CONNECTIONS: "0" })).toEqual([globalRule]);
+    expect(errorsOf({ ...EPHEMERAL, MAX_CONNECTIONS: "x", MAX_CONNECTIONS_PER_IP: "64" })).toEqual([
+      globalRule,
+    ]);
+    expect(errorsOf({ ...EPHEMERAL, MAX_CONNECTIONS: "8", MAX_CONNECTIONS_PER_IP: "x" })).toEqual([
+      perIpRule,
     ]);
   });
 
@@ -140,10 +172,19 @@ describe("parseConfig", () => {
       expect(errorsOf({ ...EPHEMERAL, PUBLIC_ORIGINS: origins })).toEqual([originRule]);
     }
     const hostRule =
-      "ALLOWED_HOSTS must be a comma-separated list of Host header values, such as localhost:8080";
+      "ALLOWED_HOSTS must be a non-empty comma-separated list of Host header values, each port from 1 to 65535, such as localhost:8080";
     for (const hosts of ["http://x.org", "x.org/a", "a b", "-x.org", "x.org:"]) {
       expect(errorsOf({ ...EPHEMERAL, ALLOWED_HOSTS: hosts })).toEqual([hostRule]);
     }
+    // Empty, the list would let no Host header through: unset, it allows the listener's own.
+    for (const hosts of ["", "  ", " , "]) {
+      expect(errorsOf({ ...EPHEMERAL, ALLOWED_HOSTS: hosts })).toEqual([hostRule]);
+    }
+    for (const hosts of ["x.org:65536", "x.org:99999", "[::1]:70000", "x.org:0"]) {
+      expect(errorsOf({ ...EPHEMERAL, ALLOWED_HOSTS: hosts })).toEqual([hostRule]);
+    }
+    const bounds = configOf({ ...EPHEMERAL, ALLOWED_HOSTS: "x.org:1,x.org:65535,[::1]:65535" });
+    expect(bounds.allowedHosts).toEqual(["x.org:1", "x.org:65535", "[::1]:65535"]);
   });
 
   test("reports every variable at fault at once and never repeats a value", () => {
