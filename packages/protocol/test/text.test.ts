@@ -88,7 +88,12 @@ describe("PlainText accepts", () => {
 });
 
 describe("PlainText rejects", () => {
-  test.each(NAMED)("U+%s inside text", (point) => {
+  const labeled = NAMED.map(([point, name]) => {
+    const label = `U+${point.toString(16).toUpperCase().padStart(4, "0")} ${name}`;
+    return [label, point] as const;
+  });
+
+  test.each(labeled)("%s inside text", (_, point) => {
     expect(plainTextProblem(`a${char(point)}b`)).toBe("forbidden");
     expect(PlainText.safeParse(`a${char(point)}b`).success).toBe(false);
   });
