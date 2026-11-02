@@ -3,13 +3,13 @@
 `apps/server` runs the public universe in one Bun process. Its world plane steps the engine at a fixed
 rate, makes each tick durable before it publishes it, and hands the rest of the server only frozen
 published records. [ADR 0025](../decisions/0025-real-time-world-host.md) records the design and why;
-this document describes what the code implements as of T6-4: the configuration, the scheduler, the
-world host and its sources, the journal port, the publication gate, and their composition. The
-projection, the presentation plane, the transport, and the entry point arrive in later batches.
+this document describes what the code implements as of T6-5: the configuration, the scheduler, the
+world host and its sources, the C0 projection, the journal port, the publication gate, and their
+composition. The presentation plane, the transport, and the entry point arrive in later batches.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
-`scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, and `compose`), and
-`tests/repo/server-boundaries.test.ts`.
+`scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`, and
+`leak`), and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -17,6 +17,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 |---|---|---|
 | `src/config/` | — | `parseConfig`: the environment, parsed and deep-frozen |
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
+| `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, and `clock.ts`: the C0 projection of a world of beings |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane |
 
@@ -94,15 +95,16 @@ without a tick or an order. Nothing else enters the world.
 
 1. it stamps the source's commands with `applyTick` = the tick and `seq` from 0;
 2. it calls the engine's `step`, and at every K-th tick (K = 300) `encodeSnapshot`;
-3. it hands the gate the tick's record (`tick`, `checksum`, every command it gave, rejected ones
+3. it asks its `Projector` for the tick's published record, read from the world after the step;
+4. it hands the gate the tick's record (`tick`, `checksum`, every command it gave, rejected ones
    included, and every event), its published record, and the checkpoint when there is one.
 
 The host reads nothing else and changes nothing in what `step` computes: over the `mind@1` subject
-of T5 and its script it reproduces the frozen trail of the determinism suite (`edb4c527…`), and over
-the default scenario every checksum of a direct step loop.
+of T5 and its script, projected, it reproduces the frozen trail of the determinism suite
+(`edb4c527…`), and over the default scenario every checksum of a direct step loop.
 
-When the source's `commandsAt`, `step`, or the snapshot throws, the host has the gate flush the ticks
-it holds, never the faulted one, and halts. A halt records its code, the first tick the world did not
+When the source's `commandsAt`, `step`, the snapshot, or the projection throws, the host has the
+gate flush the ticks it holds, never the faulted one, and halts. A halt records its code, the first tick the world did not
 execute, and, for a fault that is not an engine error, its `cause`:
 
 | Code | Cause |
@@ -114,6 +116,51 @@ execute, and, for a fault that is not an engine error, its `cause`:
 
 The first halt keeps its reason. The host records it before the flush, so a halt the flush itself
 causes, from a journal that fails at once, does not replace it.
+
+## Projection
+
+`BeingsProjection` is the C0 projection of a world of beings@1 or beings@2
+([ADR 0026](../decisions/0026-public-protocol-v1.md#projections-and-classification)). Composition
+builds it over the source's world, and it runs once per executed tick in the world plane, whoever
+observes. It reads the world only through `readView`, whose reads are detached copies, so a
+projection pass changes neither the state root nor the trail of checksums. Each tick it publishes
+`{tick, clock, chunks, speech, feed}`, frozen at every level, and only C0:
+
+| Member | What it holds |
+|---|---|
+| `clock` | `{tick, day, dayPermille}` from worldgen's calendar over the world's genesis: the day, and ⌊1000 · second of the day / day length⌋. The seconds of a tick and the day's length stay in the world plane |
+| `chunks` | `{at, v, upsert, gone}` for each chunk whose C0 content changed: `v` is the tick, `upsert` the records whose bytes changed or that entered it, by id, and `gone` the ids that left it |
+| `speech` | `{at, speech: {tick, speaker, to, act, text}}` for every `speech.uttered`, in the speaker's chunk, with the text of speech@1's `renderAct` |
+| `feed` | `arrival` for every `being.spawned`, `death` for every `being.died`, and `greeting` for every `greet` act, each with its tick and chunk and no text |
+
+- **Records.** `BEING_PUBLIC_SOURCES` maps each field of `BeingPublic` to the member of
+  `BEING_CLASSES` it reads: `id`, `species`, `stage`, `born`, `cell`, the activity's `kind`, a
+  talk's `to` and `act`, and `dir`, the direction of a walk's current step, the digit of `dirs` at
+  `done`. A record is built field by field and encoded as JSON in the schema's order.
+- **Versions.** The projection keeps the encoded record it last emitted for each being, by chunk.
+  For each chunk the step changed it encodes the records of its beings again and emits only those
+  whose bytes differ, and the ids that left, so engine dirtiness that changes nothing public, a
+  being's needs or mind, emits nothing. A chunk with no such change is left out. Its work per tick
+  grows with the beings of the changed chunks, and its memory with the beings of the world; boot
+  reads every chunk once.
+- **Checks.** Every record that goes out, and every record boot holds, is checked by the protocol's
+  strict `BeingPublic`; one that fails throws, naming the being and the fields, never their values,
+  and the host halts. Each event's payload is read through a schema of the members it uses.
+- **Events.** `C0_EVENT_DECISIONS` holds what the projection does with each event type the registry
+  classifies C0: `being.spawned`, `being.died`, and `speech.uttered` are projected;
+  `being.started` is excluded, since the kind of activity it reports is in the being's record.
+  Events of other classes are never read.
+- **Plain text.** A rendered text that is not `PlainText` is left out and counted in
+  `omittedSpeech` (C3); the greeting of a `greet` still reaches the feed. The admin status does not
+  carry the count yet.
+
+`projection.test.ts` checks the map against the registry both ways, the decision for every C0
+event type, versions that move only on C0 changes, a crossing that leaves one chunk and enters the
+other in the same tick, the clock against the calendar, and that a projection pass changes no state
+root. `leak.test.ts` runs the `mind@1` subject, the default
+scenario, and a canary world through the host and the gate, reads every published tick back with
+the protocol's strict schemas, and finds in its text no taint, seed, terrain seed, seal, checksum,
+state root, or canary planted in C1 and C3 data.
 
 ## Journal
 
@@ -140,9 +187,9 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
   `OrderedJournal` asserts one append in flight and batches whose ticks follow on from the last;
   a violation throws before the journal sees the batch, and the gate takes it as a failure.
 - **Publication.** On each acknowledgement the gate publishes exactly `(P, C]`, in order. Listeners
-  receive frozen `PublishedTick` records, which carry only `{ tick }` until T6-5 adds the C0
-  projection. Their return values are ignored; their exceptions and rejected promises are counted
-  as `listenerFaults` and never stop publication.
+  receive the frozen `PublishedTick` records of the projection. Their return values are ignored;
+  their exceptions and rejected promises are counted as `listenerFaults` and never stop
+  publication.
 - **Flush.** `flush` appends what is left as partial batches and resolves once all of it is
   committed and published, or once the journal failed; it never rejects.
 - **Failure.** When an append rejects or throws, the gate fails: it keeps what the journal threw or
@@ -155,8 +202,9 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
 
 ## Composition
 
-`compose(config, deps)` wires a source (the default scenario unless given), the gate (over the
-ephemeral journal unless given), the host, and the scheduler, and returns:
+`compose(config, deps)` wires a source (the default scenario unless given), the projection of its
+world (`BeingsProjection` unless given), the gate (over the ephemeral journal unless given), the
+host, and the scheduler, and returns:
 
 | Member | What it does |
 |---|---|
@@ -168,11 +216,13 @@ ephemeral journal unless given), the host, and the scheduler, and returns:
 | `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |
 
 `deps` carries the clock and the timer, which the entry point of T6-7 takes from `src/adapters/`,
-and, for tests, the journal, the source, and K. A journal failure halts the host with
-`journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P` from the gate; the state is `halted` once the
-host halted or the journal failed, and otherwise the scheduler's (`journalStall` is `stalled`).
-`projectionMicros` and `fanOutMicros` are 0 and `connections` is 0 until the planes that measure
-them exist.
+and, for tests, the journal, the source, the projection of its world, and K. A journal failure
+halts the host with `journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P`
+from the gate; the state is `halted` once the host halted or the journal failed, and otherwise the
+scheduler's (`journalStall` is `stalled`). `projectionMicros` holds the percentiles of each
+projection's duration on the injected clock over the last 1,024 ticks; `stepMicros` covers the
+whole tick, the projection included. `fanOutMicros` and `connections` are 0 until the planes that
+measure them exist.
 
 `rejectionPolicy` is a pure function: with `AI_MODE=off` an unhandled rejection halts the world,
 because no code of the world awaits anything, and async work in a brain would be a wall-clock
@@ -206,5 +256,6 @@ reader rejects, in `packages/scenarios/src` and `packages/protocol/src`, a relat
 `src`, a type-level `import()`, a `require()` or `import.meta.require()`, a computed specifier, and a
 triple-slash reference directive, which their Biome rules cannot see.
 
-`published.ts` imports nothing, so a type-only import of it gives the presentation plane no path to
-the engine: in T6-4 a published tick is `{ tick }`, a number, not the engine's `Tick` type.
+`published.ts` imports only types of `@open-origin/protocol/public`, so a type-only import of it gives
+the presentation plane no path to the engine: a published tick holds protocol records and numbers,
+never an engine type.

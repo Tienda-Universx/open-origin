@@ -36,6 +36,14 @@ The same registry classifies a chunk of the beings layer and the world's global 
 `beings-world-classes.test.ts` checks that both name exactly the members their validators accept,
 under beings@1 and beings@2.
 
+The clock follows the same line between a law's effect and its parameters
+([0026](../decisions/0026-public-protocol-v1.md#the-authoritative-clock)):
+
+| Field | Class | Why |
+|---|---|---|
+| `clock.tick`, `clock.day`, `clock.dayPermille` | C0 | The shared tick and the observable effect of the day's law, computed in the world plane from the world's genesis |
+| `simSecondsPerTick`, the day's length | C3 | Law parameters: they stay in the world plane, and only the admin status carries `simSecondsPerTick` |
+
 ## Access by interface
 
 | Interface | Classes (plan §E.6) |

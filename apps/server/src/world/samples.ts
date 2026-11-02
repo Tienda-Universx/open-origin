@@ -3,6 +3,9 @@
  * `capacity` values, in the order they were added.
  */
 
+/** The samples, one per tick, that the percentiles of a duration read. */
+export const TICK_SAMPLES = 1024;
+
 /** The 50th, 95th, and 99th percentiles of a window, by nearest rank; 0 when it is empty. */
 export type Percentiles = { readonly p50: number; readonly p95: number; readonly p99: number };
 

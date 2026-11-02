@@ -13,8 +13,9 @@ import {
   type TickRecord,
 } from "../src/world/journal.ts";
 import { type Executed, PublicationGate } from "../src/world/publication.ts";
-import { type PublishedTick, publishedTick } from "../src/world/published.ts";
+import type { PublishedTick } from "../src/world/published.ts";
 import { ControlledJournal, settle } from "./support/journals.ts";
+import { publishedAt } from "./support/projections.ts";
 
 /** The record of `tick`, with a checksum that names it. */
 function recordOf(tick: number): TickRecord {
@@ -23,7 +24,7 @@ function recordOf(tick: number): TickRecord {
 
 /** What the host hands the gate for `tick`, with a checkpoint when `checkpoint` is given. */
 function executed(tick: number, checkpoint?: string): Executed {
-  const entry = { record: recordOf(tick), published: publishedTick(tick) };
+  const entry = { record: recordOf(tick), published: publishedAt(tick) };
   return checkpoint === undefined ? entry : { ...entry, checkpoint };
 }
 
@@ -285,7 +286,7 @@ describe("PublicationGate", () => {
     journal.ack();
     await settle();
     expect(published).toEqual([1, 2, 3, 4]);
-    expect(received).toEqual([publishedTick(1), publishedTick(2)]);
+    expect(received).toEqual([publishedAt(1), publishedAt(2)]);
     expect(received.every((tick) => Object.isFrozen(tick))).toBe(true);
     // Two broken listeners, four ticks each.
     expect(gate.listenerFaults).toBe(8);

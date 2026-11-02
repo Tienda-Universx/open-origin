@@ -1,19 +1,22 @@
 /**
- * The composition root of the world plane (ADR 0025): it wires the source, the host, the
- * publication gate, the journal, and the scheduler, and hands the rest of the server only what the
- * presentation plane may hold: a subscription to frozen published ticks. The entry point (T6-7)
- * passes the real clock and timer; tests pass fake ones, and may replace the journal, the source,
- * and K. The planes receive their settings as parameters: only this module and the entry point
- * read the configuration.
+ * The composition root of the world plane (ADR 0025): it wires the source, the C0 projection of
+ * its world, the host, the publication gate, the journal, and the scheduler, and hands the rest of
+ * the server only what the presentation plane may hold: a subscription to frozen published ticks.
+ * The entry point (T6-7) passes the real clock and timer; tests
+ * pass fake ones, and may replace the journal, the source, its projection, and K. The planes
+ * receive their settings as parameters: only this module and the entry point read the
+ * configuration.
  */
-import { readView } from "@open-origin/engine";
+import { readView, type World } from "@open-origin/engine";
 import type { ServerStatus } from "@open-origin/protocol/admin";
 import type { Config } from "./config/config.ts";
-import { type Halt, WorldHost } from "./world/host.ts";
+import { BeingsProjection, type WorldProjection } from "./projection/projection.ts";
+import { type Halt, type Projector, WorldHost } from "./world/host.ts";
 import { EphemeralJournal, type TickJournal } from "./world/journal.ts";
 import { PublicationGate } from "./world/publication.ts";
 import type { PublishedListener } from "./world/published.ts";
 import { rejectionPolicy } from "./world/rejection.ts";
+import { SampleWindow, TICK_SAMPLES } from "./world/samples.ts";
 import { FixedRateScheduler, type Hold, type SchedulerState } from "./world/scheduler.ts";
 import { ScenarioSource, type WorldSource } from "./world/source.ts";
 import type { Clock, Timer } from "./world/time.ts";
@@ -26,6 +29,8 @@ export type WorldPlaneDeps = {
   readonly journal?: TickJournal;
   /** The default world of T5 unless given. */
   readonly source?: WorldSource;
+  /** The projection of the source's world: the C0 projection of a world of beings unless given. */
+  readonly projectionOf?: (world: World) => WorldProjection;
   /** K, the ticks between checkpoints: 300 unless given. */
   readonly checkpointTicks?: number;
 };
@@ -49,7 +54,7 @@ export type WorldPlane = {
   halted(): Halt | undefined;
 };
 
-/** Durations the world plane does not measure: projection arrives in T6-5, fan-out in T6-6a. */
+/** Durations the world plane does not measure: the fan-out arrives in T6-6a. */
 const UNMEASURED = Object.freeze({ p50: 0, p95: 0, p99: 0 });
 
 /** The public state of a scheduler's state. */
@@ -66,18 +71,40 @@ type Parts = {
   readonly host: WorldHost;
   readonly scheduler: FixedRateScheduler;
   readonly hold: () => Hold | undefined;
+  /** How long the projection of each of the last ticks took, in microseconds (C3). */
+  readonly projections: SampleWindow;
 };
 
-/** The source, gate, host, and scheduler of `config`, wired to one another. */
+/** The C0 projection of a world of beings. */
+const beingsProjection = (world: World): WorldProjection => new BeingsProjection(world);
+
+/** `projection`, whose every call is timed on `clock` into `samples`. */
+function timed(projection: Projector, clock: Clock, samples: SampleWindow): Projector {
+  return {
+    project: (result) => {
+      const start = clock.now();
+      try {
+        return projection.project(result);
+      } finally {
+        samples.add(clock.now() - start);
+      }
+    },
+  };
+}
+
+/** The source, projection, gate, host, and scheduler of `config`, wired to one another. */
 function wire(config: Config, deps: WorldPlaneDeps): Parts {
   const source = deps.source ?? new ScenarioSource();
+  const projection = (deps.projectionOf ?? beingsProjection)(source.world);
+  const projections = new SampleWindow(TICK_SAMPLES);
+  const projector = timed(projection, deps.clock, projections);
   const gate = new PublicationGate({
     journal: deps.journal ?? new EphemeralJournal(),
     batchTicks: config.publicationBatchTicks,
     boot: readView(source.world).tick,
     onChange: () => afterJournal(),
   });
-  const host = new WorldHost({ source, gate, ...optionalK(deps.checkpointTicks) });
+  const host = new WorldHost({ source, projector, gate, ...optionalK(deps.checkpointTicks) });
   const hold = (): Hold | undefined => {
     if (host.halted !== undefined || gate.failed) return "halted";
     return gate.stalled() ? "journalStall" : undefined;
@@ -94,11 +121,12 @@ function wire(config: Config, deps: WorldPlaneDeps): Parts {
     if (gate.failed) host.halt("journal_failed", gate.failure);
     scheduler.wake();
   }
-  return { gate, host, scheduler, hold };
+  return { gate, host, scheduler, hold, projections };
 }
 
 /** The status of the wired world plane of `config`. */
-function statusOf(config: Config, { gate, host, scheduler, hold }: Parts): ServerStatus {
+function statusOf(config: Config, parts: Parts): ServerStatus {
+  const { gate, host, scheduler, hold, projections } = parts;
   const metrics = scheduler.metrics();
   return {
     executedTick: gate.executed,
@@ -110,7 +138,7 @@ function statusOf(config: Config, { gate, host, scheduler, hold }: Parts): Serve
     state: hold() === "halted" ? "halted" : STATES[metrics.state],
     latenessMicros: metrics.latenessMicros,
     stepMicros: metrics.stepMicros,
-    projectionMicros: UNMEASURED,
+    projectionMicros: projections.percentiles(),
     fanOutMicros: UNMEASURED,
     shortfallTicks: metrics.shortfallTicks,
     rebases: metrics.rebases,

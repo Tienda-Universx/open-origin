@@ -16,7 +16,8 @@ import {
   subjectScript,
 } from "../../../packages/agents/test/support/mind-subject.ts";
 import type { SuiteRuleset } from "../../../packages/engine/test/support/determinism-records.ts";
-import { type Halt, WorldHost } from "../src/world/host.ts";
+import { BeingsProjection } from "../src/projection/projection.ts";
+import { type Halt, type Projector, WorldHost } from "../src/world/host.ts";
 import type { JournalBatch, TickJournal, TickRecord } from "../src/world/journal.ts";
 import { PublicationGate } from "../src/world/publication.ts";
 import {
@@ -27,6 +28,7 @@ import {
 } from "../src/world/source.ts";
 import { countingWorld } from "./support/counting-world.ts";
 import { ControlledJournal, RecordingJournal, settle } from "./support/journals.ts";
+import { emptyProjection } from "./support/projections.ts";
 
 /**
  * The digest of every checksum of the subject's reference run, as
@@ -34,13 +36,26 @@ import { ControlledJournal, RecordingJournal, settle } from "./support/journals.
  */
 const REFERENCE_TRAIL = "edb4c5271fcb44bc544959c8c6ee62d7";
 
+type HostOverOptions = {
+  readonly journal?: TickJournal;
+  readonly batchTicks?: number;
+  readonly checkpointTicks?: number;
+  /** The projection of a world without beings unless given. */
+  readonly projector?: Projector;
+};
+
 /** A host over `source` with a gate booted at tick 0 and `journal`. */
 function hostOver(
   source: WorldSource,
-  { journal = new RecordingJournal() as TickJournal, batchTicks = 5, checkpointTicks = 300 } = {},
+  {
+    journal = new RecordingJournal(),
+    batchTicks = 5,
+    checkpointTicks = 300,
+    projector = emptyProjection(source.world),
+  }: HostOverOptions = {},
 ) {
   const gate = new PublicationGate({ journal, batchTicks, boot: 0 });
-  const host = new WorldHost({ source, gate, checkpointTicks });
+  const host = new WorldHost({ source, projector, gate, checkpointTicks });
   return { gate, host };
 }
 
@@ -60,7 +75,8 @@ describe("WorldHost", () => {
     // mindWorld takes the determinism suite's ruleset type, as mind-determinism.test.ts passes it.
     const world = mindWorld(SUBJECT_SEEDS[0], mindRuleset() as unknown as SuiteRuleset, false);
     const journal = new RecordingJournal();
-    const { gate, host } = hostOver(new ScriptedSource(world, script), { journal });
+    const projector = new BeingsProjection(world);
+    const { gate, host } = hostOver(new ScriptedSource(world, script), { journal, projector });
     const published: number[] = [];
     gate.subscribe(({ tick }) => {
       published.push(tick);
@@ -86,7 +102,8 @@ describe("WorldHost", () => {
     const source = new ScenarioSource();
     expect(source.label).toBe("open-origin/t5/default");
     const journal = new RecordingJournal();
-    const { gate, host } = hostOver(source, { journal });
+    const projector = new BeingsProjection(source.world);
+    const { gate, host } = hostOver(source, { journal, projector });
     for (let tick = 1; tick <= TICKS; tick += 1) host.stepOnce();
     await gate.flush();
     const records = recordsOf(journal.batches);
@@ -175,6 +192,33 @@ describe("WorldHost", () => {
     expect(journal.batches).toHaveLength(2);
   });
 
+  test("halts on a projection that throws, and never publishes the tick it could not project", async () => {
+    const journal = new RecordingJournal();
+    const source = new ScriptedSource(countingWorld(1000), []);
+    const empty = emptyProjection(source.world);
+    const projector: Projector = {
+      project: (result) => {
+        if (result.tick === 3) throw new Error("a planted projection fault");
+        return empty.project(result);
+      },
+    };
+    const { gate, host } = hostOver(source, { journal, projector });
+    const published: number[] = [];
+    gate.subscribe(({ tick }) => {
+      published.push(tick);
+    });
+    for (let tick = 1; tick <= 3; tick += 1) host.stepOnce();
+    await settle();
+    expect(host.halted).toEqual({
+      code: "unexpected_error",
+      tick: 3,
+      cause: { message: "a planted projection fault" },
+    });
+    expect(host.executedTick).toBe(2);
+    expect(recordsOf(journal.batches).map(({ tick }) => tick)).toEqual([1, 2]);
+    expect(published).toEqual([1, 2]);
+  });
+
   test("records a halt before its flush, so a halt the flush causes keeps the first reason", () => {
     const seen: (Halt | undefined)[] = [];
     let host: WorldHost | undefined;
@@ -193,7 +237,8 @@ describe("WorldHost", () => {
         seen.push(host?.halted);
       },
     });
-    host = new WorldHost({ source: new ScriptedSource(countingWorld(3), []), gate });
+    const source = new ScriptedSource(countingWorld(3), []);
+    host = new WorldHost({ source, projector: emptyProjection(source.world), gate });
     host.stepOnce();
     host.stepOnce();
     // Tick 3 faults: the halt flushes ticks 1 and 2, and the journal throws at once.
@@ -219,7 +264,8 @@ describe("WorldHost", () => {
   test("refuses a gate that did not boot at the world's tick, and K below one", () => {
     const source = new ScriptedSource(countingWorld(1000), []);
     const gate = new PublicationGate({ journal: new RecordingJournal(), batchTicks: 5, boot: 3 });
-    expect(() => new WorldHost({ source, gate })).toThrow(
+    const projector = emptyProjection(source.world);
+    expect(() => new WorldHost({ source, projector, gate })).toThrow(
       "the gate booted at tick 3, not at the world's 0",
     );
     expect(() => hostOver(source, { checkpointTicks: 0 })).toThrow(RangeError);
