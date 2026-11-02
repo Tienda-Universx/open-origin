@@ -44,7 +44,10 @@ function valueAt(text: string, index: number): number {
   return VALUES[text.charCodeAt(index)] ?? -1;
 }
 
-/** How many padding characters end `text`: 0, 1, or 2; 3 for a text that cannot be canonical. */
+/**
+ * How many padding characters end `text`, counting at most 2: 0, 1, or 2. A third one before them
+ * is read as a data character, which is outside the alphabet, so `groupAt` rejects the text.
+ */
 function padding(text: string): number {
   if (!text.endsWith(PAD)) return 0;
   return text.endsWith(PAD + PAD) ? 2 : 1;
