@@ -8,7 +8,8 @@ world host and its sources, the journal port, the publication gate, and their co
 projection, the presentation plane, the transport, and the entry point arrive in later batches.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
-`scheduler`, `adapters`, `publication`, `host`, `rejection`, and `compose`).
+`scheduler`, `adapters`, `publication`, `host`, `rejection`, and `compose`), and
+`tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -157,3 +158,28 @@ them exist.
 `rejectionPolicy` is a pure function: with `AI_MODE=off` an unhandled rejection halts the world,
 because no code of the world awaits anything, and async work in a brain would be a wall-clock
 channel. T6-7's entry point installs the process handler that calls `unhandledRejection`.
+
+## The boundary
+
+`tests/repo/server-boundaries.ts` checks the rules of ADR 0025 on the transitive import graph of
+`src/`: a rule holds for every module an import reaches through any chain, type-only imports
+included.
+
+| Rule | What it rejects |
+|---|---|
+| 1 | A module outside `presentation/` and `transport/`, other than `compose.ts` and `main.ts`, that reaches either of them |
+| 2 | A module of `presentation/` or `transport/` that reaches anything but `@open-origin/protocol/*`, those two folders, and `world/published.ts` through a type-only import |
+| 3 | A module of `world/` or `projection/` that reaches `bun` or `bun:*`, or names a WebSocket, or reaches a module outside those folders that does |
+| 4 | A module other than `compose.ts`, `main.ts`, and those of `config/` that reaches `config/` |
+
+A type-only import is an `import type` or `export type` statement or a `typeof import("…")`; an
+import whose every specifier carries an inline `type` is still a runtime import. Every relative
+specifier must name a module of `src/` with its extension; a path that leaves `src/`, the server's
+own package name, and a computed specifier are rejected. The scan is lexical, so a string that reads
+like an import or names a WebSocket counts. Until `presentation/` and `transport/` exist, each rule
+is proved on planted trees whose legal version passes. The same reader rejects, in
+`packages/scenarios/src` and `packages/protocol/src`, a relative path that leaves `src`, a
+type-level `import()`, and a computed specifier, which their Biome rules cannot see.
+
+`published.ts` imports nothing, so a type-only import of it gives the presentation plane no path to
+the engine: in T6-4 a published tick is `{ tick }`, a number, not the engine's `Tick` type.
