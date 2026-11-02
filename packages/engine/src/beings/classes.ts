@@ -2,10 +2,10 @@
  * The classification registry of beings@2 (ADR 0008, ADR 0024, ADR 0026; docs/architecture/mind.md
  * "Classification"): the class of every member of a being, nested ones included, the records of
  * its mind among them, of a chunk and of the global value, of every event the beings layer emits,
- * and of every command it handles. C0
- * is what an observer inside the world could see, C1 what is internal to an inhabitant and may
- * reach the inhabitant itself, and C3 what only operations and research may read: taints,
- * exposure, the kind `external`, and reference truth. Nothing classified C3 ever reaches a brain.
+ * and of every command it handles. C0 is what an observer inside the world could see, C1 what is
+ * internal to an inhabitant and may reach the inhabitant itself, and C3 what only operations and
+ * research may read: taints, exposure, the kind `external`, and reference truth. Nothing
+ * classified C3 ever reaches a brain.
  *
  * The senses of beings@2 are built from it by allowlist: `copySensed` copies only the members it
  * marks as sensed, and below them only what it classifies and does not classify C3, so a member

@@ -104,8 +104,8 @@ of T5 and its script, projected, it reproduces the frozen trail of the determini
 (`edb4c527…`), and over the default scenario every checksum of a direct step loop.
 
 When the source's `commandsAt`, `step`, the snapshot, or the projection throws, the host has the
-gate flush the ticks it holds, never the faulted one, and halts. A halt records its code, the first tick the world did not
-execute, and, for a fault that is not an engine error, its `cause`:
+gate flush the ticks it holds, never the faulted one, and halts. A halt records its code, the first
+tick the world did not execute, and, for a fault that is not an engine error, its `cause`:
 
 | Code | Cause |
 |---|---|

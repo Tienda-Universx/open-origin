@@ -4,8 +4,9 @@
  * steps, and hands what the tick did and its C0 projection to the publication gate, so nothing
  * here can change a step's result. Every K-th tick it encodes the snapshot for the journal's
  * checkpoint. When the source, a step, the snapshot, or the projection throws, the host first has
- * the gate append the valid ticks it has not appended yet, never the faulted one, then halts. It keeps an engine error's code alone, since its issues may name C3
- * data, and anything else as `unexpected_error` with what it threw.
+ * the gate append the valid ticks it has not appended yet, never the faulted one, then halts. It
+ * keeps an engine error's code alone, since its issues may name C3 data, and anything else as
+ * `unexpected_error` with what it threw.
  */
 import {
   type Command,
