@@ -267,11 +267,25 @@ describe("OrderedJournal", () => {
     records: ticks(fromTick, toTick).map(recordOf),
   });
 
+  /**
+   * The message of what `append` throws, or undefined when it returns. Bun's toThrow would wait
+   * for the promise an append returns when it does not throw, and the controlled journal never
+   * settles it: a guard that let the append through would hang the test instead of failing it.
+   */
+  const thrownBy = (append: () => Promise<void>): string | undefined => {
+    try {
+      append();
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    return undefined;
+  };
+
   test("refuses a second append while one is in flight", async () => {
     const inner = new ControlledJournal();
     const journal = new OrderedJournal(inner, 0);
     const first = journal.append(batch(1, 5));
-    expect(() => journal.append(batch(6, 10))).toThrow(
+    expect(thrownBy(() => journal.append(batch(6, 10)))).toBe(
       "journal order: an append is already in flight; one runs at a time",
     );
     expect(inner.batches).toHaveLength(1);
@@ -287,19 +301,20 @@ describe("OrderedJournal", () => {
   });
 
   test("refuses batches out of order or whose records are not their ticks", () => {
-    const journal = new OrderedJournal(new ControlledJournal(), 10);
-    expect(() => journal.append(batch(12, 13))).toThrow(
+    const inner = new ControlledJournal();
+    const journal = new OrderedJournal(inner, 10);
+    const records = "journal order: the records are not exactly the ticks 11 to 12, in order";
+    expect(thrownBy(() => journal.append(batch(12, 13)))).toBe(
       "journal order: the batch starts at tick 12, not at 11, the tick after the last batch",
     );
-    expect(() => journal.append({ fromTick: 11, toTick: 10, records: [] })).toThrow(
+    expect(thrownBy(() => journal.append({ fromTick: 11, toTick: 10, records: [] }))).toBe(
       "journal order: the batch ends at tick 10, before it starts",
     );
-    expect(() =>
-      journal.append({ ...batch(11, 12), records: [recordOf(12), recordOf(11)] }),
-    ).toThrow("journal order: the records are not exactly the ticks 11 to 12, in order");
-    expect(() => journal.append({ ...batch(11, 12), records: [recordOf(11)] })).toThrow(
-      "journal order: the records are not exactly the ticks 11 to 12, in order",
-    );
+    const swapped = { ...batch(11, 12), records: [recordOf(12), recordOf(11)] };
+    expect(thrownBy(() => journal.append(swapped))).toBe(records);
+    const short = { ...batch(11, 12), records: [recordOf(11)] };
+    expect(thrownBy(() => journal.append(short))).toBe(records);
+    expect(inner.batches).toEqual([]);
   });
 
   test("frees the slot after a failure, and after a journal that throws", async () => {
@@ -308,14 +323,12 @@ describe("OrderedJournal", () => {
     const failed = journal.append(batch(1, 1));
     inner.fail();
     await expect(failed).rejects.toThrow("the journal failed");
-    // The next batch goes through: no append is left in flight. (Not inside expect().toThrow,
-    // which would wait for the promise this append returns, and the journal never settles it.)
-    const next = journal.append(batch(2, 2));
+    // The next batch goes through: no append is left in flight.
+    expect(thrownBy(() => journal.append(batch(2, 2)))).toBeUndefined();
     expect(ranges(inner.batches)).toEqual([
       [1, 1],
       [2, 2],
     ]);
-    expect(next).toBeInstanceOf(Promise);
     const throwing = new OrderedJournal(
       {
         level: "durable",
@@ -326,8 +339,8 @@ describe("OrderedJournal", () => {
       0,
     );
     expect(throwing.level).toBe("durable");
-    expect(() => throwing.append(batch(1, 1))).toThrow("disk full");
-    expect(() => throwing.append(batch(2, 2))).toThrow("disk full");
+    expect(thrownBy(() => throwing.append(batch(1, 1)))).toBe("disk full");
+    expect(thrownBy(() => throwing.append(batch(2, 2)))).toBe("disk full");
   });
 });
 
