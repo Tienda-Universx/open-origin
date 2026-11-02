@@ -1,0 +1,14 @@
+{
+  "name": "@open-origin/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    "./public": "./src/public/index.ts",
+    "./admin": "./src/admin/index.ts"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}

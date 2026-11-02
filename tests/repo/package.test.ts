@@ -12,6 +12,7 @@ type Manifest = {
 /** The fields this file checks in a workspace package's manifest. */
 type WorkspaceManifest = {
   scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 };
 
@@ -71,6 +72,20 @@ function looselyPinned(dependencies: Record<string, string> = {}): string[] {
   return Object.entries(dependencies)
     .filter(([, version]) => !/^\d+\.\d+\.\d+$/.test(version))
     .map(([name, version]) => `${name}@${version}`);
+}
+
+/** The one range a runtime dependency may name instead of an exact pin: a workspace package. */
+const WORKSPACE_RANGE = "workspace:*";
+
+/**
+ * The runtime dependencies pinned neither to an exact `major.minor.patch` version nor to exactly
+ * `workspace:*`: ADR 0026 holds them to the rules ADR 0015 sets for dev dependencies.
+ */
+function looselyPinnedRuntime(dependencies: Record<string, string> = {}): string[] {
+  const external = Object.entries(dependencies).filter(
+    ([, version]) => version !== WORKSPACE_RANGE,
+  );
+  return looselyPinned(Object.fromEntries(external));
 }
 
 /** One step of the typecheck script: tsc, forced onto Bun, on one project. */
@@ -151,6 +166,33 @@ describe("script checks", () => {
       "prerelease@1.2.3-rc.1",
     ]);
     expect(looselyPinned(undefined)).toEqual([]);
+  });
+
+  test("report every runtime dependency pinned neither exactly nor to workspace:*", () => {
+    expect(
+      looselyPinnedRuntime({
+        exact: "4.6.7",
+        workspace: "workspace:*",
+        caret: "^4.6.7",
+        tilde: "~4.6.7",
+        star: "*",
+        tag: "latest",
+        workspaceCaret: "workspace:^",
+        workspaceVersion: "workspace:4.6.7",
+        git: "github:colinhacks/zod",
+        file: "file:../zod",
+      }),
+    ).toEqual([
+      "caret@^4.6.7",
+      "tilde@~4.6.7",
+      "star@*",
+      "tag@latest",
+      "workspaceCaret@workspace:^",
+      "workspaceVersion@workspace:4.6.7",
+      "git@github:colinhacks/zod",
+      "file@file:../zod",
+    ]);
+    expect(looselyPinnedRuntime(undefined)).toEqual([]);
   });
 
   test("accept a chain only when every step must pass", () => {
@@ -277,6 +319,18 @@ describe("workspace package manifests", () => {
   test("pin every dev dependency exactly (plan §P)", () => {
     const loose = workspaceManifests.flatMap(({ path, manifest: { devDependencies } }) =>
       looselyPinned(devDependencies).map((dependency) => `${path}: ${dependency}`),
+    );
+    expect(loose).toEqual([]);
+  });
+
+  test("pin every runtime dependency exactly or to workspace:* (ADR 0026)", () => {
+    const runtime = workspaceManifests.flatMap(({ path, manifest: { dependencies = {} } }) =>
+      Object.entries(dependencies).map(([name, version]) => `${path}: ${name}@${version}`),
+    );
+    // The protocol's zod is the one runtime dependency from the registry: the check sees it.
+    expect(runtime).toContain("packages/protocol/package.json: zod@4.6.7");
+    const loose = workspaceManifests.flatMap(({ path, manifest: { dependencies } }) =>
+      looselyPinnedRuntime(dependencies).map((dependency) => `${path}: ${dependency}`),
     );
     expect(loose).toEqual([]);
   });

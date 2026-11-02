@@ -188,8 +188,9 @@ with the classes of the clock's fields, and with those of the chunk and global m
 
 ### The feed
 
-The feed reaches every client: `arrival{being, species, chunk}`, `death{being, chunk}`, and
-`greeting{from, to, chunk}` (every `greet` act). It carries no text. The text of speech is local: it goes in
+The feed reaches every client: `arrival{tick, being, species, chunk}`, `death{tick, being, chunk}`, and
+`greeting{tick, from, to, chunk}` (every `greet` act). Each item carries the tick it happened at,
+because a transaction covers several ticks. It carries no text. The text of speech is local: it goes in
 the speaker's chunk, as `speech[{tick, speaker, to, act, text}]`.
 
 At most 64 feed items go out per tick, and the rest are counted in `missed`. The feed is encoded once
@@ -233,6 +234,7 @@ per tick and shared by all clients.
 | Fan-out | At most 40 ms per period across all clients. Clients that do not fit wait for the next period, in rotating order |
 | Bun's own limit | `backpressureLimit` 1 MB, with `closeOnBackpressureLimit` |
 | View per client | At most 32 MB encoded, measured at `L'`. A larger interest is trimmed deterministically: the follow window is kept first, then camera chunks in the order the client sent them, until 32 MB. The rest are listed in a `notice` |
+| Parts per transaction | At most 1,024; above it the client discards the transaction as malformed |
 | Retained replaced versions | At most 128 MB in all, configurable, with exact accounting, checked after each period's fan-out. While above it, the oldest retained version is taken, and every client that pins it gets `abort`. The abort releases that client's transaction pins and, if it pins that version at `L`, its `L` pins too, so its next transaction is a reset. Each aborted client counts one abort; 3 in 60 s close with 1013, and the client reconnects with a smaller interest |
 | Terrain | At most 16 chunks generated per period across all clients, from a fair queue, with an LRU of 2,048 entries |
 | HTTP | Only `/ws` and `/healthz` (`{ok}`). Everything else is 404, with no CORS headers |

@@ -225,6 +225,26 @@
       }
     },
     {
+      "includes": ["packages/protocol/src/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**", "!./**", "!../**", "!zod"],
+                    "message": "packages/protocol imports only relative paths inside packages/protocol/src and exactly `zod`: no host module, no other package, and nothing from the domain (ADR 0026)."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["packages/engine/src/**", "!packages/engine/src/canonical/order.ts"],
       "plugins": ["./packages/engine/lint/key-order.grit"]
     },

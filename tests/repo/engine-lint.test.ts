@@ -8,8 +8,8 @@ import { createLintHarness, type DeniedGlobals, pluginPaths } from "./lint-harne
  * reviewed exception covers exactly its file and its rule, and that the engine's compiler settings
  * reject host globals. It also proves that packages/agents/src shares every purity rule of the
  * engine, with no exception, and has its own import rule (ADR 0023), and that packages/scenarios/src
- * has its own import rule (ADR 0025). Every fixture is checked with the repository's own
- * configuration.
+ * (ADR 0025) and packages/protocol/src (ADR 0026) have their own import rules. Every fixture is
+ * checked with the repository's own configuration.
  */
 
 // One linter run checks many fixtures; a cold CI runner can exceed Bun's 5-second default.
@@ -795,6 +795,72 @@ describe("packages/scenarios import rule", () => {
   });
 });
 
+/** Starts the diagnostic of the protocol's import rule. */
+const PROTOCOL_IMPORT_MESSAGE = "packages/protocol imports only relative paths";
+const PROTOCOL_SRC = "packages/protocol/src";
+
+/**
+ * The protocol's import rule (ADR 0026): relative paths and exactly `zod`, so the package runs in
+ * any JavaScript engine and knows nothing of the domain. Host modules, bare Node built-ins, the
+ * domain's packages, zod's subpaths, and lookalikes are rejected under packages/protocol/src, and
+ * nowhere else.
+ */
+describe("packages/protocol import rule", () => {
+  const ALLOWED = [
+    'import { z } from "zod";',
+    'import { CHUNK_CELLS } from "./constants.ts";',
+    'import { Tick } from "../public/dto.ts";',
+    'export { PROTOCOL_ID } from "./constants.ts";',
+    "export const parts = [z, CHUNK_CELLS, Tick];\n",
+  ].join("\n");
+  const REJECTED = [
+    'import { readFileSync } from "node:fs";',
+    'import { serve } from "bun";',
+    'import { join } from "path";',
+    'import { createWorld } from "@open-origin/engine";',
+    'import { labelSeeds } from "@open-origin/scenarios";',
+    'import { mini } from "zod/mini";',
+    'import { v4 } from "zod/v4";',
+    'import { sign } from "zodiac";',
+    'import "bun:sqlite";',
+    'export { platform } from "node:os";',
+    'export const later = () => import("@open-origin/agents");',
+    "export const parts = [readFileSync, serve, join, createWorld, labelSeeds, mini, v4, sign];\n",
+  ].join("\n");
+
+  let linted: Diagnostic[] | undefined;
+  function importDiagnostics(): Diagnostic[] {
+    if (linted === undefined) {
+      const { checked, diagnostics } = lintSummary({
+        [`${PROTOCOL_SRC}/public/allowed.ts`]: ALLOWED,
+        [`${PROTOCOL_SRC}/admin/rejected.ts`]: REJECTED,
+        "packages/protocol/test/outside.ts": REJECTED,
+      });
+      // Biome linted all three files; a skipped one would pass the two tests that expect nothing.
+      expect(checked).toBe(3);
+      linted = diagnostics.filter(({ category }) => RESTRICTED_IMPORT.includes(category));
+    }
+    return linted;
+  }
+
+  test("rejects every host module, domain package, zod subpath, and lookalike under src", () => {
+    const rejected = importDiagnostics().filter(({ file }) => file.endsWith("admin/rejected.ts"));
+    // One for each import, side-effect import, re-export, and dynamic import of REJECTED.
+    expect(rejected).toHaveLength(11);
+    for (const { text } of rejected) expect(text).toContain(PROTOCOL_IMPORT_MESSAGE);
+  });
+
+  test("allows relative paths and exactly zod", () => {
+    expect(importDiagnostics().filter(({ file }) => file.endsWith("public/allowed.ts"))).toEqual(
+      [],
+    );
+  });
+
+  test("does not apply outside src", () => {
+    expect(importDiagnostics().filter(({ file }) => file.includes("/test/"))).toEqual([]);
+  });
+});
+
 /**
  * packages/agents/src shares the engine's rules with no reviewed exception (ADR 0023): no Math,
  * Map, JSON, or key enumeration at all, and int-math.grit does not apply there. Each path that
@@ -869,6 +935,7 @@ describe("packages/agents/src has no reviewed exception", () => {
       [`${ENGINE_SRC}/**`],
       [`${AGENTS_SRC}/**`],
       [`${SCENARIOS_SRC}/**`],
+      [`${PROTOCOL_SRC}/**`],
     ]);
   });
 });
