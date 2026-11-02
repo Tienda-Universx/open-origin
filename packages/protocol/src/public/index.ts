@@ -4,6 +4,18 @@
  */
 export { RECONNECT_BACKOFF, reconnectDelayMs } from "./backoff.ts";
 export {
+  CLIENT_MESSAGE_TYPES,
+  ClientMessage,
+  type ClientMessageError,
+  type ClientParse,
+  chunkKey,
+  FollowMessage,
+  PingMessage,
+  parseClientMessage,
+  ResyncMessage,
+  SubscribeMessage,
+} from "./client.ts";
+export {
   ACTIVITY_KINDS,
   ACTS,
   AUDIENCE,
@@ -48,6 +60,25 @@ export {
   Tick,
 } from "./dto.ts";
 export {
+  AbortMessage,
+  Clock,
+  CommitMessage,
+  DeltaMessage,
+  ErrorMessage,
+  EventsMessage,
+  HelloMessage,
+  Limits,
+  NoticeMessage,
+  PongMessage,
+  parseServerMessage,
+  SERVER_MESSAGE_TYPES,
+  ServerMessage,
+  type ServerParse,
+  SnapshotMessage,
+  StatusMessage,
+  WorldState,
+} from "./server.ts";
+export {
   type DecodedTerrain,
   decodeTerrain,
   encodeTerrain,
@@ -65,3 +96,4 @@ export {
   type PlainTextProblem,
   plainTextProblem,
 } from "./text.ts";
+export { utf8Length } from "./utf8.ts";
