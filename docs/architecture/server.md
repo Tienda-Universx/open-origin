@@ -12,7 +12,8 @@ act on clients (T6-6b), the transport, and the entry point (T6-7) arrive in late
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
-`leak`, `presentation-mirror`, and `presentation`), and `tests/repo/server-boundaries.test.ts`.
+`leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`, and
+`presentation-sizes`), and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -325,6 +326,15 @@ with the strict schema.
   message detected as a `seq` gap and healed by a resync (plan test 8); speech of `(L, L']` and its
   `speechMissed`; abort; periods on the timer; and connect and close cycles that leave interest,
   index, followings, pins, and retained bytes at zero.
+- `presentation-reconstruction.test.ts` (plan test 7): a seeded model world of beings that walk,
+  cross, arrive, leave, and speak, published in bursts now and then, and clients that change camera
+  and follow at random, resync, lag, lose a message, and reconnect. After every commit each view
+  equals the model at the commit's tick, terrain and followed record included; the run must cover
+  drops, re-entries, returns, fragments, multi-period transactions, crossings, and playout skips.
+- `presentation-sizes.test.ts` (plan test 7b): under parts of 64 KiB and 256 KiB a period, a chunk of
+  1,024 beings of records near the widest spans parts and two periods, the view never shows a
+  partial chunk, and the transaction commits at its tick while beings move, arrive, and leave; one
+  chunk of 65,536 beings assembles.
 
 ## Composition
 
