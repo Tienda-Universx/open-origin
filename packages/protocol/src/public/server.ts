@@ -18,7 +18,15 @@ import {
   RING_ITEMS,
   WORLD_STATES,
 } from "./constants.ts";
-import { BeingPublic, ChunkCoord, EntityId, FeedItem, Speech, Tick } from "./dto.ts";
+import {
+  BeingPublic,
+  ChunkCoord,
+  distinctChunks,
+  EntityId,
+  FeedItem,
+  Speech,
+  Tick,
+} from "./dto.ts";
 import { TerrainPublic } from "./terrain.ts";
 import { PlainText } from "./text.ts";
 
@@ -117,6 +125,9 @@ export const DeltaMessage = z
     drop: z.array(ChunkCoord).max(MAX_VIEW_CHUNKS),
   })
   .refine(versionsAtMost, VERSIONS_AT_MOST)
+  .refine(({ chunks, drop }) => distinctChunks([...chunks.map(({ at }) => at), ...drop]), {
+    message: "a chunk appears once, in chunks or in drop",
+  })
   .refine(
     ({ tick, chunks }) => chunks.every((chunk) => chunk.speech.every((s) => s.tick <= tick)),
     {
@@ -182,7 +193,11 @@ export const NoticeMessage = z.strictObject({
   type: z.literal("notice"),
   ...HEADER,
   code: z.literal("interest_trimmed"),
-  chunks: z.array(ChunkCoord).min(1).max(MAX_VIEW_CHUNKS),
+  chunks: z
+    .array(ChunkCoord)
+    .min(1)
+    .max(MAX_VIEW_CHUNKS)
+    .refine(distinctChunks, { message: "each chunk is listed once" }),
 });
 
 /** The answer to a `ping`, with its nonce. */

@@ -257,9 +257,11 @@ describe("the order of a commit", () => {
     expect(session.ids(B)).toEqual([5]);
   });
 
-  test("a chunk dropped cannot also have differences", () => {
+  test("a chunk dropped in one part cannot have differences in another", () => {
+    // Within one part the schema already rejects it; across parts only the transaction can.
     const session = connected();
-    session.apply(delta(session.at(15, 2), [{ at: B, v: 15, gone: [2] }], [B]));
+    session.apply(delta(session.at(15, 2), [{ at: B, v: 15, gone: [2] }]));
+    session.apply(delta(session.at(15, 2), [], [B]));
     const applied = session.apply(commit(session.at(15, 2)));
     expect(applied.anomaly?.kind).toBe("bad_transaction");
     expect(session.ids(B)).toEqual([2]);

@@ -6,21 +6,13 @@
  */
 import { z } from "zod";
 import { CLIENT_LIMITS, type ErrorCode, MAX_NONCE } from "./constants.ts";
-import { ChunkCoord, EntityId } from "./dto.ts";
+import { ChunkCoord, distinctChunks, EntityId } from "./dto.ts";
 import { utf8Length } from "./utf8.ts";
 
-/** The key of a chunk, `"x,y"`, by which a view and a subscription tell chunks apart. */
-export function chunkKey([x, y]: ChunkCoord): string {
-  return `${x},${y}`;
-}
-
 /** The chunks of a camera: at most CLIENT_LIMITS.maxChunks, each once, inside the world. */
-const Camera = z
-  .array(ChunkCoord)
-  .max(CLIENT_LIMITS.maxChunks)
-  .refine((chunks) => new Set(chunks.map(chunkKey)).size === chunks.length, {
-    message: "each chunk may appear once",
-  });
+const Camera = z.array(ChunkCoord).max(CLIENT_LIMITS.maxChunks).refine(distinctChunks, {
+  message: "each chunk may appear once",
+});
 
 /** Replaces the camera interest; `[]` cancels it. */
 export const SubscribeMessage = z.strictObject({ type: z.literal("subscribe"), chunks: Camera });

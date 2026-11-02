@@ -4,9 +4,10 @@
  * chunk that enters, put together from its fragments, the followed being, and the feed. Assembly
  * reads the parts only; it reports the first way they break the protocol, and applies nothing.
  */
-import { chunkKey } from "./client.ts";
+
 import { CHUNK_CELLS } from "./constants.ts";
 import type { BeingPublic, ChunkCoord, FeedItem, Speech } from "./dto.ts";
+import { chunkKey } from "./dto.ts";
 import type { DeltaMessage, EventsMessage, SnapshotMessage } from "./server.ts";
 import type { TerrainPublic } from "./terrain.ts";
 

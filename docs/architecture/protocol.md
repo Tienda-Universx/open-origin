@@ -73,7 +73,7 @@ carry its target tick; every other message carries the client's visible tick whe
 | Type | Fields besides `type`, `seq`, `tick` | Rules the schema checks |
 |---|---|---|
 | `hello` | `protocol`, `audience: "public"`, `world{id}`, `durability`, `state`, `clock`, `limits` | `seq` is 0; `clock.tick` equals `tick`; `world.id` is 32 lowercase hexadecimal digits |
-| `delta` | `txn`, `chunks[{at, v, gone[], upsert[], speech[], speechMissed?}]`, `drop[]` | No chunk's `v` and no speech item's `tick` exceeds `tick` |
+| `delta` | `txn`, `chunks[{at, v, gone[], upsert[], speech[], speechMissed?}]`, `drop[]` | No chunk's `v` and no speech item's `tick` exceeds `tick`; a chunk appears once, in `chunks` or in `drop` |
 | `snapshot` | `txn`, `reset`, `chunks[{at, v, terrain?, beings[], frag{i, n}}]`, `followed?` | No chunk's `v` exceeds `tick`; `0 ≤ i < n` |
 | `events` | `txn`, `items[]`, `missed?` | Items are FeedItem records |
 | `commit` | `txn`, `clock{tick, day, dayPermille}` | `clock.tick` equals `tick`; `dayPermille` from 0 to 999 |

@@ -20,6 +20,7 @@ import {
   StatusMessage,
 } from "../src/public/index.ts";
 import { being, clockAt, TERRAIN, WORLD_ID } from "./support/messages.ts";
+import { Random } from "./support/random.ts";
 
 const AT = { seq: 3, tick: 40, txn: 2 };
 
@@ -252,5 +253,79 @@ describe("parseServerMessage", () => {
       ok: false,
       code: "bad_message",
     });
+  });
+});
+
+describe("a chunk appears once in a delta and in a notice", () => {
+  /** A delta entry for the chunk `at`, with no change in it. */
+  const entry = (at: [number, number]) => ({ at, v: 1, gone: [], upsert: [], speech: [] });
+
+  test("a delta rejects a chunk twice in chunks, twice in drop, or in both", () => {
+    const delta = MINIMAL.delta;
+    const cases = [
+      { ...delta, chunks: [entry([1, 1]), entry([1, 1])] },
+      {
+        ...delta,
+        drop: [
+          [2, 2],
+          [2, 2],
+        ],
+      },
+      { ...delta, chunks: [entry([3, 3])], drop: [[3, 3]] },
+    ];
+    expect(cases.map((message) => DeltaMessage.safeParse(message).success)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    const distinct = { ...delta, chunks: [entry([1, 1]), entry([1, 2])], drop: [[2, 1]] };
+    expect(DeltaMessage.safeParse(distinct).success).toBe(true);
+  });
+
+  test("a notice rejects a chunk listed twice", () => {
+    const twice = {
+      ...MINIMAL.notice,
+      chunks: [
+        [1, 1],
+        [1, 1],
+      ],
+    };
+    expect(NoticeMessage.safeParse(twice).success).toBe(false);
+    const distinct = {
+      ...MINIMAL.notice,
+      chunks: [
+        [1, 1],
+        [1, 2],
+      ],
+    };
+    expect(NoticeMessage.safeParse(distinct).success).toBe(true);
+  });
+});
+
+describe("parseServerMessage never throws on hostile text", () => {
+  test("rejects JSON values that are not records, and a type that only __proto__ holds", () => {
+    const texts = ["null", "[]", "42", '"pong"', "true", '{"__proto__":{"type":"pong"}}'];
+    expect(texts.map(parseServerMessage)).toEqual(
+      texts.map(() => ({ ok: false, code: "bad_message" })),
+    );
+  });
+
+  test("seeded fuzz: every result is a message, bad_json, or bad_message", () => {
+    const random = new Random(0x5eed_0003);
+    const keys = ["type", "seq", "tick", "txn", "chunks", "drop", "__proto__", "constructor", "x"];
+    const values: unknown[] = [null, 0, -1, 2 ** 53, 1.5, "", "pong", [], {}, [[1, 1]], true];
+    const types = [...SERVER_MESSAGE_TYPES, "setSpeed", "pause"];
+    const codes = new Set<string>();
+    for (let n = 0; n < 500; n += 1) {
+      const record: Record<string, unknown> = { type: random.pick(types) };
+      for (let k = random.below(5); k > 0; k -= 1) record[random.pick(keys)] = random.pick(values);
+      const json = JSON.stringify(record);
+      const text = random.below(4) === 0 ? json.slice(0, random.below(json.length + 1)) : json;
+      const result = parseServerMessage(text);
+      codes.add(result.ok ? "ok" : result.code);
+    }
+    expect([...codes].every((code) => ["ok", "bad_json", "bad_message"].includes(code))).toBe(true);
+    // The fuzz reached both rejections, so neither branch is untested by it.
+    expect(codes.has("bad_json") && codes.has("bad_message")).toBe(true);
   });
 });

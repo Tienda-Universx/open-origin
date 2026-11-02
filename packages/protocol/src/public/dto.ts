@@ -29,6 +29,16 @@ const ChunkAxis = z.int().min(MIN_CHUNK).max(MAX_CHUNK);
 export const ChunkCoord = z.tuple([ChunkAxis, ChunkAxis]);
 export type ChunkCoord = z.output<typeof ChunkCoord>;
 
+/** The key of a chunk, `"x,y"`, by which a view and a subscription tell chunks apart. */
+export function chunkKey([x, y]: ChunkCoord): string {
+  return `${x},${y}`;
+}
+
+/** Whether no chunk appears twice in `chunks`. */
+export function distinctChunks(chunks: readonly ChunkCoord[]): boolean {
+  return new Set(chunks.map(chunkKey)).size === chunks.length;
+}
+
 /** A cell coordinate of the world. */
 const CellAxis = z.int().min(MIN_CELL).max(MAX_CELL);
 
