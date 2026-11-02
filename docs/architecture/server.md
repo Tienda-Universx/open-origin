@@ -8,7 +8,7 @@ world host and its sources, the journal port, the publication gate, and their co
 projection, the presentation plane, the transport, and the entry point arrive in later batches.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
-`scheduler`, `adapters`, `publication`, `host`, `rejection`, and `compose`), and
+`scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, and `compose`), and
 `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
@@ -16,7 +16,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | Path | Plane | What it holds |
 |---|---|---|
 | `src/config/` | — | `parseConfig`: the environment, parsed and deep-frozen |
-| `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, and `rejection.ts` |
+| `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane |
 
@@ -71,10 +71,14 @@ only `src/adapters/` touches real time. Times are whole microseconds.
 
   Resuming sets the anchor to now, so a stop is never shortfall. A tick that halts the world stops
   the scheduler before another timer is armed; `wake`, called after each journal acknowledgement
-  or failure and after an unhandled rejection, stops a world halted between ticks at once.
+  or failure and after an unhandled rejection, stops a world halted between ticks at once. Only
+  one timer is ever pending: a tick that pauses and starts the scheduler again leaves one chain.
+- **A tick that throws** halts the scheduler, counted as one `halted` stop, with no timer left, and
+  its metrics keep what it threw as `fault`: an engine error's code alone, as the host keeps it, or
+  another value's message and string `code`.
 - **Metrics** (C3): the state, the ticks run, `shortfallTicks`, `rebases`, the count of each stop,
-  the p50, p95, and p99 of lateness and of step duration over the last 1,024 ticks, and the rate
-  achieved over the last 64 tick starts, in millihertz.
+  the p50, p95, and p99 of lateness and of step duration over the last 1,024 ticks, the rate
+  achieved over the last 64 tick starts, in millihertz, and the `fault` that halted it, if any.
 
 ## World host and sources
 

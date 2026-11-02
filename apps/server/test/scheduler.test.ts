@@ -257,6 +257,101 @@ describe("FixedRateScheduler", () => {
     expect(scheduler.metrics().state).toBe("journalStall");
   });
 
+  test("halts when a tick throws, records what it threw, and arms no timer", () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    let ticks = 0;
+    const scheduler = new FixedRateScheduler({
+      clock,
+      timer,
+      tickRateHz: 5,
+      runTick: () => {
+        ticks += 1;
+        if (ticks === 3) throw Object.assign(new Error("a broken tick"), { code: "EBROKEN" });
+      },
+      hold: () => undefined,
+    });
+    expect(scheduler.metrics().fault).toBeUndefined();
+    scheduler.start();
+    timer.runUntil(10 * P);
+    expect(ticks).toBe(3);
+    expect(timer.pending).toBe(0);
+    expect(scheduler.metrics()).toMatchObject({
+      state: "halted",
+      ticks: 3,
+      stops: { journalStall: 0, paused: 0, halted: 1 },
+      fault: { code: "EBROKEN", message: "a broken tick" },
+    });
+    // Nothing resumes a scheduler that halted.
+    scheduler.start();
+    scheduler.wake();
+    timer.runUntil(20 * P);
+    expect(ticks).toBe(3);
+    expect(timer.pending).toBe(0);
+  });
+
+  test("a tick that halts the world and then throws counts one halt and cancels its timer", () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    let hold: Hold | undefined;
+    const scheduler = new FixedRateScheduler({
+      clock,
+      timer,
+      tickRateHz: 5,
+      runTick: () => {
+        // A re-entrant start arms a timer, a wake then halts, and the tick throws.
+        scheduler.pause();
+        scheduler.start();
+        hold = "halted";
+        scheduler.wake();
+        throw "not an Error";
+      },
+      hold: () => hold,
+    });
+    scheduler.start();
+    timer.fireNext();
+    expect(timer.pending).toBe(0);
+    expect(scheduler.metrics()).toMatchObject({
+      state: "halted",
+      ticks: 1,
+      stops: { journalStall: 0, paused: 1, halted: 1 },
+      fault: { message: "not an Error" },
+    });
+  });
+
+  test("keeps one timer chain when a tick pauses and starts the scheduler again", () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const ran: number[] = [];
+    const scheduler = new FixedRateScheduler({
+      clock,
+      timer,
+      tickRateHz: 5,
+      runTick: () => {
+        ran.push(clock.now());
+        if (ran.length === 2) {
+          scheduler.pause();
+          scheduler.start();
+        }
+      },
+      hold: () => undefined,
+    });
+    scheduler.start();
+    const pending: number[] = [];
+    for (let fired = 0; fired < 6; fired += 1) {
+      timer.fireNext();
+      pending.push(timer.pending);
+    }
+    expect(pending).toEqual(Array(6).fill(1));
+    // The restart within tick 1 anchors the schedule at it: tick 2 keeps its deadline.
+    expect(ran).toEqual([0, P, 2 * P, 3 * P, 4 * P, 5 * P]);
+    expect(scheduler.metrics()).toMatchObject({
+      state: "running",
+      shortfallTicks: 0,
+      stops: { journalStall: 0, paused: 1, halted: 0 },
+    });
+  });
+
   test("reports the achieved rate over its last ticks, in millihertz", () => {
     const five = harness();
     five.scheduler.start();

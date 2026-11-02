@@ -11,12 +11,14 @@
  *
  * The tick always advances by exactly one: under overload the world runs slower for everyone.
  * Stops (a journal stall, an internal pause, a halt) are counted apart from shortfall, and
- * resuming resets `t0`, so a stop is never shortfall.
+ * resuming resets `t0`, so a stop is never shortfall. A tick that throws halts the scheduler, which
+ * records what it threw: it never stays running without a timer.
  *
  * `t0` is kept as an anchor, the pair (time, tick) with `d_anchorTick = anchorTime`, so that every
  * deadline is a whole number of microseconds even when P is not: `d_n = anchorTime +
  * ⌊(n − anchorTick) · 1,000,000 / tickRateHz⌋`. Here `n` counts the ticks this scheduler ran.
  */
+import { causeOf, type FaultCause } from "./fault.ts";
 import { type Percentiles, SampleWindow } from "./samples.ts";
 import type { CancelTimer, Clock, Timer } from "./time.ts";
 
@@ -26,7 +28,7 @@ export type Hold = "journalStall" | "halted";
 /** The scheduler's state: running, or one of the stops of ADR 0025. */
 export type SchedulerState = "running" | "paused" | Hold;
 
-/** The scheduler's C3 metrics, in whole numbers, for the admin contract. */
+/** The scheduler's C3 metrics for the admin contract, and the fault that halted it, if any. */
 export type SchedulerMetrics = {
   readonly state: SchedulerState;
   /** The ticks run since the scheduler was made. */
@@ -46,13 +48,15 @@ export type SchedulerMetrics = {
   readonly stepMicros: Percentiles;
   /** The rate achieved over the last ticks' starts, in ticks per 1,000 seconds; 0 before two. */
   readonly achievedMilliHz: number;
+  /** What a tick threw when it halted the scheduler; undefined while no tick threw. */
+  readonly fault: FaultCause | undefined;
 };
 
 export type SchedulerOptions = {
   readonly clock: Clock;
   readonly timer: Timer;
   readonly tickRateHz: number;
-  /** Runs one tick of the world. */
+  /** Runs one tick of the world. When it throws, the scheduler halts and records what it threw. */
   readonly runTick: () => void;
   /** Why no tick may run now, or undefined when one may: asked before each tick and after it. */
   readonly hold: () => Hold | undefined;
@@ -79,6 +83,7 @@ export class FixedRateScheduler {
   #anchorTick = 0;
   #shortfall = 0;
   #rebases = 0;
+  #fault: FaultCause | undefined;
   readonly #stops = { journalStall: 0, paused: 0, halted: 0 };
   readonly #lateness = new SampleWindow(WINDOW);
   readonly #steps = new SampleWindow(WINDOW);
@@ -129,6 +134,7 @@ export class FixedRateScheduler {
       latenessMicros: this.#lateness.percentiles(),
       stepMicros: this.#steps.percentiles(),
       achievedMilliHz: this.#achievedMilliHz(),
+      fault: this.#fault,
     };
   }
 
@@ -158,6 +164,9 @@ export class FixedRateScheduler {
 
   /** Sets the timer of the next tick, at `max(d_n, now)`, unless the world is held. */
   #arm(): void {
+    // A tick that paused and started the scheduler again armed a timer already: one chain runs.
+    this.#pending?.();
+    this.#pending = undefined;
     const hold = this.#hold();
     if (hold !== undefined) {
       this.#stop(hold);
@@ -197,9 +206,15 @@ export class FixedRateScheduler {
     this.#anchorAt(now);
   }
 
+  /** Runs the tick `n`. One that throws halts the scheduler, once, and leaves what it threw. */
   #run(now: number): void {
     this.#starts.add(now);
-    this.#runTick();
+    try {
+      this.#runTick();
+    } catch (error) {
+      this.#fault = causeOf(error);
+      if (this.#state !== "halted") this.#stop("halted");
+    }
     this.#steps.add(this.#clock.now() - now);
     this.#next += 1;
   }
