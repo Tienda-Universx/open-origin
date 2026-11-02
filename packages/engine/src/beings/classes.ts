@@ -1,7 +1,8 @@
 /**
- * The classification registry of beings@2 (ADR 0008, ADR 0024; docs/architecture/mind.md
+ * The classification registry of beings@2 (ADR 0008, ADR 0024, ADR 0026; docs/architecture/mind.md
  * "Classification"): the class of every member of a being, nested ones included, the records of
- * its mind among them, of every event the beings layer emits, and of every command it handles. C0
+ * its mind among them, of a chunk and of the global value, of every event the beings layer emits,
+ * and of every command it handles. C0
  * is what an observer inside the world could see, C1 what is internal to an inhabitant and may
  * reach the inhabitant itself, and C3 what only operations and research may read: taints,
  * exposure, the kind `external`, and reference truth. Nothing classified C3 ever reaches a brain.
@@ -17,7 +18,8 @@ export type DataClass = "C0" | "C1" | "C3";
 /**
  * The class of a value, and of what it holds: the members of a record, the entries of a list, or
  * the members of a record by its `kind`. A leaf, a number, a string, a boolean, or a cell, has
- * only its class.
+ * only its class. A leaf classified C3 may also hold a record or a list, all of it C3: nothing
+ * below it is ever copied.
  */
 export type ClassNode = {
   readonly class: DataClass;
@@ -305,6 +307,42 @@ export const BEING_CLASSES: ClassNode = Object.freeze({
     BEING_MEMBERS.map(([name, node, sensed]) => Object.freeze({ name, node, sensed })),
   ),
 });
+
+/**
+ * A depletion entry of a chunk, `{cell, taken, since}`: C3, since it shows how much each being ate,
+ * which is C1, and when food regrows, a law of the world (ADR 0026).
+ */
+const DEPLETION = record("C3", [
+  ["cell", C3],
+  ["since", C3],
+  ["taken", C3],
+]);
+
+/**
+ * The class of a chunk of beings@1 or beings@2 and of each of its members (ADR 0026, "Projections
+ * and classification"). A chunk is C0, the place its beings are seen in; its beings are classified
+ * by BEING_CLASSES; its depletion is C3, so food shown to spectators waits for a derived field of
+ * its own; and `due`, the engine's schedule of when its beings are next processed, is C3.
+ */
+export const CHUNK_CLASSES: ClassNode = record("C0", [
+  ["beings", list("C0", BEING_CLASSES)],
+  ["depletion", list("C3", DEPLETION)],
+  ["due", C3],
+]);
+
+/**
+ * The class of the global value of a world of beings and of each of its members: all of it is C3
+ * (ADR 0026). The genesis holds the terrain seed and the laws, the laws of life are the world's,
+ * the seals digest both, and the occupancy index and the last pruned day are the system's own.
+ */
+export const GLOBAL_CLASSES: ClassNode = record("C3", [
+  ["genesis", C3],
+  ["genesisSeal", C3],
+  ["life", C3],
+  ["lifeSeal", C3],
+  ["occupancy", C3],
+  ["prunedDay", C3],
+]);
 
 /**
  * The class of every event the beings layer emits: C0 what an observer could see happen, C1 the
