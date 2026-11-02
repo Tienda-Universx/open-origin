@@ -98,6 +98,13 @@ export const CLIENT_LIMITS = Object.freeze({
 /** The most chunks a view holds: a full camera and a full follow window. */
 export const MAX_VIEW_CHUNKS = CLIENT_LIMITS.maxChunks + CLIENT_LIMITS.maxFollowChunks;
 
+/**
+ * The most parts of one transaction: a full view of 32 MiB in parts of 64 KiB takes 512, and this
+ * is twice that. A client discards a transaction with more as malformed, so a faulty or hostile
+ * server cannot make it keep parts without bound.
+ */
+export const MAX_TRANSACTION_PARTS = 1024;
+
 /** The WebSocket close codes the server uses, by reason. */
 export const CLOSE_CODES = Object.freeze({
   /** The server is shutting down. */

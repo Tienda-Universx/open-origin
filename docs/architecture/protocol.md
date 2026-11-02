@@ -164,6 +164,7 @@ out an item whose text is not plain, and counts it (C3).
 | `RESYNC_INTERVAL_MS` | 2,000 |
 | `CLIENT_LIMITS` | 64 camera chunks, 9 follow chunks, 4 KiB a client message, 10 messages a second with a burst of 20, 64 new chunks every 2 s, and 32 MiB a view |
 | `MAX_PART_BYTES` | 64 KiB a server message |
+| `MAX_TRANSACTION_PARTS` | 1,024 parts a transaction: a full view of 32 MiB in parts of 64 KiB takes 512, and this is twice that. A client discards a transaction with more as malformed |
 | `RING_TICKS`, `RING_ITEMS` | 300 ticks and 2,048 items in each ring of speech and of the feed |
 | `MAX_FEED_ITEMS_PER_TICK` | 64 |
 
@@ -226,14 +227,16 @@ Semantics:
   record sent is no longer shown as followed.
 - **Anomalies.** A message before `hello`, a `seq` gap, a `commit` whose tick does not exceed the
   previous commit's (or, first, is below `hello`'s), and a transaction that breaks the protocol
-  (parts at two ticks, two transactions at once, missing or repeated fragments, terrain not in
-  exactly one fragment, differences of a chunk that is not visible or of a being that is not there,
-  a chunk entering that is visible, a being in two visible chunks, a version that goes back, a
-  change of a chunk's beings that keeps its version, speech or a feed item at or before the view's
-  tick, or a delta in a reset) each return an anomaly. The view stays as it was, marked stale, and
-  the client sends `resync`, at most once every `RESYNC_INTERVAL_MS`. After a gap, the transaction
-  in flight and the transaction of the next transaction message are discarded, even a reset, since
-  parts of them may be lost.
+  (parts at two ticks, two transactions at once, more than `MAX_TRANSACTION_PARTS` parts, missing
+  or repeated fragments, terrain not in exactly one fragment, differences of a chunk that is not
+  visible or of a being that is not there, a chunk entering that is visible, a being in two visible
+  chunks, a version that goes back, a change of a chunk's beings that keeps its version, speech or
+  a feed item at or before the view's tick, or a delta in a reset) each return an anomaly. The view
+  stays as it was, marked stale, and the client sends `resync`, at most once every
+  `RESYNC_INTERVAL_MS`. A transaction that passes `MAX_TRANSACTION_PARTS` is reported at the part
+  that passes it: its parts are dropped, and the rest of it, up to its `commit` or `abort`, is
+  ignored. After a gap, the transaction in flight and the transaction of the next transaction
+  message are discarded, even a reset, since parts of them may be lost.
 - **Versions and ticks.** A chunk's `v` is the tick of its last public change, so an entry that
   changes its beings (`gone` or `upsert`) carries a `v` above the chunk's, while one that only
   brings speech keeps it. A transaction from the view's tick `L` to `L'` brings the speech and the

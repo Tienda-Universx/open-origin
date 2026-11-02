@@ -28,7 +28,7 @@ import {
   type Transaction,
   TransactionProblem,
 } from "./assemble.ts";
-import type { DURABILITIES } from "./constants.ts";
+import { type DURABILITIES, MAX_TRANSACTION_PARTS } from "./constants.ts";
 import type { BeingPublic, ChunkCoord, FeedItem, Speech } from "./dto.ts";
 import type { Clock, CommitMessage, HelloMessage, ServerMessage } from "./server.ts";
 import type { PlainText } from "./text.ts";
@@ -184,7 +184,11 @@ function settle(state: Connected, txn: number): Connected {
   return { ...state, suspect: false, pending: undefined, discarded: txn };
 }
 
-/** Keeps a part aside until its transaction's commit. */
+/**
+ * Keeps a part aside until its transaction's commit. A transaction of more than
+ * MAX_TRANSACTION_PARTS parts is malformed: its parts are dropped and the rest of it is ignored,
+ * which also bounds the copies that keep every state a value.
+ */
 function addPart(state: Connected, part: Part): Applied {
   const settled = settle(state, part.txn);
   if (part.txn === settled.discarded) return { state: settled };
@@ -202,6 +206,10 @@ function addPart(state: Connected, part: Part): Applied {
       broken(`the parts of transaction ${part.txn} disagree on its tick`),
       part.txn,
     );
+  }
+  if (pending.parts.length >= MAX_TRANSACTION_PARTS) {
+    const detail = `transaction ${part.txn} has more than ${MAX_TRANSACTION_PARTS} parts`;
+    return flag(settled, broken(detail), part.txn);
   }
   return { state: { ...settled, pending: { ...pending, parts: [...pending.parts, part] } } };
 }

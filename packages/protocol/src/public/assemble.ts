@@ -51,7 +51,8 @@ type Gathered = {
   readonly at: ChunkCoord;
   readonly v: number;
   readonly n: number;
-  frags: SnapshotChunk[];
+  /** By fragment index, so that each fragment is found in constant time. */
+  readonly frags: Map<number, SnapshotChunk>;
 };
 
 /** A transaction while its parts are read, with the snapshot fragments still apart. */
@@ -113,17 +114,17 @@ function readSnapshot(builder: Builder, snapshot: SnapshotMessage): TransactionP
       at: chunk.at,
       v: chunk.v,
       n: chunk.frag.n,
-      frags: [],
+      frags: new Map(),
     };
     if (gathered.v !== chunk.v || gathered.n !== chunk.frag.n) {
       return new TransactionProblem(
         `the fragments of chunk ${key} disagree on its version or count`,
       );
     }
-    if (gathered.frags.some(({ frag }) => frag.i === chunk.frag.i)) {
+    if (gathered.frags.has(chunk.frag.i)) {
       return new TransactionProblem(`chunk ${key} has fragment ${chunk.frag.i} twice`);
     }
-    gathered.frags.push(chunk);
+    gathered.frags.set(chunk.frag.i, chunk);
     builder.gathered.set(key, gathered);
   }
   return undefined;
@@ -146,9 +147,11 @@ function readPart(builder: Builder, part: Part): TransactionProblem | undefined 
 /** The terrain of a chunk's fragments: exactly one of them carries it. */
 function terrainOf(
   key: string,
-  frags: readonly SnapshotChunk[],
+  frags: ReadonlyMap<number, SnapshotChunk>,
 ): TerrainPublic | TransactionProblem {
-  const terrains = frags.flatMap(({ terrain }) => (terrain === undefined ? [] : [terrain]));
+  const terrains = [...frags.values()].flatMap(({ terrain }) =>
+    terrain === undefined ? [] : [terrain],
+  );
   const [terrain] = terrains;
   if (terrain === undefined || terrains.length > 1) {
     return new TransactionProblem(`chunk ${key} must carry its terrain in exactly one fragment`);
@@ -156,26 +159,32 @@ function terrainOf(
   return terrain;
 }
 
-/** The beings of a chunk's fragments, by id: each once, each inside the chunk. */
+/**
+ * The beings of a chunk's fragments, all of which arrived, in fragment order and by id: each once,
+ * each inside the chunk.
+ */
 function beingsOf(key: string, gathered: Gathered): Map<number, BeingPublic> | TransactionProblem {
   const beings = new Map<number, BeingPublic>();
-  const ordered = [...gathered.frags].sort((a, b) => a.frag.i - b.frag.i);
-  for (const being of ordered.flatMap((frag) => frag.beings)) {
-    if (beings.has(being.id))
-      return new TransactionProblem(`chunk ${key} holds being ${being.id} twice`);
-    if (!liesIn(being, gathered.at)) {
-      return new TransactionProblem(`being ${being.id} does not lie in chunk ${key}`);
+  for (let i = 0; i < gathered.n; i += 1) {
+    for (const being of gathered.frags.get(i)?.beings ?? []) {
+      if (beings.has(being.id)) {
+        return new TransactionProblem(`chunk ${key} holds being ${being.id} twice`);
+      }
+      if (!liesIn(being, gathered.at)) {
+        return new TransactionProblem(`being ${being.id} does not lie in chunk ${key}`);
+      }
+      beings.set(being.id, being);
     }
-    beings.set(being.id, being);
   }
   return beings;
 }
 
 /** The full content of a chunk from its gathered fragments, which must all have arrived. */
 function contentOf(key: string, gathered: Gathered): ChunkContent | TransactionProblem {
-  if (gathered.frags.length !== gathered.n) {
+  // Each index is below n and arrived once, so n fragments are all of them.
+  if (gathered.frags.size !== gathered.n) {
     return new TransactionProblem(
-      `chunk ${key} has ${gathered.frags.length} of ${gathered.n} fragments`,
+      `chunk ${key} has ${gathered.frags.size} of ${gathered.n} fragments`,
     );
   }
   const terrain = terrainOf(key, gathered.frags);

@@ -8,6 +8,7 @@ import {
   chunkKey,
   findBeing,
   initialClientState,
+  MAX_TRANSACTION_PARTS,
   type ServerMessage,
 } from "../src/public/index.ts";
 import {
@@ -532,6 +533,31 @@ describe("anomalies", () => {
     const session = connected();
     session.apply(snapshot(session.at(15, 2), [{ at: A, v: 15 }]));
     expect(session.apply(commit(session.at(15, 2))).anomaly?.kind).toBe("bad_transaction");
+  });
+
+  test("a transaction of more than MAX_TRANSACTION_PARTS parts, whose parts are discarded", () => {
+    expect(MAX_TRANSACTION_PARTS).toBe(1024);
+    const full = connected();
+    for (let part = 0; part < MAX_TRANSACTION_PARTS; part += 1) {
+      expect(full.apply(events(full.at(15, 2), [])).anomaly).toBeUndefined();
+    }
+    expect(full.apply(commit(full.at(15, 2))).committed?.tick).toBe(15);
+    const over = connected();
+    for (let part = 0; part < MAX_TRANSACTION_PARTS; part += 1)
+      over.apply(events(over.at(15, 2), []));
+    const applied = over.apply(events(over.at(15, 2), []));
+    expect(applied.anomaly?.kind).toBe("bad_transaction");
+    expect([over.state.pending, over.state.discarded, over.state.stale]).toEqual([
+      undefined,
+      2,
+      true,
+    ]);
+    // Its later parts and its commit are ignored; the next reset applies.
+    over.apply(events(over.at(15, 2), []));
+    const closed = over.apply(commit(over.at(15, 2)));
+    expect([closed.anomaly, closed.committed, over.view.tick]).toEqual([undefined, undefined, 12]);
+    over.apply(snapshot(over.at(16, 3), [{ at: C, v: 16 }], { reset: true }));
+    expect(over.apply(commit(over.at(16, 3))).committed?.reset).toBe(true);
   });
 
   test("a change of a chunk that keeps the chunk's version", () => {
