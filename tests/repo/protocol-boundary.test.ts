@@ -90,25 +90,64 @@ function checkPublicSource(path: string, content: string): Finding[] {
   return [...literal, ...dynamic].sort((a, b) => a.line - b.line);
 }
 
+/** A TypeScript source of any extension: `.ts`, `.tsx`, `.mts`, `.cts`, and their declarations. */
+const TYPESCRIPT = /\.[cm]?tsx?$/;
+
+/** Whether `path`, a repository-relative path, is a module of the public entry. */
+function isPublicModule(path: string): boolean {
+  return path.startsWith(`${PUBLIC_SRC}/`) && TYPESCRIPT.test(path);
+}
+
+/** The findings of each public module among `paths`, whose sources `read` returns. */
+function scanPublicModules(
+  paths: readonly string[],
+  read: (path: string) => Promise<string>,
+): Promise<{ path: string; findings: Finding[] }[]> {
+  return Promise.all(
+    paths
+      .filter(isPublicModule)
+      .map(async (path) => ({ path, findings: checkPublicSource(path, await read(path)) })),
+  );
+}
+
 const PUBLIC_FILE = `${PUBLIC_SRC}/view.ts`;
+const INTO_ADMIN = `"../admin/index.ts" resolves outside ${PUBLIC_SRC}, into the admin contracts`;
 
 describe("the public entry of packages/protocol", () => {
-  const files = repoFiles(REPO_ROOT).filter(
-    (path) => path.startsWith(`${PUBLIC_SRC}/`) && path.endsWith(".ts"),
-  );
-
   test("scans every public module, and no public module leaves the public entry", async () => {
+    const scanned = await scanPublicModules(repoFiles(REPO_ROOT), (path) =>
+      Bun.file(`${REPO_ROOT}${path}`).text(),
+    );
     // An empty list would pass without checking anything.
-    expect(files).toEqual(
+    expect(scanned.map(({ path }) => path)).toEqual(
       expect.arrayContaining([`${PUBLIC_SRC}/index.ts`, `${PUBLIC_SRC}/reducer.ts`]),
     );
-    const findings = await Promise.all(
-      files.map(async (path) => ({
-        path,
-        findings: checkPublicSource(path, await Bun.file(`${REPO_ROOT}${path}`).text()),
+    expect(scanned.filter(({ findings }) => findings.length > 0)).toEqual([]);
+  });
+
+  test("reads every TypeScript extension: a planted .mts re-export of admin is found", async () => {
+    const reexport = 'export * from "../admin/index.ts";\n';
+    const sources = new Map([
+      [`${PUBLIC_SRC}/later.mts`, reexport],
+      [`${PUBLIC_SRC}/later.cts`, reexport],
+      [`${PUBLIC_SRC}/later.tsx`, reexport],
+      [`${PUBLIC_SRC}/later.d.mts`, reexport],
+      // Not TypeScript, or not in the public entry: not read.
+      [`${PUBLIC_SRC}/notes.md`, reexport],
+      ["packages/protocol/src/admin/later.mts", reexport],
+    ]);
+    const scanned = await scanPublicModules([...sources.keys()], async (path) => {
+      const source = sources.get(path);
+      if (source === undefined) throw new Error(`no source for ${path}`);
+      return source;
+    });
+    const finding = [{ line: 1, message: INTO_ADMIN }];
+    expect(scanned).toEqual(
+      ["later.mts", "later.cts", "later.tsx", "later.d.mts"].map((name) => ({
+        path: `${PUBLIC_SRC}/${name}`,
+        findings: finding,
       })),
     );
-    expect(findings.filter(({ findings: found }) => found.length > 0)).toEqual([]);
   });
 
   test("a planted import of admin in a copy of a real module is found, at its line", async () => {
@@ -116,10 +155,7 @@ describe("the public entry of packages/protocol", () => {
     const planted = `${reducer}import { ServerStatus } from "../admin/index.ts";\n`;
     expect(checkPublicSource(`${PUBLIC_SRC}/reducer.ts`, reducer)).toEqual([]);
     expect(checkPublicSource(`${PUBLIC_SRC}/reducer.ts`, planted)).toEqual([
-      {
-        line: reducer.split("\n").length,
-        message: `"../admin/index.ts" resolves outside ${PUBLIC_SRC}, into the admin contracts`,
-      },
+      { line: reducer.split("\n").length, message: INTO_ADMIN },
     ]);
   });
 });
