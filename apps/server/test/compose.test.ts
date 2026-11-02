@@ -1,11 +1,11 @@
 /**
  * The world plane as compose() wires it (ADR 0025), on a fake clock and timer whose callbacks let
- * the journal's acknowledgements run between ticks, as the event loop does: the world runs at its
- * rate and publishes only what the journal committed; stop flushes the partial batch; a lagging
- * journal stalls the scheduler without shortfall; a journal failure, an engine fault, and an
- * unhandled rejection halt the world; the source's world is projected once per tick, timed, and
- * its terrain served, and one that is not a world of beings is refused; and the status validates
- * against the admin contract.
+ * the journal's acknowledgements run between ticks, as the event loop does: a listener receives
+ * the boot record first; the world runs at its rate and publishes only what the journal committed;
+ * stop flushes the partial batch; a lagging journal stalls the scheduler without shortfall; a
+ * journal failure, an engine fault, and an unhandled rejection halt the world; the source's world
+ * is projected once per tick, timed, and its terrain served, and one that is not a world of beings
+ * is refused; and the status validates against the admin contract.
  */
 import { describe, expect, test } from "bun:test";
 import { readView, type World, worldgen } from "@open-origin/engine";
@@ -21,7 +21,7 @@ import { ScenarioSource, ScriptedSource, type WorldSource } from "../src/world/s
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import { ControlledJournal, settle } from "./support/journals.ts";
-import { emptyProjection } from "./support/projections.ts";
+import { emptyProjection, publishedAt } from "./support/projections.ts";
 
 /** One period at 5 Hz, in microseconds. */
 const P = 200_000;
@@ -56,13 +56,16 @@ function plane({
     ...(source === "default" ? {} : { source, projectionOf: emptyProjection }),
     ...deps,
   });
+  /** The boot record, which a listener receives first, and the ticks published after it. */
+  const delivered: { boot?: PublishedTick } = {};
   const published: number[] = [];
-  world.subscribeToPublished(({ tick }) => {
-    published.push(tick);
+  world.subscribeToPublished((tick) => {
+    if (delivered.boot === undefined) delivered.boot = tick;
+    else published.push(tick.tick);
   });
   /** The status, parsed by the admin contract, which also checks E ≥ C ≥ P. */
   const status = () => ServerStatus.parse(world.status());
-  return { clock, timer, world, published, status };
+  return { clock, timer, world, boot: delivered.boot, published, status };
 }
 
 const ticks = (from: number, to: number) =>
@@ -100,6 +103,20 @@ describe("compose", () => {
     });
     expect(published).toEqual(ticks(1, 10));
     expect(world.halted()).toBeUndefined();
+  });
+
+  test("hands a listener the boot record of the world's tick before any published tick", () => {
+    // The counting world's projection: its boot tick, 0, with no chunk.
+    expect(plane().boot).toEqual(publishedAt(0));
+    // The default world of T5 at tick 0: its clock, and no chunk until the admin spawns at tick 1.
+    const { boot } = plane({ source: "default" });
+    expect(boot).toEqual({
+      tick: 0,
+      clock: { tick: 0, day: 0, dayPermille: 0 },
+      chunks: [],
+      speech: [],
+      feed: [],
+    });
   });
 
   test("stop flushes the partial batch and publishes it, and start resumes", async () => {
@@ -318,6 +335,7 @@ describe("compose", () => {
           return projection.project(result);
         },
         readTerrain: (chunk) => projection.readTerrain(chunk),
+        boot: () => projection.boot(),
       };
     };
     const plane = compose(configOf(), { clock, timer, source, projectionOf });
@@ -327,9 +345,10 @@ describe("compose", () => {
     });
     plane.start();
     await timer.runUntilSettled(9 * P);
-    expect(published.map(({ tick }) => tick)).toEqual(ticks(1, 10));
-    expect(published.map(({ clock: at }) => at)).toEqual(ticks(1, 10).map(calendar));
-    expect(published[0]?.feed.map(({ kind }) => kind)).toEqual(Array(8).fill("arrival"));
+    // The boot record of tick 0 comes first, then every published tick.
+    expect(published.map(({ tick }) => tick)).toEqual(ticks(0, 10));
+    expect(published.map(({ clock: at }) => at)).toEqual(ticks(0, 10).map(calendar));
+    expect(published[1]?.feed.map(({ kind }) => kind)).toEqual(Array(8).fill("arrival"));
     const status = ServerStatus.parse(plane.status());
     expect(status.projectionMicros).toEqual({ p50: 137, p95: 137, p99: 137 });
     // A step's duration covers its whole tick, the projection included.

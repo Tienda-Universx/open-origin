@@ -30,8 +30,18 @@ import { calendarClock } from "./clock.ts";
 import { projectEvents, type Render } from "./events.ts";
 import { type ReadTerrain, terrainReader } from "./terrain.ts";
 
-/** A projection of a world: each tick's published record, and the public terrain of a chunk. */
+/**
+ * A projection of a world: the full record of its boot tick, each tick's published record, and the
+ * public terrain of a chunk.
+ */
 export interface WorldProjection extends Projector {
+  /**
+   * The full C0 projection of the world at the tick it booted at, frozen: every chunk that holds a
+   * being, with all its records at version `v` = that tick, and no speech or feed. The gate hands it
+   * to each listener first, so the presentation's mirror starts complete (ADR 0025, "Executed,
+   * committed, published").
+   */
+  boot(): PublishedTick;
   readTerrain(chunk: ChunkCoord): TerrainPublic;
 }
 
@@ -62,6 +72,7 @@ export class BeingsProjection implements WorldProjection {
   readonly #render: Render;
   /** The records last emitted, or held at boot, of the beings of each chunk that holds any. */
   readonly #shown = new Map<ChunkKey, Shown>();
+  readonly #boot: PublishedTick;
   #tick: number;
   #omittedSpeech = 0;
 
@@ -79,7 +90,14 @@ export class BeingsProjection implements WorldProjection {
     this.#terrain = terrainReader(prepared);
     this.#render = render;
     this.#tick = this.#view.tick;
-    for (const key of this.#view.chunkKeys()) this.#changeOf(key);
+    // Every record is new to an empty projection, so the change of each chunk is all of it.
+    const chunks = this.#view.chunkKeys().flatMap((key) => this.#changeOf(key));
+    const tick = this.#tick;
+    this.#boot = deepFrozen({ tick, clock: this.#clock(tick), chunks, speech: [], feed: [] });
+  }
+
+  boot(): PublishedTick {
+    return this.#boot;
   }
 
   /** The items of speech left out so far because their text was not plain text (C3). */

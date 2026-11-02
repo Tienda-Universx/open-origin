@@ -292,6 +292,66 @@ describe("PublicationGate", () => {
     expect(gate.listenerFaults).toBe(8);
   });
 
+  test("hands each listener the boot record first, then every published tick", async () => {
+    const journal = new ControlledJournal();
+    const boot = publishedAt(3);
+    const gate = new PublicationGate({ journal, batchTicks: 2, boot: 3, bootRecord: boot });
+    const first: PublishedTick[] = [];
+    const second: PublishedTick[] = [];
+    gate.subscribe(() => {
+      throw new Error("a broken listener");
+    });
+    gate.subscribe((tick) => {
+      first.push(tick);
+    });
+    gate.subscribe((tick) => {
+      second.push(tick);
+    });
+    // Each listener holds the boot record as soon as it subscribes; the broken one is counted.
+    expect(first).toEqual([boot]);
+    expect(second).toEqual([boot]);
+    expect(gate.listenerFaults).toBe(1);
+    for (const tick of ticks(4, 5)) gate.accept(executed(tick));
+    journal.ack();
+    await settle();
+    expect(first.map(({ tick }) => tick)).toEqual([3, 4, 5]);
+    expect(second).toEqual(first);
+  });
+
+  test("refuses a listener once it published, which would miss the boot record", async () => {
+    const journal = new ControlledJournal();
+    const gate = new PublicationGate({
+      journal,
+      batchTicks: 1,
+      boot: 0,
+      bootRecord: publishedAt(0),
+    });
+    gate.accept(executed(1));
+    // Executed is not published: a listener may still subscribe and get the boot record.
+    const received: number[] = [];
+    gate.subscribe(({ tick }) => {
+      received.push(tick);
+    });
+    journal.ack();
+    await settle();
+    expect(received).toEqual([0, 1]);
+    expect(() => gate.subscribe(() => undefined)).toThrow(
+      "a listener subscribes before the first publication: after it, it would miss the boot record of tick 0",
+    );
+  });
+
+  test("refuses a boot record of another tick than the boot tick", () => {
+    expect(
+      () =>
+        new PublicationGate({
+          journal: new ControlledJournal(),
+          batchTicks: 5,
+          boot: 2,
+          bootRecord: publishedAt(1),
+        }),
+    ).toThrow(new RangeError("the boot record is of tick 1, not of the boot tick 2"));
+  });
+
   test("refuses a batch size below one", () => {
     expect(
       () => new PublicationGate({ journal: new ControlledJournal(), batchTicks: 0, boot: 0 }),

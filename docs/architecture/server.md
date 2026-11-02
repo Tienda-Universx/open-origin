@@ -145,6 +145,10 @@ it publishes `{tick, clock, chunks, speech, feed}`, frozen at every level, and o
   being's needs or mind, emits nothing. A chunk with no such change is left out. Its work per tick
   grows with the beings of the changed chunks, and its memory with the beings of the world; boot
   reads every chunk once.
+- **Boot record.** `boot()` returns the full projection of the tick the world booted at, frozen:
+  every chunk that holds a being, with all its records at version `v` = that tick, the clock of
+  that tick, and no speech or feed. It is built once, from the same pass that boot already makes,
+  so the presentation's mirror can start from the whole world.
 - **Checks.** Every record that goes out, and every record boot holds, is checked by the protocol's
   strict `BeingPublic`; one that fails throws, naming the being and the fields, never their values,
   and the host halts. That is the fail-safe of a walk whose `done` is not below the length of
@@ -203,6 +207,10 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
   receive the frozen `PublishedTick` records of the projection. Their return values are ignored;
   their exceptions and rejected promises are counted as `listenerFaults` and never stop
   publication.
+- **Boot record.** A gate given the projection's boot record, whose tick must be `L`, hands it to
+  each listener as the listener subscribes, before any published tick, so a listener starts from
+  the whole world at `L` and then follows every tick. Once the gate published, it refuses a new
+  listener, which would miss the ticks before its subscription, and drops the boot record.
 - **Flush.** `flush` appends what is left as partial batches and resolves once all of it is
   committed and published, or once the journal failed; it never rejects.
 - **Failure.** When an append rejects or throws, the gate fails: it keeps what the journal threw or
@@ -223,7 +231,7 @@ host, and the scheduler, and returns:
 |---|---|
 | `start()` | Starts the scheduler, or resumes it after `stop` |
 | `stop()` | Pauses the scheduler and flushes the gate: every executed tick is committed and published (RPO 0 once the journal is durable) |
-| `subscribeToPublished(listener)` | Adds a listener of published ticks and returns the function that removes it |
+| `subscribeToPublished(listener)` | Adds a listener of published ticks and returns the function that removes it. The listener receives the boot record first; after the first publication this throws |
 | `readTerrain(chunk)` | The projection's `readTerrain`: the public terrain of a chunk, never materialized |
 | `status()` | The server's status, shaped for `ServerStatus` of `@open-origin/protocol/admin` |
 | `unhandledRejection()` | Asks `rejectionPolicy(AI_MODE)`; with `off`, the world halts |

@@ -11,7 +11,10 @@
  * the snapshot of tick K travels with the batch that ends at K (ADR 0007). A flush appends what is
  * left as partial batches, for shutdown and before a halt. On each acknowledgement it publishes
  * exactly `(P, C]`, in order. When the journal fails it halts: it appends and publishes nothing
- * more, so nothing uncommitted is ever published. At boot `P = C = E = L`, the world's tick.
+ * more, so nothing uncommitted is ever published. At boot `P = C = E = L`, the world's tick; a gate
+ * given the boot record, the full projection of `L`, hands it to each listener first, so a listener
+ * starts from the whole world and then follows every tick (ADR 0025: "the mirror is built from a
+ * full projection").
  */
 import type { Tick } from "@open-origin/engine";
 import { causeOf, type FaultCause } from "./fault.ts";
@@ -33,6 +36,12 @@ export type GateOptions = {
   readonly batchTicks: number;
   /** L: the world's tick at boot. */
   readonly boot: Tick;
+  /**
+   * The full projection of tick L, which each listener receives first, as it subscribes. A gate
+   * that holds one refuses a listener once it published: that listener would miss the ticks
+   * between L and its subscription.
+   */
+  readonly bootRecord?: PublishedTick;
   /**
    * Called after each acknowledgement and after a failure, so the scheduler can ask again. A throw
    * is counted as a change fault: it reaches neither `accept` nor the append's promise.
@@ -64,13 +73,27 @@ export class PublicationGate {
   #failure: FaultCause | undefined;
   #flushes: (() => void)[] = [];
   readonly #listeners = new Set<PublishedListener>();
+  /** L, the tick the gate booted at. */
+  readonly #boot: Tick;
+  /** Whether listeners need the boot record: a gate given one refuses them once it published. */
+  readonly #handsBoot: boolean;
+  /** The boot record, until the first publication: no listener may subscribe after it. */
+  #bootRecord: PublishedTick | undefined;
   #listenerFaults = 0;
   #changeFaults = 0;
 
-  constructor({ journal, batchTicks, boot, onChange = () => undefined }: GateOptions) {
+  constructor({ journal, batchTicks, boot, bootRecord, onChange = () => undefined }: GateOptions) {
     if (!Number.isSafeInteger(batchTicks) || batchTicks < 1) {
       throw new RangeError(`a batch holds at least one tick, not ${batchTicks}`);
     }
+    if (bootRecord !== undefined && bootRecord.tick !== boot) {
+      throw new RangeError(
+        `the boot record is of tick ${bootRecord.tick}, not of the boot tick ${boot}`,
+      );
+    }
+    this.#boot = boot;
+    this.#handsBoot = bootRecord !== undefined;
+    this.#bootRecord = bootRecord;
     this.#journal = new OrderedJournal(journal, boot);
     this.#batchTicks = batchTicks;
     this.#onChange = onChange;
@@ -149,8 +172,20 @@ export class PublicationGate {
     return done;
   }
 
-  /** Adds a listener of published ticks; returns the function that removes it. */
+  /**
+   * Adds a listener of published ticks and returns the function that removes it. With a boot
+   * record, the listener receives it at once, before any published tick; once the gate published,
+   * such a gate refuses a new listener, which would miss the ticks before its subscription.
+   */
   subscribe(listener: PublishedListener): () => void {
+    if (this.#handsBoot) {
+      if (this.#bootRecord === undefined) {
+        throw new Error(
+          `a listener subscribes before the first publication: after it, it would miss the boot record of tick ${this.#boot}`,
+        );
+      }
+      this.#deliver(listener, this.#bootRecord);
+    }
     this.#listeners.add(listener);
     return () => {
       this.#listeners.delete(listener);
@@ -218,13 +253,17 @@ export class PublicationGate {
 
   #publish(tick: Tick, published: PublishedTick): void {
     this.#published = tick;
-    for (const listener of [...this.#listeners]) {
-      try {
-        const result = listener(published);
-        if (isThenable(result)) Promise.resolve(result).catch(() => this.#countFault());
-      } catch {
-        this.#countFault();
-      }
+    this.#bootRecord = undefined;
+    for (const listener of [...this.#listeners]) this.#deliver(listener, published);
+  }
+
+  /** Calls `listener` with `published`: its result is ignored, and a throw or rejection counted. */
+  #deliver(listener: PublishedListener, published: PublishedTick): void {
+    try {
+      const result = listener(published);
+      if (isThenable(result)) Promise.resolve(result).catch(() => this.#countFault());
+    } catch {
+      this.#countFault();
     }
   }
 

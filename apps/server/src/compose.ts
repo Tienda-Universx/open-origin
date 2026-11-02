@@ -42,7 +42,11 @@ export type WorldPlane = {
   start(): void;
   /** Stops the clock and resolves once every executed tick is committed and published (RPO 0). */
   stop(): Promise<void>;
-  /** Adds a listener of published ticks; returns the function that removes it. */
+  /**
+   * Adds a listener of published ticks and returns the function that removes it. The listener
+   * receives the boot record first, the full projection of the world's tick at boot, then every
+   * published tick in order. It must subscribe before the first publication, or this throws.
+   */
   subscribeToPublished(listener: PublishedListener): () => void;
   /** The public terrain of `chunk`, from the world's genesis; it never materializes a chunk. */
   readTerrain(chunk: ChunkCoord): TerrainPublic;
@@ -106,6 +110,7 @@ function wire(config: Config, deps: WorldPlaneDeps): Parts {
     journal: deps.journal ?? new EphemeralJournal(),
     batchTicks: config.publicationBatchTicks,
     boot: readView(source.world).tick,
+    bootRecord: projection.boot(),
     onChange: () => afterJournal(),
   });
   const host = new WorldHost({ source, projector, gate, ...optionalK(deps.checkpointTicks) });
