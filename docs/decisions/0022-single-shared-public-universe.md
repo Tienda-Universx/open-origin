@@ -127,6 +127,14 @@ What each batch takes from this:
 | T7 | Durable tick batches before publication, with the delay measured |
 | T8 | No time controls in `apps/web`, which shows the server's clock and keeps cameras and preferences local. In `apps/admin`, for the public universe, an audited pause and resume and epoch-opening configuration; changing speed, stepping, and seeking only for private simulations |
 
+Refined by [0025](0025-real-time-world-host.md) and [0026](0026-public-protocol-v1.md):
+
+- Until T7's durable journal, the server runs only in an explicit, announced, loopback-only ephemeral
+  mode, where a restart is a new world, never a rewind.
+- A playout queue adds up to F periods to the public lag, and a client's multi-period transaction
+  adds its duration.
+- The simulated time clients show is the day and its position, computed by the server.
+
 ## Consequences
 
 - The engine is unaffected, because it already advances only through `step`. T3 changes nothing.

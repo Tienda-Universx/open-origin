@@ -46,6 +46,11 @@ Experimental controls:
 5. **Randomized placebo observation**: spectator bots assigned at random to inhabitants, to
    estimate the causal effect of "being observed" (expected: null).
 
+Refined by [0025](0025-real-time-world-host.md): control 2 is a scan of the server's transitive
+imports, under which only the composition root reaches the presentation plane and the transport.
+Control 1 also compares, at every tick, the fake-clock time the tick ran at, the full command list,
+and the bytes of its public projection, because a hash cannot see an extra tick or a rejected command.
+
 ## Consequences
 
 - v0.1 ships the P9 boundary, the invariance test, and separate telemetry (controls 1–3). The

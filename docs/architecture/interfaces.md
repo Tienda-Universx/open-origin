@@ -28,13 +28,17 @@ apps/admin ─(admin DTOs + audited commands, 127.0.0.1 + token)─▶ server: a
 packages/ui ── shared by apps/web and apps/admin (presentational)
 ```
 
-- **Public plane.** Server → client: `hello` (protocol version and audience), `snapshot` on chunk
-  subscription, `delta` per tick or every N ticks, `events`. Client → server: `subscribe(chunks)`,
-  `follow(beingId)`, `ping`. Clients are read-only in v0.1 (§I.3, §E.4).
+- **Public plane.** Protocol v1 is in [0026](../decisions/0026-public-protocol-v1.md).
+  - Server → client: `hello`, then transactions of `delta`, `snapshot`, and `events` parts, each
+    closed by a `commit` that carries the authoritative clock, or cancelled by an `abort`.
+  - Client → server: exactly `subscribe(chunks)`, `follow(beingId)`, `ping`, and `resync`.
+  - Clients are read-only in v0.1 (§I.3, §E.4).
 - **One shared universe.** No client message controls time, and a test of the allowlist rejects
   any that would. The public feed of happenings reaches every client, while everything tied to a
-  place follows chunk subscriptions. The plane publishes only durable ticks
-  ([0022](../decisions/0022-single-shared-public-universe.md)).
+  place, local speech included, follows chunk subscriptions. The plane publishes only durable ticks
+  ([0022](../decisions/0022-single-shared-public-universe.md)). Until T7's durable journal exists,
+  the server runs only in an explicit, announced, loopback-only ephemeral mode
+  ([0025](../decisions/0025-real-time-world-host.md)).
 - **Admin plane.** Own listener, own routes, own DTOs: `protocol` has `public` and `admin`
   audiences.
 - **DTO entry points.** `packages/protocol` exposes a public and an admin entry point; which app

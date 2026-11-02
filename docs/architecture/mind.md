@@ -607,8 +607,8 @@ each with the beliefs that lost it, every record that left the mind but by `drop
 at step 1, by increasing id, then those a full store evicted, in the order of the operations.
 `mind.provenance` lists `{ id, tn, ex, ev }` for each live record the decision created, revised,
 related, or tainted downstream, by increasing id, an episode with `ev: []`, and `exposure` after the
-decision; the `ev` of a revised belief records the citations it pushed out, those of its previous
-`ev` it no longer holds. `related` lists, by increasing id, each relationship the decision created
+decision; a belief's `ev` there is the `ev` it holds after the decision, so the citations a revision
+pushed out are no longer in it. `related` lists, by increasing id, each relationship the decision created
 at step 1, one a full store evicted at once included, and each one a `relate` changed; a
 relationship's entry in `mind.provenance` has `ex: 0` and, as `ev`, the records its `relate`
 operations cited, `[]` when it was only created. Familiarity, a law recomputed from perception, is

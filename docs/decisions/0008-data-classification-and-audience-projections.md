@@ -46,6 +46,11 @@ Mechanisms:
 - Clients are read-only in v0.1; every input is schema-validated with size and rate limits.
 - No inhabitant has tools with network, file, or infrastructure access.
 
+Refined by [0026](0026-public-protocol-v1.md): the public clock's fields, and the members of chunks
+and of the global value, get their classes. `simSecondsPerTick` and `TICK_RATE_HZ` are C3, raw
+`depletion` and `due` are C3, and the observable effects of laws, such as the day's cycle, are C0
+while their parameters stay C3.
+
 ## Consequences
 
 - Every new field needs a class and an explicit place in a projection before any client sees it.
