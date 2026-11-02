@@ -47,6 +47,14 @@ web         → protocol
 
 - Extra rule, enforced by lint from the batch that creates both modules: the server's cognitive
   allocation module cannot import the WebSocket subscriptions module.
+- T6 refines this map ([0025](../decisions/0025-real-time-world-host.md)):
+  - `protocol → zod`;
+  - `scenarios → engine, agents`;
+  - `server → scenarios`.
+
+  A scan of the server's transitive imports enforces the extra rule from T6 on: only the composition
+  root imports the presentation plane and the transport, so no module of the world plane can reach
+  them, the future allocator included.
 - The engine owns all state, body and mind; `agents` contributes pure policies and prompt logic
   (§E.3). There is one snapshot and one source of truth.
 - §E.2 predates the two-interface decision and does not list `apps/admin` or `packages/ui`. What
@@ -59,15 +67,16 @@ web         → protocol
 
 | Plane | Contains | May depend on who watches |
 |---|---|---|
-| World | Tick scheduler, cognitive allocator, persistence, `engine`, `agents`, `ai-gateway` | **No.** Nothing crosses the P9 boundary downward |
-| Presentation | WebSocket gateway (interest, send rates, level of detail), audience projections, observation telemetry (C3) | Yes, but it never writes to the world |
+| World | Tick scheduler, cognitive allocator, persistence, the C0 projection of each tick (computed once per tick, never per observer), `engine`, `agents`, `ai-gateway` | **No.** Nothing crosses the P9 boundary downward |
+| Presentation | WebSocket gateway (interest, send rates, level of detail), the playout, the public mirror, the transactions each client receives, observation telemetry (C3) | Yes, but it never writes to the world |
 
 Details: [0005. Observer independence](../decisions/0005-observer-independence.md).
 
 ## Flow of an AI decision
 
 1. An **internal** world trigger (sleep, conversation, novelty, repeated failure) raises an L3
-   deliberation; L0–L2 run every tick without an LLM (§K.2).
+   deliberation; L0–L2 run without an LLM, at each being's decision points
+   ([0023](../decisions/0023-autonomous-beings.md); §K.2 said every tick).
 2. The cognitive allocator, fed only world data, queues the request by trigger tick with a
    deterministic tie-break, within the world's budget: an equal daily share C/N per inhabitant plus
    a common pool for high internal salience (§J.5; adopted default 2026-10-24, configurable,
@@ -123,13 +132,14 @@ From plan §G. Each package is created in the batch that needs it; there are no 
 
 | Path | Batch | Content |
 |---|---|---|
-| `apps/server/` | T6 | Public plane + admin plane (separate listeners) |
+| `apps/server/` | T6, T8 | T6: the world host, scheduler, publication gate, projections, presentation plane, and public listener ([0025](../decisions/0025-real-time-world-host.md), [0026](../decisions/0026-public-protocol-v1.md)); T8: the admin plane on its own listener ([0009](../decisions/0009-public-and-private-admin-interfaces.md); plan §G placed it in T6) |
 | `apps/web/` | T8 | Public interface (React + PixiJS) |
 | `apps/admin/` | T8, T9 | Local admin panel; AI controls in T9 |
 | `packages/ui/` | T8 | Design system: tokens + components (CSS Modules) |
 | `packages/engine/` | T2, then T3, T4, T7 | T2: the deterministic kernel (canonical values, digests, randomness, ticks, the world, `step` and its fault model, versioned snapshots, purity gates), the determinism suite with its negative controls, and the benchmark ([determinism](determinism.md)). T3 adds worldgen in `src/worldgen` (space, the sealed genesis, terrain, the calendar, and primitive observables) and the ChaCha20 function terrain draws from: pure functions that rulesets call inside `step`, proven by a probe ruleset in the determinism suite ([0021](../decisions/0021-procedural-world.md)). T4 adds `src/beings`, a layer above worldgen with the body of the beings: needs and health in closed form, bounded senses, actions validated and executed, contests over food, the occupancy index, and sealed laws of life; its ruleset runs the suite with worldgen inside `step` ([0023](../decisions/0023-autonomous-beings.md), [beings](beings.md)). T5 adds `src/mind`, a pure layer of propositions, records, taints, salience, and forgetting that cannot read the world, and the ruleset `beings@2` beside `beings@1`, with perception, mental operations, relationships, and speech ([0024](../decisions/0024-mind-memory-beliefs-and-speech.md), [mind](mind.md)). T7 adds the migration chain of snapshot versions (plan §5.2) |
 | `packages/agents/` | T4, T5 | T4: the deterministic brain behind the engine's controller port (Utility AI, Dijkstra and A*), a pure function of the senses the engine builds ([0023](../decisions/0023-autonomous-beings.md)); T5: the brain `mind@1`, which composes `utility@1` and proposes what to remember, believe, and say, and the templates of speech ([0024](../decisions/0024-mind-memory-beliefs-and-speech.md)); T9: prompts |
-| `packages/protocol/` | T6 | DTOs per audience |
+| `packages/protocol/` | T6 | DTOs per audience: `./public` and `./admin`, validated with zod, and the reference client reducer ([0026](../decisions/0026-public-protocol-v1.md)) |
+| `packages/scenarios/` | T6 | The preregistered world recipes of T4 and T5, moved from the agents test support so the server can run them ([0025](../decisions/0025-real-time-world-host.md)) |
 | `packages/ai-gateway/` | T9 | AI modes, allowlist, buckets, budget |
 | `tests/` | T1, T6, T7 | T1: repository checks in `tests/repo/` (see `AGENTS.md`, Automated controls); T6: end-to-end synchronization and observer-invariance tests; T7: crash-recovery tests ([0019](../decisions/0019-end-to-end-testing-strategy.md)) |
 | `docs/` | T1 | Vision, plan, tracker, ADRs, architecture; determinism spec in T2, persistence spec in T7 |
