@@ -227,10 +227,18 @@ function tickProblem(state: Connected, commit: CommitMessage): Anomaly | undefin
   return { kind: "tick_not_increasing", detail: `commit at tick ${commit.tick} after ${previous}` };
 }
 
-/** Why the differences of the visible `chunk` at `key` cannot apply; undefined when they can. */
+/**
+ * Why the differences of the visible `chunk` at `key` cannot apply; undefined when they can. A
+ * version is the tick of the chunk's last change, so a change of its beings moves it forward, while
+ * an entry that only brings speech keeps it.
+ */
 function deltaProblem(key: string, chunk: ChunkView | undefined, delta: ChunkDelta) {
   if (chunk === undefined) return new TransactionProblem(`chunk ${key} is not visible`);
   if (delta.v < chunk.v) return new TransactionProblem(`chunk ${key} cannot go back a version`);
+  const changes = delta.gone.length > 0 || delta.upsert.length > 0;
+  if (changes && delta.v === chunk.v) {
+    return new TransactionProblem(`chunk ${key} changes but keeps its version ${chunk.v}`);
+  }
   const absent = delta.gone.find((id) => !chunk.beings.has(id));
   if (absent !== undefined) return new TransactionProblem(`being ${absent} is not in ${key}`);
   const outside = delta.upsert.find((being) => !liesIn(being, delta.at));
@@ -388,12 +396,34 @@ function followedAfter(view: ClientView, txn: Transaction, next: ClientView): Be
   return findBeing(next, id) ?? sent ?? null;
 }
 
+/**
+ * Why an item of speech or of the feed of `txn` is not after `view`'s tick `L`: a transaction to
+ * `L'` brings those of `(L, L']`, and the schema already holds them at most at `L'`. A reset is not
+ * checked: the view it replaces may belong to an earlier connection, even to another world.
+ */
+function rangeProblem(view: ClientView, txn: Transaction): TransactionProblem | undefined {
+  if (txn.reset) return undefined;
+  const notAfter = `is not after the view's tick ${view.tick}`;
+  for (const [key, { speech }] of txn.deltas) {
+    const said = speech.find(({ tick }) => tick <= view.tick);
+    if (said !== undefined) {
+      return new TransactionProblem(`speech in chunk ${key} at tick ${said.tick} ${notAfter}`);
+    }
+  }
+  const item = txn.feed.find(({ tick }) => tick <= view.tick);
+  if (item !== undefined)
+    return new TransactionProblem(`a feed item at tick ${item.tick} ${notAfter}`);
+  return undefined;
+}
+
 /** The view `txn` leaves, committed by `commit`; or the problem that keeps it from applying. */
 function viewAfter(
   view: ClientView,
   txn: Transaction,
   commit: CommitMessage,
 ): ClientView | TransactionProblem {
+  const early = rangeProblem(view, txn);
+  if (early !== undefined) return early;
   const chunks = chunksAfter(view, txn);
   if (chunks instanceof TransactionProblem) return chunks;
   const next: ClientView = { tick: commit.tick, clock: commit.clock, chunks, followed: null };

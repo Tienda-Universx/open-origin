@@ -221,6 +221,16 @@ describe("bounds", () => {
     expect(cases.map(accepts)).toEqual(cases.map(() => false));
   });
 
+  test("of a transaction's feed: no item after its tick", () => {
+    const death = (tick: number) => ({ kind: "death", tick, being: 4, chunk: [0, 0] });
+    const greeting = (tick: number) => ({ kind: "greeting", tick, from: 4, to: 5, chunk: [0, 0] });
+    const feed = (items: object[]) => ({ ...MINIMAL.events, items });
+    const atTick = [feed([death(40)]), feed([death(0), greeting(40)])];
+    expect(atTick.map(accepts)).toEqual([true, true]);
+    const after = [feed([death(41)]), feed([death(7), greeting(41)])];
+    expect(after.map(accepts)).toEqual([false, false]);
+  });
+
   test("of fragments: an index below a count of at least one", () => {
     const fragment = (frag: object) => ({
       ...MINIMAL.snapshot,

@@ -172,13 +172,17 @@ export const SnapshotMessage = z
   .refine(versionsAtMost, VERSIONS_AT_MOST);
 
 /** A part of a transaction: the feed of its ticks, and how many items were missed, if any. */
-export const EventsMessage = z.strictObject({
-  type: z.literal("events"),
-  ...HEADER,
-  txn: Txn,
-  items: z.array(FeedItem).max(RING_ITEMS),
-  missed: Count.optional(),
-});
+export const EventsMessage = z
+  .strictObject({
+    type: z.literal("events"),
+    ...HEADER,
+    txn: Txn,
+    items: z.array(FeedItem).max(RING_ITEMS),
+    missed: Count.optional(),
+  })
+  .refine(({ tick, items }) => items.every((item) => item.tick <= tick), {
+    message: "a feed item cannot follow the transaction's tick",
+  });
 
 /** Closes a transaction: the client applies it whole, and shows this clock. */
 export const CommitMessage = z

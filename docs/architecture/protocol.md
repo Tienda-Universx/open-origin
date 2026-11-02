@@ -75,7 +75,7 @@ carry its target tick; every other message carries the client's visible tick whe
 | `hello` | `protocol`, `audience: "public"`, `world{id}`, `durability`, `state`, `clock`, `limits` | `seq` is 0; `clock.tick` equals `tick`; `world.id` is 32 lowercase hexadecimal digits |
 | `delta` | `txn`, `chunks[{at, v, gone[], upsert[], speech[], speechMissed?}]`, `drop[]` | No chunk's `v` and no speech item's `tick` exceeds `tick`; a chunk appears once, in `chunks` or in `drop` |
 | `snapshot` | `txn`, `reset`, `chunks[{at, v, terrain?, beings[], frag{i, n}}]`, `followed?` | No chunk's `v` exceeds `tick`; `0 ≤ i < n` |
-| `events` | `txn`, `items[]`, `missed?` | Items are FeedItem records |
+| `events` | `txn`, `items[]`, `missed?` | Items are FeedItem records; no item's `tick` exceeds `tick` |
 | `commit` | `txn`, `clock{tick, day, dayPermille}` | `clock.tick` equals `tick`; `dayPermille` from 0 to 999 |
 | `abort` | `txn` | |
 | `notice` | `code: "interest_trimmed"`, `chunks[]` | At least one chunk, each once |
@@ -228,11 +228,17 @@ Semantics:
   previous commit's (or, first, is below `hello`'s), and a transaction that breaks the protocol
   (parts at two ticks, two transactions at once, missing or repeated fragments, terrain not in
   exactly one fragment, differences of a chunk that is not visible or of a being that is not there,
-  a chunk entering that is visible, a being in two visible chunks, a version that goes back, or a
-  delta in a reset) each return an anomaly. The view stays as it was, marked stale, and the client
-  sends `resync`, at most once every `RESYNC_INTERVAL_MS`. After a gap, the transaction in flight
-  and the transaction of the next transaction message are discarded, even a reset, since parts of
-  them may be lost.
+  a chunk entering that is visible, a being in two visible chunks, a version that goes back, a
+  change of a chunk's beings that keeps its version, speech or a feed item at or before the view's
+  tick, or a delta in a reset) each return an anomaly. The view stays as it was, marked stale, and
+  the client sends `resync`, at most once every `RESYNC_INTERVAL_MS`. After a gap, the transaction
+  in flight and the transaction of the next transaction message are discarded, even a reset, since
+  parts of them may be lost.
+- **Versions and ticks.** A chunk's `v` is the tick of its last public change, so an entry that
+  changes its beings (`gone` or `upsert`) carries a `v` above the chunk's, while one that only
+  brings speech keeps it. A transaction from the view's tick `L` to `L'` brings the speech and the
+  feed of `(L, L']`: the schema holds them at most at `L'`, and the reducer above `L`. A reset's
+  feed is not compared with the old view's tick, which may belong to another connection or world.
 
 The silence timer, the resync rate, and reconnecting are the client's: they read the clock, which
 the reducer never does.

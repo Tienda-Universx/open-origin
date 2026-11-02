@@ -223,8 +223,9 @@ describe("a transaction", () => {
   test("brings its speech and feed at the commit", () => {
     const session = connected();
     const greet = { tick: 14, speaker: 1, to: 2, act: "greet", text: "Being 1 greets being 2." };
+    // Speech changes no being, so the chunk keeps its version, 11.
     session.apply(delta(session.at(15, 2), [{ at: A, v: 11, speech: [greet], speechMissed: 2 }]));
-    const item = { kind: "greeting", tick: 3, from: 1, to: 2, chunk: A };
+    const item = { kind: "greeting", tick: 13, from: 1, to: 2, chunk: A };
     session.apply(events(session.at(15, 2), [item], 5));
     const committed: unknown = session.apply(commit(session.at(15, 2))).committed;
     expect(committed).toEqual({
@@ -532,6 +533,42 @@ describe("anomalies", () => {
     session.apply(snapshot(session.at(15, 2), [{ at: A, v: 15 }]));
     expect(session.apply(commit(session.at(15, 2))).anomaly?.kind).toBe("bad_transaction");
   });
+
+  test("a change of a chunk that keeps the chunk's version", () => {
+    for (const change of [{ gone: [1] }, { upsert: [being(1, [4, 3])] }]) {
+      const session = connected();
+      // Chunk A is at version 11: a change moves it past 11.
+      session.apply(delta(session.at(15, 2), [{ at: A, v: 11, ...change }]));
+      const applied = session.apply(commit(session.at(15, 2)));
+      expect(applied.anomaly?.kind).toBe("bad_transaction");
+      expect([session.ids(A), findBeing(session.view, 1)?.cell, session.view.tick]).toEqual([
+        [1],
+        [2, 3],
+        12,
+      ]);
+    }
+  });
+
+  test("speech or feed that is not after the view's tick", () => {
+    // The view is at tick 12: a transaction to tick 15 brings the speech and feed of (12, 15].
+    const speech = { speaker: 1, to: 2, act: "tell", text: "Being 1 tells being 2." };
+    const parts = [
+      (s: Session, tick: number) =>
+        delta(s.at(15, 2), [{ at: A, v: 11, speech: [{ ...speech, tick }] }]),
+      (s: Session, tick: number) =>
+        events(s.at(15, 2), [{ kind: "death", tick, being: 2, chunk: B }]),
+    ];
+    for (const part of parts) {
+      const early = connected();
+      early.apply(part(early, 12));
+      expect(early.apply(commit(early.at(15, 2))).anomaly?.kind).toBe("bad_transaction");
+      expect([early.view.tick, early.state.stale]).toEqual([12, true]);
+      const first = connected();
+      first.apply(part(first, 13));
+      expect(first.apply(commit(first.at(15, 2))).anomaly).toBeUndefined();
+      expect(first.view.tick).toBe(15);
+    }
+  });
 });
 
 describe("reconnecting", () => {
@@ -557,6 +594,19 @@ describe("reconnecting", () => {
       4,
       clockAt(4),
     ]);
+  });
+
+  test("a reset's feed is not compared with the old view's tick, which may be another world's", () => {
+    const session = connected();
+    session.apply(hello(3));
+    const fresh = new Session();
+    fresh.state = session.state;
+    const item = { kind: "death", tick: 4, being: 9, chunk: C };
+    fresh.apply(snapshot(fresh.at(4, 0), [{ at: C, v: 4 }], { reset: true }));
+    fresh.apply(events(fresh.at(4, 0), [item]));
+    const applied = fresh.apply(commit(fresh.at(4, 0)));
+    const feed: unknown = applied.committed?.feed;
+    expect([applied.anomaly, feed, fresh.view.tick]).toEqual([undefined, [item], 4]);
   });
 });
 
