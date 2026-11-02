@@ -42,7 +42,10 @@ export type ClientView = {
   readonly clock: Clock;
   /** By chunkKey. */
   readonly chunks: ReadonlyMap<string, ChunkView>;
-  /** The followed being's record at this tick, or null when nothing visible is followed. */
+  /**
+   * The followed being's record at this tick while a visible chunk holds it, else the one the last
+   * commit's parts sent; null when nothing is followed, or the being is gone or outside the view.
+   */
   readonly followed: BeingPublic | null;
 };
 
@@ -371,12 +374,18 @@ function chunksAfter(
 }
 
 /**
- * The followed being after `txn`: the record a part sent, or null when a part said none; without
- * either, the previous one, or none after a reset.
+ * The followed being after `txn`, whose view is `next`. The being is the one a part of `txn` named,
+ * none when a part said none; when no part said, the one `view` followed, or none after a reset.
+ * Its record is the one in `next`, which moves with the view so that it is always at the view's
+ * tick; when `next` does not hold it, the record a part sent, or null: the being is gone or outside
+ * the view (ADR 0026).
  */
-function followedAfter(view: ClientView, txn: Transaction): BeingPublic | null {
-  if (txn.followed !== undefined) return txn.followed;
-  return txn.reset ? null : view.followed;
+function followedAfter(view: ClientView, txn: Transaction, next: ClientView): BeingPublic | null {
+  const sent = txn.followed;
+  const previous = txn.reset ? null : view.followed;
+  const id = sent === undefined ? previous?.id : sent?.id;
+  if (id === undefined) return null;
+  return findBeing(next, id) ?? sent ?? null;
 }
 
 /** The view `txn` leaves, committed by `commit`; or the problem that keeps it from applying. */
@@ -387,11 +396,8 @@ function viewAfter(
 ): ClientView | TransactionProblem {
   const chunks = chunksAfter(view, txn);
   if (chunks instanceof TransactionProblem) return chunks;
-  const followed = followedAfter(view, txn);
-  const next: ClientView = { tick: commit.tick, clock: commit.clock, chunks, followed };
-  // The followed record moves with the view, so that it is always at the view's tick.
-  const current = followed === null ? undefined : findBeing(next, followed.id);
-  return current === undefined ? next : { ...next, followed: current };
+  const next: ClientView = { tick: commit.tick, clock: commit.clock, chunks, followed: null };
+  return { ...next, followed: followedAfter(view, txn, next) };
 }
 
 /** What a commit of `txn` brought besides the view. */

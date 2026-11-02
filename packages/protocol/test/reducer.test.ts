@@ -348,6 +348,37 @@ describe("a being in two visible chunks", () => {
   });
 });
 
+describe("the followed being", () => {
+  /** Each case: how the followed being 1 leaves the view, and the delta that does it. */
+  const LEAVING: readonly (readonly [string, (session: Session) => ServerMessage])[] = [
+    [
+      "it dies: its chunk says it is gone",
+      (s) => delta(s.at(15, 2), [{ at: A, v: 15, gone: [1] }]),
+    ],
+    ["its chunk leaves the view", (s) => delta(s.at(15, 2), [], [A])],
+  ];
+
+  test.each(LEAVING)("is null once it leaves the view with no record sent: %s", (_, part) => {
+    const session = connected();
+    expect(session.view.followed).toEqual(being(1, [2, 3]));
+    session.apply(part(session));
+    expect(session.apply(commit(session.at(15, 2))).anomaly).toBeUndefined();
+    expect([findBeing(session.view, 1), session.view.followed]).toEqual([undefined, null]);
+    // It stays null across later commits.
+    session.apply(commit(session.at(16, 3)));
+    expect(session.view.followed).toBeNull();
+  });
+
+  test("keeps the record a part sent, even outside the view", () => {
+    const session = connected();
+    const far = being(1, [400, 400]);
+    session.apply(delta(session.at(15, 2), [{ at: A, v: 15, gone: [1] }]));
+    session.apply(snapshot(session.at(15, 2), [], { followed: far }));
+    session.apply(commit(session.at(15, 2)));
+    expect([findBeing(session.view, 1), session.view.followed]).toEqual([undefined, far]);
+  });
+});
+
 describe("a reset", () => {
   test("replaces the whole view at its commit, and the old view stays, stale, until then", () => {
     const session = connected();

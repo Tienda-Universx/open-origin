@@ -219,9 +219,11 @@ Semantics:
   and its clock. The server keeps no session, so every connection's first transaction is a reset.
   While stale, only a reset transaction applies.
 - **Clock.** The visible clock comes only from `hello`, before any view, and from `commit`.
-- **Followed being.** `followed` is the record the last part that said one sent, null after a part
-  said none or after a reset that said nothing, and it moves with the view to the being's current
-  record while the being is visible.
+- **Followed being.** The followed being is the one the last part that said one named; none after
+  a part said none or after a reset that said nothing. At each commit, `followed` is its record in
+  the view, which moves with the being while it is visible; when the view does not hold it, the
+  record a part of that transaction sent, or `null`: a being that died or left the view with no
+  record sent is no longer shown as followed.
 - **Anomalies.** A message before `hello`, a `seq` gap, a `commit` whose tick does not exceed the
   previous commit's (or, first, is below `hello`'s), and a transaction that breaks the protocol
   (parts at two ticks, two transactions at once, missing or repeated fragments, terrain not in
