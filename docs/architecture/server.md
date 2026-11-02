@@ -1,15 +1,18 @@
-# Server: the world plane
+# Server: the world plane and the presentation core
 
 `apps/server` runs the public universe in one Bun process. Its world plane steps the engine at a fixed
 rate, makes each tick durable before it publishes it, and hands the rest of the server only frozen
-published records. [ADR 0025](../decisions/0025-real-time-world-host.md) records the design and why;
-this document describes what the code implements as of T6-5: the configuration, the scheduler, the
-world host and its sources, the C0 projection, the journal port, the publication gate, and their
-composition. The presentation plane, the transport, and the entry point arrive in later batches.
+published records. Its presentation plane turns those records into each client's view.
+[ADR 0025](../decisions/0025-real-time-world-host.md) and
+[ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
+describes what the code implements as of T6-6a: the configuration, the scheduler, the world host
+and its sources, the C0 projection, the journal port, the publication gate, the presentation core
+(playout, mirror, interest, and transactions), and their composition. Sessions and the limits that
+act on clients (T6-6b), the transport, and the entry point (T6-7) arrive in later batches.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
-`scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`, and
-`leak`), and `tests/repo/server-boundaries.test.ts`.
+`scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
+`leak`, `presentation-mirror`, and `presentation`), and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -18,6 +21,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | `src/config/` | — | `parseConfig`: the environment, parsed and deep-frozen |
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
 | `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
+| `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, and `terrain.ts`: the presentation core |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane |
 
@@ -221,6 +225,107 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
   scheduler can ask its hold again. A throw from it is counted as `changeFaults` and reaches neither
   the caller of `accept` nor the append's promise, where it would be an unhandled rejection.
 
+## Presentation plane
+
+`Presentation` receives from the world plane two functions only: the subscription to published
+ticks, which delivers the boot record first, and `readTerrain`. It holds nothing of the world but
+those frozen C0 records, and no network: the transport of T6-7 will drive it through `connect(sink)`,
+`subscribe`, `follow`, `resync`, `abort`, and `close`, where a sink is `{send(frame), lagging()}`.
+
+### Playout
+
+The listener of published ticks only queues them. Each period, `period()` runs in a timer task of
+its own, never inside a step's callback: the playout hands the mirror the oldest waiting tick, or,
+when more than F wait, every waiting tick in order, and the period releases the newest; the rings
+still receive every tick. `start()` runs a period every `1/TICK_RATE_HZ` seconds on the injected
+timer, and a period that ran late resets the schedule rather than catching up. Then the fan-out
+serves each client that is not lagging.
+
+### Mirror
+
+The mirror applies the boot record, then each released tick, in order.
+
+- **Versions.** A chunk's content is an immutable `ChunkVersion`, `{v, records}`, its being records
+  sorted by id and encoded once. A published change of a chunk makes a new version; every other
+  chunk keeps its version, shared by every client that shows it. A chunk that never held a being
+  reads as an empty version at the boot tick, and one that emptied keeps an empty version at the
+  tick it emptied. The difference by id between two versions of a chunk is computed once per pair
+  and shared.
+- **Pins.** Clients pin the versions they show and those their transaction reads. Pins are counted
+  per version; a version replaced while pinned is retained until its last pin goes, and the bytes
+  of retained versions are counted exactly. A version replaced with no pin is freed at once. The
+  limit of retained bytes that acts on that count is T6-6b's.
+- **Index.** The chunk of every being, so the follow window and the followed record are found at
+  once.
+- **Rings.** Local speech, one stream per chunk, and the feed, one stream, are kept for the last
+  H = 300 ticks, at most 2,048 items each ring, each item encoded once. At most 64 feed items of a
+  tick are kept; the rest are counted. Each stream counts every item it ever had, and a client
+  remembers the count of each stream at its visible tick, so what it can no longer read, evicted or
+  never kept, is counted exactly as `missed` or `speechMissed`.
+
+### Interest
+
+A client's effective interest is its follow window, the followed being's chunk ± 1 clipped to the
+world (at most 9 chunks), then its camera (at most 64 chunks), which each `subscribe` replaces, each
+chunk once. The window moves to the followed being's chunk when a transaction starts. An inverted
+index maps each chunk to the clients whose effective interest holds it, and `followers(being)` counts
+the clients that follow a being: observation telemetry (C3) that lives in this plane, where the world
+cannot import it.
+
+### Transactions
+
+Each client has a visible tick `L` and the versions it shows, pinned. A transaction starts only
+after the previous one committed, never in the period of that commit, once the playout tick `L'`
+passed the last commit's (for a connection's first, reached hello's), and while the client is not
+lagging. It pins the versions of `L'` for the effective interest and fixes its whole content:
+
+1. `drop` of the chunks that leave the view;
+2. for each chunk that stays, the difference by id between its versions at `L` and at `L'`, sent when
+   the version moved or there is speech, and its local speech of `(L, L']` with `speechMissed`;
+3. the full content of the chunks that enter, with terrain, or of the whole view in a reset, and the
+   followed being's record when the client does not show the being it follows;
+4. the feed of `(L, L']`, with `missed`;
+5. `commit`, with the clock of `L'`.
+
+Every connection's first transaction is a reset, and so is the one after `resync`. Parts are at most
+64 KiB, filled against an upper bound of their size with every integer at its widest, and broken on
+record boundaries: a chunk's differences may span several parts, and a chunk that enters is cut into
+fragments that each fit in a part, `frag{i, n}`, its terrain in the first. The parts read only pinned
+versions, so content stays that of `L'` however many periods the transaction takes. `seq` grows by
+one per message, written when the message is sent; the messages of a transaction carry `L'`, and
+hello the client's visible tick. At the commit the view takes the pins of `L'` and releases those of
+`L`. `abort` cancels the transaction in flight, whose pins go and which the client is told about
+first; with `releaseView`, the view's pins go too and the next transaction is a reset (the hook of
+T6-6b's memory guard). `close` releases the client's interest, index entries, following, pins, and
+transaction.
+
+The terrain of a chunk that enters is generated by `readTerrain` and kept, encoded, in an LRU of
+2,048 entries. Hello says the world is `running` until T6-6b brings the world's stops to the
+presentation.
+
+### Fan-out
+
+Each period, the fan-out sends a client that is not lagging its pending messages (hello, aborts),
+then its transaction's parts, up to a budget of 256 KiB per client and period, every message counted.
+A message that does not fit waits for the next period with its place in the order. The fan-out's
+budget of time, its rotating order, the strikes, and the limits of view, memory, and terrain are
+T6-6b's.
+
+### Tests
+
+The protocol's reducer, `applyMessage`, is every client in these tests, and every frame is parsed
+with the strict schema.
+
+- `presentation-mirror.test.ts`: versions made only for changed chunks and diffs computed once per
+  pair; exact pins and retained bytes; rings bounded by H and 2,048 items with exact `missed`; 64
+  feed items a tick; the playout's release.
+- `presentation.test.ts`: hello and a reset first; one commit per period; the playout's skip beyond
+  F with every tick's feed; a being crossing chunks for clients of one chunk, the other, both, and a
+  follower (plan test 9); the same feed for clients of disjoint regions (plan test 10); a lost
+  message detected as a `seq` gap and healed by a resync (plan test 8); speech of `(L, L']` and its
+  `speechMissed`; abort; periods on the timer; and connect and close cycles that leave interest,
+  index, followings, pins, and retained bytes at zero.
+
 ## Composition
 
 `compose(config, deps)` wires a source (the default scenario unless given), the projection of its
@@ -272,8 +377,9 @@ that leaves `src/`, the server's own package name, an absolute path, a URL other
 `node:` (`file://` among them), a computed specifier, and a triple-slash reference directive are
 rejected: a path or a URL would join the graph as a package, out of every rule's reach. The scan is
 lexical, so a string that reads like an import or names a WebSocket counts, and a `require` reached
-through another name (`const load = require`) is left to review. Until `presentation/` and
-`transport/` exist, each rule is proved on planted trees whose legal version passes. The same
+through another name (`const load = require`) is left to review. The real tree, `presentation/`
+included, keeps every rule, and each rule is also proved on planted trees whose legal version
+passes; `transport/` arrives in T6-7. The same
 reader rejects, in `packages/scenarios/src` and `packages/protocol/src`, a relative path that leaves
 `src`, a type-level `import()`, a `require()` or `import.meta.require()`, a computed specifier, and a
 triple-slash reference directive, which their Biome rules cannot see.
