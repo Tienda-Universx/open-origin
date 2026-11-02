@@ -178,10 +178,11 @@ large, and 1013 too slow for its interest. Error codes (`ERROR_CODES`): `bad_jso
 `reconnectDelayMs(attempt, draw, unavailable?)` gives the delay before reconnect attempt `attempt`,
 counted from 0, from `draw`, a random number in [0, 1) the caller injects: a whole number of
 milliseconds spread uniformly over [500, ceiling), where the ceiling is 1 s for the first attempt
-and doubles with each one up to 30 s. After an HTTP 503 (`unavailable`), it is at least 5 s. It
-throws a RangeError for an attempt that is not a non-negative safe integer or a draw outside
-[0, 1). Every reconnect gets a new `hello`; the client then resends its `subscribe` and `follow`,
-and the server keeps no session for it (ADR 0026).
+and doubles with each one up to 30 s. After an HTTP 503 (`unavailable`), it is spread the same way
+over [5 s, the larger of the ceiling and 10 s), so clients the server refused together wait at
+least 5 s and still do not return at once. It throws a RangeError for an attempt that is not a
+non-negative safe integer or a draw outside [0, 1). Every reconnect gets a new `hello`; the client
+then resends its `subscribe` and `follow`, and the server keeps no session for it (ADR 0026).
 
 ## The reference client reducer
 

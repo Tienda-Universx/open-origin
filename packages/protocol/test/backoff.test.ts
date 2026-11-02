@@ -39,11 +39,26 @@ describe("reconnectDelayMs", () => {
     }
   });
 
-  test("after a 503, the delay is at least 5 s, and a longer one stays", () => {
-    expect(reconnectDelayMs(0, 0, true)).toBe(5000);
-    expect(reconnectDelayMs(0, TOP_DRAW, true)).toBe(5000);
-    expect(reconnectDelayMs(5, TOP_DRAW, true)).toBe(29_999);
+  test("after a 503, the delay is spread over [5 s, the larger of the ceiling and 10 s)", () => {
+    const after503 = (attempt: number) =>
+      [0, 0.5, TOP_DRAW].map((draw) => reconnectDelayMs(attempt, draw, true));
+    // Ceilings of 1, 2, 4, and 8 s: clients refused together do not all return at 5 s.
+    for (const attempt of [0, 1, 2, 3]) expect(after503(attempt)).toEqual([5000, 7500, 9999]);
+    // A ceiling of 16 s, then of 30 s.
+    expect(after503(4)).toEqual([5000, 10_500, 15_999]);
+    expect(after503(5)).toEqual([5000, 17_500, 29_999]);
     expect(reconnectDelayMs(5, TOP_DRAW, false)).toBe(29_999);
+  });
+
+  test("after a 503, every delay is a whole number of milliseconds from 5 s to below 30 s", () => {
+    for (let attempt = 0; attempt <= 64; attempt += 1) {
+      for (const draw of DRAWS) {
+        const delay = reconnectDelayMs(attempt, draw, true);
+        expect(Number.isInteger(delay)).toBe(true);
+        expect(delay).toBeGreaterThanOrEqual(5000);
+        expect(delay).toBeLessThan(30_000);
+      }
+    }
   });
 
   test("the largest attempt still caps at 30 s, without a long loop", () => {
