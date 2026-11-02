@@ -8,7 +8,8 @@
  *   `commit`, so the visible view is always at one tick; `abort` discards the parts.
  * - A commit applies, in order: the chunks that leave (`drop`), then every visible chunk's `gone`,
  *   then every visible chunk's `upsert`, then the full content of the chunks that enter, each put
- *   together from all its fragments, which may span several parts.
+ *   together from all its fragments, which may span several parts. Every being is then in one
+ *   visible chunk: a being that crosses leaves one chunk and enters the other in one transaction.
  * - A `reset` transaction replaces the whole view at its commit; until then the old view stays,
  *   marked `stale`. Every connection starts stale, so its first transaction must be a reset, and a
  *   reset always has at least one `snapshot` part with `reset: true`.
@@ -265,8 +266,8 @@ function applyDeltas(
   return undefined;
 }
 
-/** The chunks after `txn`, applied to the chunks of `view`. */
-function chunksAfter(
+/** The chunks `txn` leaves, applied to the chunks of `view`, before any check across chunks. */
+function appliedChunks(
   view: ClientView,
   txn: Transaction,
 ): Map<string, ChunkView> | TransactionProblem {
@@ -282,6 +283,91 @@ function chunksAfter(
     chunks.set(key, content);
   }
   return chunks;
+}
+
+/** The problem of a being found in two chunks. */
+function twice(id: number, first: string, second: string): TransactionProblem {
+  return new TransactionProblem(`being ${id} is in two chunks: ${first} and ${second}`);
+}
+
+/** Records that the beings `ids` are in the chunk `key`; one already in another chunk is a problem. */
+function place(
+  placed: Map<number, string>,
+  key: string,
+  ids: Iterable<number>,
+): TransactionProblem | undefined {
+  for (const id of ids) {
+    const other = placed.get(id);
+    if (other !== undefined && other !== key) return twice(id, other, key);
+    placed.set(id, key);
+  }
+  return undefined;
+}
+
+/** The chunk of every being `txn` places, by an upsert or in a chunk that enters, by id. */
+function placedBy(txn: Transaction): Map<number, string> | TransactionProblem {
+  const placed = new Map<number, string>();
+  for (const [key, delta] of txn.deltas) {
+    const ids = delta.upsert.map((being) => being.id);
+    const problem = place(placed, key, ids);
+    if (problem !== undefined) return problem;
+  }
+  for (const [key, content] of txn.entering) {
+    const problem = place(placed, key, content.beings.keys());
+    if (problem !== undefined) return problem;
+  }
+  return placed;
+}
+
+/**
+ * A being of the visible `chunk` at `key` that `placed` puts in another chunk, as a problem. It walks
+ * the smaller of the two, so a commit that places few beings costs little in a dense view.
+ */
+function heldElsewhere(
+  key: string,
+  chunk: ChunkView,
+  placed: ReadonlyMap<number, string>,
+): TransactionProblem | undefined {
+  if (placed.size <= chunk.beings.size) {
+    for (const [id, at] of placed) {
+      if (at !== key && chunk.beings.has(id)) return twice(id, key, at);
+    }
+    return undefined;
+  }
+  for (const id of chunk.beings.keys()) {
+    const at = placed.get(id);
+    if (at !== undefined && at !== key) return twice(id, key, at);
+  }
+  return undefined;
+}
+
+/**
+ * Why `chunks`, the view after `txn`, holds a being in two chunks; undefined when every being is
+ * in one. The view before held each being once, so a being twice is one `txn` placed: placed in
+ * two chunks, or placed in one and still held by another that did not enter. The beings of a chunk
+ * that entered are all placed, so only the chunks that did not enter are searched.
+ */
+function beingTwice(
+  chunks: ReadonlyMap<string, ChunkView>,
+  txn: Transaction,
+): TransactionProblem | undefined {
+  const placed = placedBy(txn);
+  if (placed instanceof TransactionProblem) return placed;
+  for (const [key, chunk] of chunks) {
+    const problem = txn.entering.has(key) ? undefined : heldElsewhere(key, chunk, placed);
+    if (problem !== undefined) return problem;
+  }
+  return undefined;
+}
+
+/** The chunks after `txn`, applied to the chunks of `view`, with each being in one chunk. */
+function chunksAfter(
+  view: ClientView,
+  txn: Transaction,
+): Map<string, ChunkView> | TransactionProblem {
+  const chunks = appliedChunks(view, txn);
+  if (chunks instanceof TransactionProblem) return chunks;
+  return beingTwice(chunks, txn) ?? chunks;
 }
 
 /**

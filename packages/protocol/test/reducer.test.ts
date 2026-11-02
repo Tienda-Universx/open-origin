@@ -278,6 +278,74 @@ describe("the order of a commit", () => {
     // The followed being's record moves with it.
     expect(session.view.followed?.cell).toEqual([32, 3]);
   });
+
+  test("a being leaves a visible chunk and comes in a chunk that enters", () => {
+    const session = connected();
+    session.apply(delta(session.at(15, 2), [{ at: A, v: 15, gone: [1] }]));
+    session.apply(snapshot(session.at(15, 2), [{ at: C, v: 15, beings: [being(1, [1, 40])] }]));
+    expect(session.apply(commit(session.at(15, 2))).anomaly).toBeUndefined();
+    expect([session.ids(A), session.ids(C)]).toEqual([[], [1]]);
+  });
+});
+
+describe("a being in two visible chunks", () => {
+  /** Each case: how the being comes to be in two chunks, and the parts that put it there. */
+  const TWICE: readonly (readonly [string, (session: Session) => ServerMessage[]])[] = [
+    [
+      "an upsert into another chunk without its gone",
+      (s) => [delta(s.at(15, 2), [{ at: B, v: 15, upsert: [being(1, [32, 3])] }])],
+    ],
+    [
+      // More beings placed than chunk A holds: the search walks A's beings, not the placed ones.
+      "a chunk that enters with a being still visible elsewhere",
+      (s) => [
+        snapshot(s.at(15, 2), [{ at: C, v: 15, beings: [being(1, [1, 40]), being(3, [2, 40])] }]),
+      ],
+    ],
+    [
+      "an upsert of one being into two chunks",
+      (s) => [
+        delta(s.at(15, 2), [
+          { at: A, v: 15, upsert: [being(1, [2, 4])] },
+          { at: B, v: 15, upsert: [being(1, [32, 3])] },
+        ]),
+      ],
+    ],
+    [
+      "one being upserted into one chunk and entering in another",
+      (s) => [
+        delta(s.at(15, 2), [
+          { at: A, v: 15, gone: [1] },
+          { at: B, v: 15, upsert: [being(1, [32, 3])] },
+        ]),
+        snapshot(s.at(15, 2), [{ at: C, v: 15, beings: [being(1, [1, 40])] }]),
+      ],
+    ],
+    [
+      "a reset that shows one being in two chunks",
+      (s) => [
+        snapshot(
+          s.at(15, 2),
+          [
+            { at: A, v: 15, beings: [being(1, [2, 3])] },
+            { at: C, v: 15, beings: [being(1, [1, 40])] },
+          ],
+          { reset: true },
+        ),
+      ],
+    ],
+  ];
+
+  test.each(TWICE)("breaks the transaction: %s", (_, parts) => {
+    const session = connected();
+    const before = session.view;
+    for (const part of parts(session)) session.apply(part);
+    const applied = session.apply(commit(session.at(15, 2)));
+    expect(applied.anomaly?.kind).toBe("bad_transaction");
+    expect(applied.anomaly?.detail).toContain("being 1 is in two chunks");
+    expect([session.view, session.state.stale]).toEqual([before, true]);
+    expect([session.ids(A), session.ids(B), session.ids(C)]).toEqual([[1], [2], undefined]);
+  });
 });
 
 describe("a reset", () => {

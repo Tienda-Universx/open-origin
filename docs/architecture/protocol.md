@@ -206,8 +206,9 @@ Semantics:
   clock.
 - **Order.** A commit applies the chunks that leave (`drop`), then every visible chunk's `gone`,
   then every visible chunk's `upsert`, then the full content of the chunks that enter. A being that
-  crosses between two visible chunks leaves one and enters the other in the same transaction. The
-  differences of one chunk may span several parts.
+  crosses between two visible chunks leaves one and enters the other in the same transaction, so
+  after every commit each being is in exactly one visible chunk. The differences of one chunk may
+  span several parts.
 - **Fragments.** A chunk that enters is put together from all its fragments, which may span several
   parts; exactly one fragment carries its terrain, and a being lies in its chunk.
 - **Reset.** A `reset` transaction replaces the whole view at its commit, and carries no `delta`;
@@ -225,10 +226,11 @@ Semantics:
   previous commit's (or, first, is below `hello`'s), and a transaction that breaks the protocol
   (parts at two ticks, two transactions at once, missing or repeated fragments, terrain not in
   exactly one fragment, differences of a chunk that is not visible or of a being that is not there,
-  a chunk entering that is visible, a version that goes back, or a delta in a reset) each return an
-  anomaly. The view stays as it was, marked stale, and the client sends `resync`, at most once every
-  `RESYNC_INTERVAL_MS`. After a gap, the transaction in flight and the transaction of the next
-  transaction message are discarded, even a reset, since parts of them may be lost.
+  a chunk entering that is visible, a being in two visible chunks, a version that goes back, or a
+  delta in a reset) each return an anomaly. The view stays as it was, marked stale, and the client
+  sends `resync`, at most once every `RESYNC_INTERVAL_MS`. After a gap, the transaction in flight
+  and the transaction of the next transaction message are discarded, even a reset, since parts of
+  them may be lost.
 
 The silence timer, the resync rate, and reconnecting are the client's: they read the clock, which
 the reducer never does.
