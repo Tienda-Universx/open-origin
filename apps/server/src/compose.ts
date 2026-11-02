@@ -1,16 +1,17 @@
 /**
- * The composition root of the world plane (ADR 0025): it wires the source, the C0 projection of
- * its world, the host, the publication gate, the journal, and the scheduler, and hands the rest of
- * the server only what the presentation plane may hold: a subscription to frozen published ticks
- * and the public terrain of a chunk. The entry point (T6-7) passes the real clock and timer; tests
- * pass fake ones, and may replace the journal, the source, its projection, and K. The planes
- * receive their settings as parameters: only this module and the entry point read the
- * configuration.
+ * The composition root (ADR 0025): `compose` wires the world plane, the source, the C0 projection
+ * of its world, the host, the publication gate, the journal, and the scheduler, and hands the rest
+ * of the server only what the presentation plane may hold: a subscription to frozen published
+ * ticks and the public terrain of a chunk. `composeServer` wires the presentation plane to those
+ * two functions. The entry point (T6-7) passes the real clock and timer; tests pass fake ones, and
+ * may replace the journal, the source, its projection, the scheduler, and K. The planes receive
+ * their settings as parameters: only this module and the entry point read the configuration.
  */
 import { readView, type World } from "@open-origin/engine";
 import type { ServerStatus } from "@open-origin/protocol/admin";
 import type { ChunkCoord, TerrainPublic } from "@open-origin/protocol/public";
 import type { Config } from "./config/config.ts";
+import { Presentation } from "./presentation/presentation.ts";
 import { BeingsProjection, type WorldProjection } from "./projection/projection.ts";
 import { type Halt, type Projector, WorldHost } from "./world/host.ts";
 import { EphemeralJournal, type TickJournal } from "./world/journal.ts";
@@ -18,7 +19,13 @@ import { PublicationGate } from "./world/publication.ts";
 import type { PublishedListener } from "./world/published.ts";
 import { rejectionPolicy } from "./world/rejection.ts";
 import { SampleWindow, TICK_SAMPLES } from "./world/samples.ts";
-import { FixedRateScheduler, type Hold, type SchedulerState } from "./world/scheduler.ts";
+import {
+  FixedRateScheduler,
+  type Hold,
+  type SchedulerOptions,
+  type SchedulerState,
+  type TickScheduler,
+} from "./world/scheduler.ts";
 import { ScenarioSource, type WorldSource } from "./world/source.ts";
 import type { Clock, Timer } from "./world/time.ts";
 
@@ -34,6 +41,8 @@ export type WorldPlaneDeps = {
   readonly projectionOf?: (world: World) => WorldProjection;
   /** K, the ticks between checkpoints: 300 unless given. */
   readonly checkpointTicks?: number;
+  /** The scheduler of the world's ticks: a FixedRateScheduler over `options` unless given. */
+  readonly schedulerOf?: (options: SchedulerOptions) => TickScheduler;
 };
 
 /** The world plane, as the rest of the server sees it. */
@@ -76,7 +85,7 @@ const STATES: Readonly<Record<SchedulerState, ServerStatus["state"]>> = Object.f
 type Parts = {
   readonly gate: PublicationGate;
   readonly host: WorldHost;
-  readonly scheduler: FixedRateScheduler;
+  readonly scheduler: TickScheduler;
   readonly hold: () => Hold | undefined;
   readonly projection: WorldProjection;
   /** How long the projection of each of the last ticks took, in microseconds (C3). */
@@ -85,6 +94,9 @@ type Parts = {
 
 /** The C0 projection of a world of beings. */
 const beingsProjection = (world: World): WorldProjection => new BeingsProjection(world);
+
+/** The scheduler of the public universe: one tick per period, at a fixed rate. */
+const fixedRate = (options: SchedulerOptions): TickScheduler => new FixedRateScheduler(options);
 
 /** `projection`, whose every call is timed on `clock` into `samples`. */
 function timed(projection: Projector, clock: Clock, samples: SampleWindow): Projector {
@@ -118,7 +130,7 @@ function wire(config: Config, deps: WorldPlaneDeps): Parts {
     if (host.halted !== undefined || gate.failed) return "halted";
     return gate.stalled() ? "journalStall" : undefined;
   };
-  const scheduler = new FixedRateScheduler({
+  const scheduler = (deps.schedulerOf ?? fixedRate)({
     clock: deps.clock,
     timer: deps.timer,
     tickRateHz: config.tickRateHz,
@@ -179,4 +191,59 @@ export function compose(config: Config, deps: WorldPlaneDeps): WorldPlane {
 /** The host's K option, present only when a test sets it. */
 function optionalK(checkpointTicks: number | undefined): { checkpointTicks?: number } {
   return checkpointTicks === undefined ? {} : { checkpointTicks };
+}
+
+/** What the server needs from outside: the world plane's needs and, for tests, the world's id. */
+export type ServerDeps = WorldPlaneDeps & {
+  /** The random id hello announces, 32 lowercase hexadecimal digits: fresh at every boot unless given. */
+  readonly worldId?: string;
+};
+
+/** The two planes, wired: the world plane, and the presentation plane it feeds. */
+export type Server = {
+  readonly world: WorldPlane;
+  readonly presentation: Presentation;
+  /** Starts the world's clock and the presentation's periods. */
+  start(): void;
+  /** Stops the presentation's periods and the world's clock; resolves once every tick is published. */
+  stop(): Promise<void>;
+};
+
+/**
+ * A world id from 16 random bytes: in ephemeral mode every boot creates a world, whose id is never
+ * derived from the seed, a label, or the genesis (ADR 0026).
+ */
+function randomWorldId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Wires the world plane of `config` and the presentation plane, which receives from it only the
+ * subscription to published ticks and `readTerrain`, and the same clock and timer. Nothing runs
+ * until `start`.
+ */
+export function composeServer(config: Config, deps: ServerDeps): Server {
+  const world = compose(config, deps);
+  const presentation = new Presentation({
+    subscribeToPublished: (listener) => world.subscribeToPublished(listener),
+    readTerrain: (chunk) => world.readTerrain(chunk),
+    clock: deps.clock,
+    timer: deps.timer,
+    tickRateHz: config.tickRateHz,
+    batchTicks: config.publicationBatchTicks,
+    world: { id: deps.worldId ?? randomWorldId(), durability: config.durability },
+  });
+  return Object.freeze({
+    world,
+    presentation,
+    start: () => {
+      world.start();
+      presentation.start();
+    },
+    stop: () => {
+      presentation.stop();
+      return world.stop();
+    },
+  });
 }

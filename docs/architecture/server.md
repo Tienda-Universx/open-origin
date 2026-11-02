@@ -7,13 +7,14 @@ published records. Its presentation plane turns those records into each client's
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
 describes what the code implements as of T6-6a: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation core
-(playout, mirror, interest, and transactions), and their composition. Sessions and the limits that
-act on clients (T6-6b), the transport, and the entry point (T6-7) arrive in later batches.
+(playout, mirror, interest, and transactions), their composition, and the test of observer
+invariance. Sessions and the limits that act on clients (T6-6b), the transport, and the entry point
+(T6-7) arrive in later batches.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
-`leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`, and
-`presentation-sizes`), and `tests/repo/server-boundaries.test.ts`.
+`leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
+`presentation-sizes`, and `observer-invariance`), and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -24,7 +25,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
 | `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, and `terrain.ts`: the presentation core |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
-| `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane |
+| `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane; `composeServer(config, deps)`: both planes |
 
 The package depends on `@open-origin/engine`, `@open-origin/agents`, `@open-origin/scenarios`,
 `@open-origin/protocol`, and zod 4.6.7, pinned exactly.
@@ -353,17 +354,48 @@ host, and the scheduler, and returns:
 | `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |
 
 `deps` carries the clock and the timer, which the entry point of T6-7 takes from `src/adapters/`,
-and, for tests, the journal, the source, the projection of its world, and K. A journal failure
+and, for tests, the journal, the source, the projection of its world, the scheduler (`schedulerOf`,
+a `TickScheduler` over the options a `FixedRateScheduler` takes), and K. A journal failure
 halts the host with `journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P`
 from the gate; the state is `halted` once the host halted or the journal failed, and otherwise the
 scheduler's (`journalStall` is `stalled`). `projectionMicros` holds the percentiles of each
 projection's duration on the injected clock over the last 1,024 ticks; `stepMicros` covers the
-whole tick, the projection included. `fanOutMicros` and `connections` are 0 until the planes that
-measure them exist.
+whole tick, the projection included. `fanOutMicros` and `connections` are 0 until T6-6b measures
+them.
 
 `rejectionPolicy` is a pure function: with `AI_MODE=off` an unhandled rejection halts the world,
 because no code of the world awaits anything, and async work in a brain would be a wall-clock
 channel. T6-7's entry point installs the process handler that calls `unhandledRejection`.
+
+`composeServer(config, deps)` wires both planes: it calls `compose`, then builds the `Presentation`
+from the world plane's `subscribeToPublished` and `readTerrain` alone, with the same clock and
+timer, the configured rate and F, and hello's world: a random id of 16 bytes, fresh at every boot
+unless a test gives `worldId`, and the configured durability. Its `start()` starts the world's
+clock and the presentation's periods; `stop()` stops the periods, then the world, resolving once
+every executed tick is published. T6-7's entry point calls it.
+
+## Observer invariance
+
+`observer-invariance.test.ts` checks P9 (ADR 0005, control 1 as ADR 0025 refines it) through
+`composeServer`, on a fake clock, with a constant `readTerrain`, over the `mind@1` subject world of
+T5: three beings that greet, tell, forage, and cross chunks, and a research injection, an admin
+command, at tick 30. The default world sleeps from its second tick until past tick 260, too still
+for a brain's leak to show in a run. A reference run with no observer is compared with runs of 100
+ticks with 1 and 32 simulated observers, which act half a period after each tick: they connect,
+all follow the same being, change camera and followed being at random, drain slowly by lagging
+for periods, resync, and disconnect midway and come back. For every tick, the fake-clock time at
+which the host asked for its commands, its full command list, rejected commands included, its
+checksum, and the bytes of its `PublishedTick` must be equal, and so must the final snapshot. The
+checksums are read from the journal's records, never through the protocol.
+
+Three permanent negative controls are test doubles injected through `compose`'s dependencies, never
+production code:
+
+| Control | Double | Where the comparison fails |
+|---|---|---|
+| NC1 | A source that adds an admin command, which the engine rejects, once a being is followed | Its command list, at the tick it adds it |
+| NC2 | A brain wrapper that idles a being while `followers` counts a follower of it | Its checksum, at a tick at which the wrapper changed a decision, never before the first: the engine may discard a decision in the tick it is made, when the being's step loses the contest for room, so the change applies at a later decision |
+| NC3 | A scheduler that runs one extra tick per subscribe | Its time, at the extra tick |
 
 ## The boundary
 

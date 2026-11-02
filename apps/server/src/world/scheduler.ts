@@ -66,8 +66,19 @@ const MICROS_PER_SECOND = 1_000_000;
 /** The tick starts the achieved rate reads. */
 const RATE_WINDOW = 64;
 
+/** What composition asks of a scheduler of the world's ticks. */
+export interface TickScheduler {
+  /** Starts, or resumes after a pause. */
+  start(): void;
+  /** Stops the ticks until `start`. */
+  pause(): void;
+  /** Asks the hold again between ticks. */
+  wake(): void;
+  metrics(): SchedulerMetrics;
+}
+
 /** Runs a world's ticks at a fixed rate over an injected clock and timer. */
-export class FixedRateScheduler {
+export class FixedRateScheduler implements TickScheduler {
   readonly #clock: Clock;
   readonly #timer: Timer;
   readonly #hz: number;
