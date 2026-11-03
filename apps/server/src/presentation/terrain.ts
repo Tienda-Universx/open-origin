@@ -30,7 +30,8 @@
  * The head's turn lasts T = ⌈2 · 73 / (B − L)⌉ periods, 13 at 16: the periods in which it is served
  * right after the lane's share, with at least B − L generations each. A head that still waits for
  * chunks then goes to the back, with nothing held; what was generated for it stays in the cache, so
- * its next turn needs only what changed or was evicted. The bounds, for B of 2 or more:
+ * its next turn needs only what changed or was evicted. B is at least 2, which the queue checks, so
+ * L and B − L are each at least 1; the bounds:
  *
  * - a client with k clients ahead is the head within k · (T + 1) periods: each head keeps the head
  *   for at most T periods after the one in which it became the head, and the clients that arrive
@@ -61,6 +62,12 @@ export const TERRAIN_ENTRIES = 2048;
 
 /** The most chunks of terrain generated per period, across all clients. */
 export const TERRAIN_PER_PERIOD = 16;
+
+/**
+ * The fewest chunks of terrain a period may generate: one for the lane of the chunks transactions
+ * in flight missed, and at least one for the head of the queue, so that neither waits on the other.
+ */
+const MIN_TERRAIN_PER_PERIOD = 2;
 
 /**
  * The bytes of the widest terrain a chunk may have: every field at its widest width, a substrate
@@ -212,8 +219,10 @@ export class TerrainQueue {
   #left: number;
 
   constructor(cache: TerrainCache, perPeriod = TERRAIN_PER_PERIOD) {
-    if (!Number.isSafeInteger(perPeriod) || perPeriod < 1) {
-      throw new RangeError(`a period generates at least one chunk of terrain, not ${perPeriod}`);
+    if (!Number.isSafeInteger(perPeriod) || perPeriod < MIN_TERRAIN_PER_PERIOD) {
+      throw new RangeError(
+        `a period generates at least ${MIN_TERRAIN_PER_PERIOD} chunks of terrain, one for the lane of missed chunks and at least one for the head of the queue, not ${perPeriod}`,
+      );
     }
     this.#cache = cache;
     this.#perPeriod = perPeriod;

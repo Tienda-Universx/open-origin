@@ -459,7 +459,9 @@ ready: a lagging client holds at most 64 KiB of terrain text, not the 905,273 by
 The head's turn lasts T = ⌈2 · 73 / (B − L)⌉ periods, 13 at 16: the periods in which it is served
 right after the lane's share, with at least B − L generations each. A head that still waits for
 chunks then goes to the back with nothing held; what was generated for it stays in the LRU, so its
-next turn needs only what changed or was evicted. So, for B of 2 or more:
+next turn needs only what changed or was evicted. B is at least 2, which the queue checks: a budget
+of 1 would leave the lane nothing while a client waits, and a transaction whose chunk the LRU
+evicted would wait as long. So L and B − L are each at least 1, and:
 
 - A client with k clients ahead is the head within k · (T + 1) periods, whatever any client's chunks
   or the lane do: each head keeps the head at most T periods after the one in which it became the
@@ -577,19 +579,21 @@ with the strict schema.
   only the head generates at once; a chunk a transaction cannot read is served first the next period
   and held until it reads it, and one whose generation throws drops its client; the lane takes at
   most a quarter of a period's budget before the head, and is served first from what the fan-out
-  leaves; a generation that throws removes its client from the queue whatever the fault callback
-  does, and the queue serves the next client in the same period; no client may need more than 73
-  chunks. In the presentation, a flood of ten clients, each entering 64 new chunks, generates 16
-  chunks a period, each chunk once, and grows each view as its terrain comes, the clients whole four
-  periods apart, the last at period 40; a follower whose window moves every tick, behind one client
-  and ahead of 49 that flood the queue, shows its whole window in period 5; six lagging clients
-  whose transactions are in flight over distinct chunks hold no terrain while a cache of 8 evicts
-  theirs, and once they drain, the terrain of the chunks they had not written yet is generated again
-  ahead of a flooded queue, and each commits within three periods; a terrain read again with other
-  bytes than planned drops its client alone; an aborted transaction that waited for terrain leaves
-  nothing in the queue, and its client keeps its place; and a queued generation that throws drops
-  the client waiting for it alone, counted as a fault, while the others are served and the plane
-  runs on.
+  leaves; at the smallest budget, 2, a chunk the cache evicted before a transaction read it is
+  served the next period while a client still waits; a generation that throws removes its client
+  from the queue whatever the fault callback does, and the queue serves the next client in the same
+  period; no client may need more than 73 chunks; and a budget below 2 builds no queue and no
+  presentation. In the presentation, a flood of ten clients, each entering 64 new chunks, generates
+  16 chunks a period, each chunk once, and grows each view as its terrain comes, the clients whole
+  four periods apart, the last at period 40; a follower whose window moves every tick, behind one
+  client and ahead of 49 that flood the queue, shows its whole window in period 5; six lagging
+  clients whose transactions are in flight over distinct chunks hold no terrain while a cache of 8
+  evicts theirs, and once they drain, the terrain of the chunks they had not written yet is
+  generated again ahead of a flooded queue, and each commits within three periods; a terrain read
+  again with other bytes than planned drops its client alone; an aborted transaction that waited for
+  terrain leaves nothing in the queue, and its client keeps its place; and a queued generation that
+  throws drops the client waiting for it alone, counted as a fault, while the others are served and
+  the plane runs on.
 - `presentation-liveness.test.ts` (ADR 0026, "Ordering and liveness"): four clients, each entering
   64 new chunks, hear from the server in every one of the 17 periods their terrain takes, and end up
   showing their whole cameras; a client that pans to 64 new chunks while three others wait for

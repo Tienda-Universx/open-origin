@@ -109,7 +109,10 @@ export type PresentationOptions = {
   readonly partBytes?: number;
   /** The most bytes of a view: VIEW_BYTES unless given, which hello then announces. */
   readonly viewBytes?: number;
-  /** The most chunks of terrain generated per period: TERRAIN_PER_PERIOD unless given. */
+  /**
+   * The most chunks of terrain generated per period, at least 2 (one for the lane, at least one for
+   * the head of the terrain queue): TERRAIN_PER_PERIOD unless given.
+   */
   readonly terrainPerPeriod?: number;
   /** The entries of the terrain's LRU: TERRAIN_ENTRIES unless given. */
   readonly terrainEntries?: number;

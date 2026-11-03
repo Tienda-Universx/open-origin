@@ -125,19 +125,20 @@ describe("the terrain queue", () => {
 
   test("holds terrain for its head alone: a cache that evicts it never makes the head generate it again", () => {
     const { calls, read } = countingTerrain();
-    const queue = new TerrainQueue(new TerrainCache(read, 2), 1);
+    const queue = new TerrainQueue(new TerrainCache(read, 2), 2);
     const [mine, theirs] = [row(0), row(1)];
-    expect(takenKeys(queue.take(1, mine))).toEqual(["0,0"]);
+    expect(takenKeys(queue.take(1, mine))).toEqual(["0,0", "1,0"]);
     expect(takenKeys(queue.take(2, theirs))).toEqual([]);
     const held: number[] = [];
-    for (let period = 0; period < 5; period += 1) {
+    for (let period = 0; period < 2; period += 1) {
       runPeriod(queue);
       held.push(queue.held);
     }
-    // Six chunks went through a cache of two: the head's two missing are held for it, no more.
+    // Six chunks went through a cache of two, client 2's last two in the second period, which they
+    // spent: the head's one missing is held for it, no more.
     expect(calls).toEqual([...mine, ...theirs].map(chunkKey));
-    expect(held).toEqual([1, 2, 2, 2, 2]);
-    expect(takenKeys(queue.take(1, row(0).slice(1)))).toEqual(["1,0", "2,0"]);
+    expect(held).toEqual([1, 1]);
+    expect(takenKeys(queue.take(1, row(0).slice(2)))).toEqual(["2,0"]);
     expect(calls).toHaveLength(6);
     // Client 2 held nothing behind the head: the chunk of it the cache evicted, the first, is
     // generated again once client 2 is the head; it takes the others at once.
@@ -151,34 +152,34 @@ describe("the terrain queue", () => {
 
   test("a waiting client keeps its place when its chunks change, and takes what it holds that it still needs", () => {
     const { calls, read } = countingTerrain();
-    const queue = new TerrainQueue(new TerrainCache(read), 1);
+    const queue = new TerrainQueue(new TerrainCache(read), 2);
     const b = row(1, 2);
-    expect(takenKeys(queue.take(1, row(0)))).toEqual(["0,0"]);
+    expect(takenKeys(queue.take(1, row(0, 4)))).toEqual(["0,0", "1,0"]);
     expect(takenKeys(queue.take(2, b))).toEqual([]);
     expect(
       takenKeys(
         queue.take(1, [
+          [3, 0],
           [2, 0],
-          [1, 0],
         ]),
       ),
     ).toEqual([]);
     runPeriod(queue);
-    expect(calls).toEqual(["0,0", "2,0"]);
-    expect(queue.held).toBe(1);
-    // Its chunks change: client 1 stays the head, takes the one it holds, and waits for the new.
+    expect(calls).toEqual(["0,0", "1,0", "3,0", "2,0"]);
+    expect(queue.held).toBe(2);
+    // Its chunks change: client 1 stays the head, takes the one it holds that it still needs, and
+    // waits for the new; the period serves it first, then client 2.
     const moved: ChunkCoord[] = [
-      [2, 0],
+      [3, 0],
       [9, 9],
     ];
-    expect(takenKeys(queue.take(1, moved))).toEqual(["2,0"]);
+    expect(takenKeys(queue.take(1, moved))).toEqual(["3,0"]);
     expect([queue.queued, queue.held]).toEqual([3, 0]);
     runPeriod(queue);
-    expect(calls.slice(2)).toEqual(["9,9"]);
+    expect(calls.slice(4)).toEqual(["9,9", "0,1"]);
     expect(takenKeys(queue.take(1, [[9, 9]]))).toEqual(["9,9"]);
     runPeriod(queue);
-    runPeriod(queue);
-    expect(calls.slice(3)).toEqual(["0,1", "1,1"]);
+    expect(calls.slice(6)).toEqual(["1,1"]);
     expect(takenKeys(queue.take(2, b))).toEqual(sortedKeys(b));
     expect([queue.queued, queue.held]).toEqual([0, 0]);
   });
@@ -280,6 +281,25 @@ describe("the terrain queue", () => {
     expect(queue.queued).toBe(0);
   });
 
+  test("at the smallest budget, two, a chunk the cache evicted before a transaction in flight read it is served the next period, while a client still waits", () => {
+    const { calls, read } = countingTerrain();
+    const queue = new TerrainQueue(new TerrainCache(read, 2), 2);
+    // Client 3's transaction takes one chunk at once; client 1 then takes one and waits for ten.
+    expect(takenKeys(queue.take(3, [[9, 9]]))).toEqual(["9,9"]);
+    expect(takenKeys(queue.take(1, row(0, 11)))).toEqual(["0,0"]);
+    // The head's next two pass through the cache of two, which evicts client 3's chunk: a client
+    // waits, so nothing is generated at once.
+    runPeriod(queue);
+    expect(queue.read(3, [9, 9])).toBeUndefined();
+    expect([queue.queued, queue.held]).toEqual([1 + 8, 2]);
+    // The lane's generation of the next period goes to it, held until read; the head gets the
+    // other, and still waits.
+    runPeriod(queue);
+    expect(calls.slice(4)).toEqual(["9,9", "3,0"]);
+    expect(queue.read(3, [9, 9])?.json).toBe(JSON.stringify(terrainAt([9, 9])));
+    expect([queue.queued, queue.held]).toEqual([7, 3]);
+  });
+
   test("a generation that throws removes its client from the queue, reports it once, and the queue serves the next in the same period", () => {
     const failure = new Error("no terrain for chunk 1,0");
     const { calls, read } = countingTerrain();
@@ -309,12 +329,25 @@ describe("the terrain queue", () => {
   });
 
   test("a client needs at most the chunks of a full view", () => {
-    const queue = new TerrainQueue(new TerrainCache(terrainAt), 1);
+    const queue = new TerrainQueue(new TerrainCache(terrainAt), 2);
     const tooMany = row(0, MAX_VIEW_CHUNKS + 1);
     expect(() => queue.take(1, tooMany)).toThrow(
       `a client needs at most ${MAX_VIEW_CHUNKS} chunks of terrain, not ${MAX_VIEW_CHUNKS + 1}`,
     );
     expect([queue.queued, queue.held]).toEqual([0, 0]);
+  });
+
+  test("a period generates at least two chunks of terrain: one for the lane, and at least one for the head", () => {
+    const cache = new TerrainCache(terrainAt);
+    const why = (perPeriod: number) =>
+      `a period generates at least 2 chunks of terrain, one for the lane of missed chunks and at least one for the head of the queue, not ${perPeriod}`;
+    for (const perPeriod of [1, 0, 2.5]) {
+      expect(() => new TerrainQueue(cache, perPeriod)).toThrow(RangeError);
+      expect(() => new TerrainQueue(cache, perPeriod)).toThrow(why(perPeriod));
+    }
+    expect(new TerrainQueue(cache, 2).queued).toBe(0);
+    // The presentation's budget is the queue's: one of 1 builds no presentation.
+    expect(() => presentationOver(new ModelWorld(0), { terrainPerPeriod: 1 })).toThrow(why(1));
   });
 });
 
