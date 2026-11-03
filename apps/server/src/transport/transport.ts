@@ -53,6 +53,14 @@ export const SOCKET_OPTIONS = Object.freeze({
   sendPings: true,
 });
 
+/**
+ * The options Bun's WebSocket server takes: `handlers`, then SOCKET_OPTIONS, spread last, so no
+ * key of the handlers, whatever it holds, can override a limit.
+ */
+export function websocketOptions<T>(handlers: Bun.WebSocketHandler<T>): Bun.WebSocketHandler<T> {
+  return { ...handlers, ...SOCKET_OPTIONS };
+}
+
 /** What the transport needs of the presentation plane. */
 export type PresentationPort = Pick<Presentation, "connect" | "receive" | "drained" | "close">;
 
@@ -134,8 +142,7 @@ class Listener {
     return new Response("internal error", { status: 500 });
   };
 
-  readonly handlers: Bun.WebSocketHandler<Connection> = {
-    ...SOCKET_OPTIONS,
+  readonly handlers = websocketOptions<Connection>({
     open: (socket) => this.#open(socket),
     message: (socket, message) => this.#message(socket, message),
     drain: (socket) => this.#drain(socket),
@@ -144,7 +151,7 @@ class Listener {
       this.#log({ event: "handler_error", error: nameOf(error) });
       socket.close(FAULT_CLOSE);
     },
-  };
+  });
 
   #log(event: TransportEvent): void {
     this.#options.log(event);

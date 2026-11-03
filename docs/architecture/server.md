@@ -624,8 +624,8 @@ only. Its options are the presentation, the address and port to bind (0 lets the
   `capacity.ts` holds the caps: an upgrade takes a slot, in all and for its address, which
   `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes.
   Bun runs the open handler within `upgrade`, so two upgrades never pass a cap together.
-- **Socket limits.** `SOCKET_OPTIONS`, one constant that `Bun.serve` takes whole: `maxPayloadLength`
-  is 4,096 bytes, so Bun closes a larger frame with 1009 before any of it reaches the presentation;
+- **Socket limits.** `SOCKET_OPTIONS`, one constant that `websocketOptions` spreads after the
+  handlers, so no handler's key can override a limit: `maxPayloadLength` is 4,096 bytes, so Bun closes a larger frame with 1009 before any of it reaches the presentation;
   `backpressureLimit` is 1 MiB with `closeOnBackpressureLimit`, a backstop, since the presentation
   keeps a buffer under about 320 KiB: Bun closes a socket that reaches it (its close handler sees
   1006); `idleTimeout` is 120 s, with `sendPings`. A binary frame is closed with 1003. Nothing is
@@ -673,7 +673,8 @@ world, driven period by period:
   a `connect` that throws, and a `receive` that throws), and 1001; a close that releases the client
   unless the presentation ended it; and logs that hold no address and nothing a client sent;
 - Bun's limits: `SOCKET_OPTIONS` equals ADR 0026's numbers, since an idle timeout of 120 s and its
-  pings cannot be observed in a test's time, and a client that does not read is closed by Bun once
+  pings cannot be observed in a test's time; `websocketOptions` keeps them over handlers that try to
+  override every one; and a client that does not read is closed by Bun once
   1 MiB waits for it, released once; and Bun 1.4.4 runs the open handler within `upgrade`, which the
   slots rely on.
 

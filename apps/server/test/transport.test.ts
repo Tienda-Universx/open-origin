@@ -29,6 +29,7 @@ import {
   type Transport,
   type TransportEvent,
   type TransportOptions,
+  websocketOptions,
 } from "../src/transport/transport.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import {
@@ -544,6 +545,21 @@ describe("Bun's limits", () => {
       closeOnBackpressureLimit: true,
       idleTimeout: 120,
       sendPings: true,
+    });
+  });
+
+  test("go after the handlers, so no key of theirs overrides a limit", () => {
+    const overriding = {
+      maxPayloadLength: 1 << 24,
+      backpressureLimit: 1 << 24,
+      closeOnBackpressureLimit: false,
+      idleTimeout: 1,
+      sendPings: false,
+      message: () => undefined,
+    };
+    expect(websocketOptions(overriding)).toEqual({
+      ...SOCKET_OPTIONS,
+      message: overriding.message,
     });
   });
 
