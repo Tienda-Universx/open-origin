@@ -189,6 +189,15 @@ describe("a transaction", () => {
     expect(session.view.clock).toEqual(clockAt(20));
   });
 
+  test("clears what was trimmed at a notice with no chunks: nothing is left out any more", () => {
+    const session = connected();
+    for (const chunks of [[C], []]) {
+      const { seq, tick } = session.at(12, 0);
+      session.apply(message({ type: "notice", code: "interest_trimmed", chunks, seq, tick }));
+      expect(session.state.trimmed).toEqual(chunks);
+    }
+  });
+
   test("with no parts still commits: a heartbeat that moves the tick and the clock", () => {
     const session = connected();
     const applied = session.apply(commit(session.at(13, 2)));

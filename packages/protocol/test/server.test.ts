@@ -198,12 +198,13 @@ describe("bounds", () => {
     const cases = [
       { ...MINIMAL.error, code: "internal" },
       { ...MINIMAL.notice, code: "slow" },
-      { ...MINIMAL.notice, chunks: [] },
       { ...MINIMAL.status, state: "fast" },
       { ...MINIMAL.status, reason: `two${String.fromCodePoint(10)}lines` },
     ];
     expect(cases.map(accepts)).toEqual(cases.map(() => false));
     for (const code of ERROR_CODES) expect(accepts({ ...MINIMAL.error, code })).toBe(true);
+    // A notice with no chunks says that nothing is trimmed any more.
+    expect(accepts({ ...MINIMAL.notice, chunks: [] })).toBe(true);
   });
 
   test("of a transaction's chunks: no version, and no speech, after its tick", () => {

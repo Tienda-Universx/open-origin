@@ -671,12 +671,15 @@ export class Presentation {
     if (trimmed.length > 0) this.#counts.trims += 1;
   }
 
-  /** Tells `client` which chunks the view's limit left out, when they changed and are some. */
+  /**
+   * Tells `client` which chunks the view's limit left out, when they changed: an empty list says
+   * that nothing is left out any more.
+   */
   #notice(client: Client, trimmed: readonly ChunkCoord[]): void {
     const keys = trimmed.map(chunkKey).join(";");
     if (keys === client.trimmed) return;
     client.trimmed = keys;
-    if (trimmed.length > 0) client.queue(noticeFrame(client.view.tick, trimmed), "notice");
+    client.queue(noticeFrame(client.view.tick, trimmed), "notice");
   }
 
   /**

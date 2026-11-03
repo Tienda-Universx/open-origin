@@ -81,7 +81,7 @@ Every message carries `type`, `seq`, and `tick`, defined under Ordering and live
 | `events` | `txn`, `items[]`, `missed?` | The feed in the transaction's range |
 | `commit` | `txn`, `clock{tick, day, dayPermille}` | Closes and applies the transaction. An empty transaction still gets its `commit`, so a client that is up to date gets one per period: heartbeat and clock |
 | `abort` | `txn` | Memory protection cancelled the transaction; the client discards its parts |
-| `notice` | `code: "interest_trimmed"`, `chunks[]` | The view limit trimmed the interest |
+| `notice` | `code: "interest_trimmed"`, `chunks[]` | The view limit trimmed the interest: the chunks left out, or none when nothing is left out any more |
 | `pong` | `nonce` | Answer to `ping` |
 | `status` | `state: "running" \| "paused" \| "stalled" \| "halted"`, `reason?` | World stops and resumes, for everyone |
 | `error` | `code` | A rejected message. The fixed codes are `bad_json`, `bad_message`, `unknown_type`, `too_many_chunks`, `out_of_bounds`, `unknown_being`, `rate_limited`, and `resync_too_soon`. The input is never echoed |
@@ -239,7 +239,7 @@ per tick and shared by all clients.
 | Send per client and period | At most 256 KB, counting every message to that client (parts, commits, `pong`, `status`, `error`, `notice`, `abort`, and sends that `drain` triggers), and only while `getBufferedAmount()` is under 256 KB, so a client's buffer never passes 512 KB |
 | Fan-out | At most 40 ms per period across all clients. Clients that do not fit wait for the next period, in rotating order |
 | Bun's own limit | `backpressureLimit` 1 MB, with `closeOnBackpressureLimit` |
-| View per client | At most 32 MB encoded, measured at `L'`. A larger interest is trimmed deterministically: the follow window is kept first, then camera chunks in the order the client sent them, until 32 MB. The rest are listed in a `notice` |
+| View per client | At most 32 MB encoded, measured at `L'`. A larger interest is trimmed deterministically: the follow window is kept first, then camera chunks in the order the client sent them, until 32 MB. The rest are listed in a `notice`, sent again with none when nothing is left out any more |
 | Parts per transaction | At most 1,024; above it the client discards the transaction as malformed |
 | Retained replaced versions | At most 128 MB in all, configurable, with exact accounting, checked after each period's fan-out. While above it, the oldest retained version is taken, and every client that pins it gets `abort`. The abort releases that client's transaction pins and, if it pins that version at `L`, its `L` pins too, so its next transaction is a reset. Each aborted client counts one abort; 3 in 60 s close with 1013, and the client reconnects with a smaller interest |
 | Terrain | At most 16 chunks generated per period across all clients, from a fair queue, with an LRU of 2,048 entries |

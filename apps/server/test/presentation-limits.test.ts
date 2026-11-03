@@ -113,7 +113,8 @@ describe("the view's limit", () => {
       [6, 0],
     ]);
     expect(presentation.telemetry().trims).toBe(1);
-    // The same trim again tells nothing new; a camera that fits is not trimmed.
+    // The same trim again tells nothing new; a camera that fits is not trimmed, and an empty
+    // notice says so.
     advance();
     expect(client.messages.filter(({ type }) => type === "notice")).toHaveLength(1);
     expect(presentation.telemetry().trims).toBe(2);
@@ -123,7 +124,9 @@ describe("the view's limit", () => {
     ]);
     advance();
     expect(keysOf(client)).toEqual([...windowKeys, "3,0", "6,0"].sort());
-    expect(client.messages.filter(({ type }) => type === "notice")).toHaveLength(1);
+    expect(client.messages.filter(({ type }) => type === "notice")).toHaveLength(2);
+    expect(client.messages.findLast(({ type }) => type === "notice")).toMatchObject({ chunks: [] });
+    expect(client.state.trimmed).toEqual([]);
     expect(presentation.telemetry().trims).toBe(2);
   });
 
@@ -144,19 +147,21 @@ describe("the view's limit", () => {
     expect(client.anomalies).toEqual([]);
   });
 
-  test("tells the client again when the chunks left out change after none were", () => {
+  test("tells the client when nothing is left out any more, and again when chunks are left out after that", () => {
     const { presentation, advance, client, id } = oversizedCenter();
     presentation.follow(id, 1);
     advance();
-    // Following no one, the camera fits: nothing is left out, and no notice says so.
+    // Following no one, the camera fits: nothing is left out, and an empty notice says so, which
+    // clears the client's list.
     presentation.follow(id, null);
     advance();
     expect(keysOf(client)).toEqual(["0,0"]);
-    expect(noticesOf(client)).toHaveLength(1);
-    // The same chunks left out again are a change from none: a second notice lists them.
+    expect(noticesOf(client).map(({ chunks }) => chunks)).toEqual([CENTER_FIRST, []]);
+    expect(client.state.trimmed).toEqual([]);
+    // The same chunks left out again are a change from none: a third notice lists them.
     presentation.follow(id, 1);
     advance();
-    expect(noticesOf(client).map(({ chunks }) => chunks)).toEqual([CENTER_FIRST, CENTER_FIRST]);
+    expect(noticesOf(client).map(({ chunks }) => chunks)).toEqual([CENTER_FIRST, [], CENTER_FIRST]);
     expect(keysOf(client)).toEqual([]);
     expect(presentation.telemetry().trims).toBe(2);
   });

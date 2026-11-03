@@ -407,7 +407,7 @@ T6 sends no `reason`; T8's operator pause brings one.
   generated. An interest that passes the limit keeps the longest prefix that fits, in its order,
   the follow window first, then the camera in the order the client sent it; that chunk and every one
   after it are left out. The client gets `notice{code: "interest_trimmed", chunks}` with them when
-  the chunks left out change and are some. Each transaction started with a trimmed interest counts
+  the chunks left out change, with none when nothing is left out any more. Each transaction started with a trimmed interest counts
   one trim (C3).
 - **Retained versions.** After each period's fan-out, while the replaced versions clients pin pass
   `MAX_RETAINED_BYTES` (128 MiB unless set), the version replaced first is taken, and every client
@@ -551,20 +551,21 @@ with the strict schema.
   a part, and every client ends up to date.
 - `presentation-limits.test.ts` (plan tests 7b and 14 in process): a view trimmed to its limit keeps
   the follow window, then the camera's prefix that fits, and a later chunk that would fit is left
-  out with the rest; the notice goes once while the chunks left out stay the same, and again when
-  they change after none were; a followed being's chunk that alone passes the limit drops the whole
-  view, a notice listing every chunk, while the followed record stays; a trim counts once its
-  transaction starts, so a client whose terrain throws first counts none; hello announces the limit.
-  The memory guard aborts a client that pins the oldest version in its transaction, keeping its
-  view, and one that pins it at `L` with its view, whose next transaction is a reset; of two clients
-  behind, only the one furthest behind; and closes a client with 1013 at a third abort within 60 s,
-  at 60.999999 s, and not at a third when the first is 60 s old. The guard itself, over a mirror and
-  clients modeled in the test, reads each client once a check, however many versions it frees, and
-  no client under the limit; a client that pins one retained version in its transaction and another
-  at `L` is aborted twice in a check, its view going at the second, and counted once, while one
-  whose first abort released its pin of the next version is not aborted for it; and a version its
-  clients' aborts do not free throws. Six cycles of clients closed by a fault, by strikes, and by
-  slowness, aborted, and waiting for terrain leave every count at zero.
+  out with the rest; the notice goes once while the chunks left out stay the same, an empty one when
+  none are left out any more, which clears the client's list, and again when chunks are left out
+  after that; a followed being's chunk that alone passes the limit drops the whole view, a notice
+  listing every chunk, while the followed record stays; a trim counts once its transaction starts,
+  so a client whose terrain throws first counts none; hello announces the limit. The memory guard
+  aborts a client that pins the oldest version in its transaction, keeping its view, and one that
+  pins it at `L` with its view, whose next transaction is a reset; of two clients behind, only the
+  one furthest behind; and closes a client with 1013 at a third abort within 60 s, at 60.999999 s,
+  and not at a third when the first is 60 s old. The guard itself, over a mirror and clients modeled
+  in the test, reads each client once a check, however many versions it frees, and no client under
+  the limit; a client that pins one retained version in its transaction and another at `L` is
+  aborted twice in a check, its view going at the second, and counted once, while one whose first
+  abort released its pin of the next version is not aborted for it; and a version its clients'
+  aborts do not free throws. Six cycles of clients closed by a fault, by strikes, and by slowness,
+  aborted, and waiting for terrain leave every count at zero.
 - `presentation-terrain.test.ts`: the queue gives its head the period's generations until it needs
   nothing more, then the next client; the head's terrain survives a cache that evicts it, and a
   client behind it gets an evicted chunk generated again; a waiting client keeps its place when its

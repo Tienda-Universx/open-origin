@@ -192,14 +192,16 @@ export const CommitMessage = z
 /** Cancels a transaction: the client discards its parts. */
 export const AbortMessage = z.strictObject({ type: z.literal("abort"), ...HEADER, txn: Txn });
 
-/** The view limit trimmed the interest: these chunks are left out. */
+/**
+ * The view limit trimmed the interest: these chunks are left out; none when nothing is left out
+ * any more.
+ */
 export const NoticeMessage = z.strictObject({
   type: z.literal("notice"),
   ...HEADER,
   code: z.literal("interest_trimmed"),
   chunks: z
     .array(ChunkCoord)
-    .min(1)
     .max(MAX_VIEW_CHUNKS)
     .refine(distinctChunks, { message: "each chunk is listed once" }),
 });

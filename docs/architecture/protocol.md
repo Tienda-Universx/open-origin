@@ -97,7 +97,7 @@ carry its target tick; every other message carries the client's visible tick whe
 | `events` | `txn`, `items[]`, `missed?` | Items are FeedItem records; no item's `tick` exceeds `tick` |
 | `commit` | `txn`, `clock{tick, day, dayPermille}` | `clock.tick` equals `tick`; `dayPermille` from 0 to 999 |
 | `abort` | `txn` | |
-| `notice` | `code: "interest_trimmed"`, `chunks[]` | At least one chunk, each once |
+| `notice` | `code: "interest_trimmed"`, `chunks[]` | Each chunk once; none when nothing is left out any more |
 | `pong` | `nonce` | From 0 to 2^31 − 1 |
 | `status` | `state`, `reason?` | `reason` is plain text |
 | `error` | `code` | One of `ERROR_CODES` |
@@ -119,10 +119,11 @@ What the server sends besides transactions:
   stopped and gives no new tick, or while its next part waits for terrain. A client that keeps up
   never takes the silence for a lost connection.
 - **`notice`** lists the chunks the view's limit left out when a transaction starts, when they
-  changed and are some. The server measures a view, at the transaction's tick, as the bytes of each
-  chunk's being records, a comma between two of them, and the widest terrain, 12,401 bytes, and
-  keeps the longest prefix of the interest within `maxViewBytes`: the follow window first, the
-  followed being's chunk first in it, then the camera in the order the client sent it.
+  changed; an empty list says that nothing is left out any more, and clears the client's `trimmed`.
+  The server measures a view, at the transaction's tick, as the bytes of each chunk's being records,
+  a comma between two of them, and the widest terrain, 12,401 bytes, and keeps the longest prefix of
+  the interest within `maxViewBytes`: the follow window first, the followed being's chunk first in
+  it, then the camera in the order the client sent it.
 - **`abort`** cancels a transaction the server's memory guard took back; the next transaction is a
   reset when the client's view went with it. A client aborted three times within 60 s is closed
   with 1013.
