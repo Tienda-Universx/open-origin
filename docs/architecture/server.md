@@ -242,7 +242,10 @@ not call `close` for it again. The period goes on with the next client. Any othe
 period, from the playout, the mirror, or a drop, is a fault of the whole plane, whose state may be
 inconsistent: the presentation stops, `usage().failed` turns true, and the throw goes on to the
 runtime. `stop()` stops the periods and unsubscribes from the world plane for good, so a stopped
-presentation receives no published tick, holds no growing playout, and cannot start again.
+presentation receives no published tick, holds no growing playout, and cannot start again. A
+presentation whose boot record could not be applied unsubscribes and throws from its constructor:
+the world plane counts a listener's throw and keeps the listener, so one that was never built must
+leave no listener behind.
 
 ### Playout
 
@@ -335,8 +338,9 @@ with the strict schema.
   F with every tick's feed; a being crossing chunks for clients of one chunk, the other, both, and a
   follower (plan test 9); the same feed for clients of disjoint regions (plan test 10); a lost
   message detected as a `seq` gap and healed by a resync (plan test 8); speech of `(L, L']` and its
-  `speechMissed`; abort; periods on the timer; and connect and close cycles that leave interest,
-  index, followings, pins, and retained bytes at zero.
+  `speechMissed`; abort; periods on the timer; connect and close cycles that leave interest, index,
+  followings, pins, and retained bytes at zero; and a presentation whose boot record cannot be
+  applied, which leaves no listener.
 - `presentation-reconstruction.test.ts` (plan test 7): a seeded model world of beings that walk,
   cross, arrive, leave, and speak, published in bursts now and then, and clients that change camera
   and follow at random, resync, lag, lose a message, and reconnect. After every commit each view

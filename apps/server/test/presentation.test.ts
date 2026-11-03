@@ -6,11 +6,15 @@
  * tick; a being that crosses chunks leaves and enters the right views, a follower's window moving
  * with it; the feed reaches every client the same; a lost message is detected and a resync heals
  * the view; an abort is discarded; local speech covers (L, L'] and counts what the ring lost; the
- * timer runs the periods outside any publication; and closing clients releases everything.
+ * timer runs the periods outside any publication; closing clients releases everything; and a
+ * presentation that cannot apply its boot record leaves no listener.
  */
 import { describe, expect, test } from "bun:test";
 import type { ChunkCoord, FeedItem, ServerMessage } from "@open-origin/protocol/public";
 import { Presentation } from "../src/presentation/presentation.ts";
+import { EphemeralJournal } from "../src/world/journal.ts";
+import { PublicationGate } from "../src/world/publication.ts";
+import type { PublishedListener } from "../src/world/published.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import {
   being,
@@ -586,6 +590,54 @@ describe("faults", () => {
     expect(client.messages).toEqual([]);
     expect(timer.pending).toBe(0);
     expect(() => presentation.start()).toThrow("a stopped presentation cannot start again");
+  });
+
+  test("a presentation that cannot apply its boot record throws and leaves no listener", () => {
+    const failure = new Error("an unreadable record");
+    const record = being(1, [5, 5]);
+    // A record whose JSON cannot be written: the mirror throws while it applies the boot record.
+    Object.defineProperty(record, "activity", {
+      enumerable: true,
+      get: () => {
+        throw failure;
+      },
+    });
+    const gate = new PublicationGate({
+      journal: new EphemeralJournal(),
+      batchTicks: 5,
+      boot: 0,
+      bootRecord: {
+        tick: 0,
+        clock: clockAt(0),
+        chunks: [{ at: [0, 0], v: 0, upsert: [record], gone: [] }],
+        speech: [],
+        feed: [],
+      },
+    });
+    // The gate counts a listener's throw and keeps the listener: count what stays subscribed.
+    const listeners = new Set<PublishedListener>();
+    const subscribeToPublished = (listener: PublishedListener) => {
+      const unsubscribe = gate.subscribe(listener);
+      listeners.add(listener);
+      return () => {
+        unsubscribe();
+        listeners.delete(listener);
+      };
+    };
+    const clock = new FakeClock();
+    const build = () =>
+      new Presentation({
+        subscribeToPublished,
+        readTerrain: terrainAt,
+        clock,
+        timer: new FakeTimer(clock),
+        tickRateHz: 5,
+        batchTicks: 5,
+        world: { id: WORLD_ID, durability: "ephemeral" },
+      });
+    expect(build).toThrow("the world plane gave the presentation no boot record");
+    expect(gate.listenerFaults).toBe(1);
+    expect(listeners.size).toBe(0);
   });
 
   test("stop detaches the presentation from the world plane for good", () => {

@@ -155,7 +155,10 @@ export class Presentation {
   #anchor = 0;
   #periods = 0;
 
-  /** Subscribes to the world plane, whose boot record builds the mirror at once. */
+  /**
+   * Subscribes to the world plane, whose boot record builds the mirror at once. Without a boot
+   * record applied, it unsubscribes and throws: a presentation that was not built leaves no listener.
+   */
   constructor(options: PresentationOptions) {
     const sizes = sizesOf(options);
     const hz = options.tickRateHz;
@@ -176,7 +179,11 @@ export class Presentation {
       else this.#mirror.apply(published);
       booted = true;
     });
-    if (!booted) throw new Error("the world plane gave the presentation no boot record");
+    if (!booted) {
+      // The world plane counts a listener's throw and may keep the listener: remove it here.
+      this.#unsubscribe();
+      throw new Error("the world plane gave the presentation no boot record");
+    }
   }
 
   /** The playout tick: the tick of the world the mirror holds. */
