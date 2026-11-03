@@ -274,6 +274,12 @@ describe("the load benchmark", () => {
       [3, 400, 7],
     ] as const;
     expect(aheadOf(marks)).toBe("3 / 7 / 7");
+    // One slow mark in 200 lies beyond the p99, and only the maximum shows it.
+    const steady = Array.from(
+      { length: 200 },
+      (_, tick) => [tick, tick * 200, tick === 9 ? 9 : 4] as const,
+    );
+    expect(aheadOf(steady)).toBe("4 / 4 / 9");
     expect(aheadOf([])).toBe("0 / 0 / 0");
   });
 
