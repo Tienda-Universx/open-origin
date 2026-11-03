@@ -15,6 +15,7 @@ import {
   runFanOut,
   WARM_UP_PERIODS,
 } from "../bench/fanout.ts";
+import { block, bursts, latencies, parseArguments as parseLoad } from "../bench/load.ts";
 import {
   parseArguments as parseProjection,
   row,
@@ -217,5 +218,77 @@ describe("the fan-out benchmark", () => {
       expect(sample.bytes).toHaveLength(3);
       expect(sample.bytes.every((bytes) => bytes > 0)).toBe(true);
     }
+  });
+});
+
+describe("the load benchmark", () => {
+  test("take --clients with --seconds and --ramp, or --sync alone", () => {
+    expect(parseLoad(["--clients", "100"])).toEqual({
+      mode: "clients",
+      clients: 100,
+      seconds: 20,
+      ramp: 100,
+    });
+    expect(parseLoad(["--ramp", "50", "--clients", "7", "--seconds", "3"])).toEqual({
+      mode: "clients",
+      clients: 7,
+      seconds: 3,
+      ramp: 50,
+    });
+    expect(parseLoad(["--sync"])).toEqual({ mode: "sync" });
+  });
+
+  test.each([
+    { argv: [], message: "give --clients N, or --sync" },
+    { argv: ["--seconds", "5"], message: "give --clients N, or --sync" },
+    { argv: ["--clients", "0"], message: '--clients must be a positive integer, not "0"' },
+    { argv: ["--clients", "1", "--clients", "2"], message: "--clients is given twice" },
+    { argv: ["--sync", "--clients", "1"], message: "--sync takes no other option" },
+    { argv: ["--fast"], message: 'unknown argument "--fast"' },
+  ])("refuse $argv", ({ argv, message }) => {
+    expect(() => parseLoad(argv)).toThrow(message);
+  });
+
+  test("measure each receipt from the playout of its tick, and count those with no mark", () => {
+    const marks = [
+      [10, 1_000],
+      [11, 1_200],
+    ] as const;
+    const clients = [
+      [
+        [10, 1_002.5],
+        [11, 1_201],
+      ],
+      [
+        [11, 1_250],
+        [12, 1_400],
+      ],
+    ] as const;
+    expect(latencies(marks, clients)).toEqual({ ms: [2.5, 1, 50], unmarked: 1 });
+  });
+
+  test("count the commits that came less than half a period after the one before", () => {
+    const receipts = [
+      [1, 0],
+      [2, 200],
+      [3, 299.9],
+      [4, 400],
+      [5, 500],
+      [6, 599.9],
+    ] as const;
+    // Gaps of 200, 99.9, 100.1, 100 (exactly half a period: no burst), and 99.9.
+    expect(bursts(receipts, 200)).toBe(2);
+    expect(bursts([], 200)).toBe(0);
+  });
+
+  test("list a block of chunks by row, then column", () => {
+    expect(block([0, 0], -1, 1)).toHaveLength(9);
+    expect(block([0, 0], -4, 3)).toHaveLength(64);
+    expect(block([5, 5], 0, 1)).toEqual([
+      [5, 5],
+      [6, 5],
+      [5, 6],
+      [6, 6],
+    ]);
   });
 });

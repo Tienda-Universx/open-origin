@@ -934,6 +934,52 @@ p50 and p99, the churn's input, each client's bytes a period (p50 and p99), the 
 got in a period, the share of client-periods with a commit, and the most clients deferred to the next
 period, which got nothing in it.
 
+
+### Load
+
+```sh
+taskset -c 0 nice -n 19 bun apps/server/bench/load.ts --clients N [--seconds S] [--ramp R]
+taskset -c 0 nice -n 19 bun apps/server/bench/load.ts --sync
+```
+
+The real server runs in a process of its own, `bench/load-server.ts`: `start` of `src/main.ts`, in
+ephemeral mode on a free loopback port, with the real clock, timer, and transport, and its caps
+raised by configuration to hold N clients from 127.0.0.1 (`MAX_CONNECTIONS_PER_IP`). The clients run
+in another, `bench/load-clients.ts`, both children of the driver, `bench/load.ts`, and pinned as it
+is. The server boots for 2 s; the clients open R a second (100 unless given), each subscribed to the
+9 chunks of the spawn area, and once every client committed, the driver measures for S seconds (20
+unless given). Each load client reads only the head of a commit frame, its tick, and counts the bytes
+of every frame, so the clients' process costs the shared core as little as it can.
+
+The server's process adds what the protocol must never carry, over its own stdin and stdout:
+
+- **Marks.** Its presentation's `period` is wrapped on that instance, so each period that plays out
+  a new tick records the wall-clock time it began (`performance.timeOrigin + performance.now()`,
+  which every process of the machine reads alike). The latency of a commit is the time a client got
+  it less the mark of its tick.
+- **Ticks.** It composes the server as `composeServer` does, through `start`'s `serverOf`, with a
+  `FixedRateScheduler` whose `runTick` is timed on the server's clock: the span the status's
+  `stepMicros` covers (the step, the projection, and the journal's append), read over the window
+  alone. The status's own window is the last 1,024 ticks, which in a run of under a minute holds the
+  boot: the spawns at tick 1 and the first decisions at tick 2.
+- **Status and memory.** The server's C3 status, as `server.status()` gives it and the admin
+  contract checks it, and the process's resident and heap memory after a full collection: before any
+  client connected and once every client synced. Their difference over N is the memory per client
+  at rest.
+
+It prints the clients that failed to open, the time to open and sync them, the tick (from the status
+and over the window), the status's projection, lateness, and fan-out, the latency from playout to
+receipt (p50, p95, and p99), each client's commits per period played out in the window and its
+commits that came less than half a period after the one before, the memory per client, the status's
+lagging clients, slow closes, aborts, and faults, and the highest load average it saw.
+
+With `--sync`, a fresh server, whose terrain is all uncached, gets one client of the reference
+reducer, which subscribes, once its first (empty) commit arrived, to the 64 chunks of 8 × 8 around
+the spawn area: the milliseconds and bytes from that `subscribe` to the commit that shows all 64.
+
+The driver refuses to start while the load average is 2 or more, stops a run when it stays above 2
+for 15 s, and stops its children, killing any that does not exit within 5 s.
+
 ## Observer invariance
 
 `observer-invariance.test.ts` checks P9 (ADR 0005, control 1 as ADR 0025 refines it) through
