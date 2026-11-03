@@ -4,20 +4,31 @@
  * a double of the process, which records the handlers, the lines, and the exits:
  *
  * - `start` refuses with every problem of the configuration at once and starts nothing; a port in
- *   use is `listen_failed` with its code; a server that cannot start once bound is `start_failed`,
- *   its port free again; and its `stop` closes the transport before the world flushes;
+ *   use is `listen_failed` with its code; a server that cannot start once bound, injected, is
+ *   `start_failed`, its listener closed and its error kept as the cause even when its stop rejects;
+ *   and its `stop` closes the transport before the world flushes;
  * - `main` binds every handler before it reports `listening`; SIGTERM and SIGINT each stop the
  *   server, closing a client with 1001 and publishing every executed tick, and exit with 0 only
- *   once the `stopped` line was written; a second signal while stopping forces exit 1; an unhandled
- *   rejection halts the world; a refused start exits with 1.
+ *   once the `stopped` line was written; a signal within 1 s of the first is ignored, and one at
+ *   1 s or later forces exit 1 at once, even when stdout never drains; an unhandled rejection halts
+ *   the world; a refused start exits with 1 once written.
  *
  * tests/e2e/server.test.ts runs the real process.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { type Host, type LogEntry, main, type Running, type Signal, start } from "../src/main.ts";
+import { composeServer, type Server } from "../src/compose.ts";
+import {
+  type EntryDeps,
+  FORCE_AFTER_MICROS,
+  type Host,
+  type LogEntry,
+  main,
+  type Running,
+  type Signal,
+  start,
+} from "../src/main.ts";
 import { EphemeralJournal, type JournalBatch, type TickJournal } from "../src/world/journal.ts";
 import { ScriptedSource } from "../src/world/source.ts";
-import type { Timer } from "../src/world/time.ts";
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import { emptyProjection } from "./support/projections.ts";
@@ -42,13 +53,13 @@ afterEach(async () => {
   for (const blocker of blockers.splice(0)) await blocker.stop(true);
 });
 
-/** The counting world on a fake clock, whose timer tests may replace. */
-function worldDeps(timer?: Timer) {
+/** The counting world on a fake clock. */
+function worldDeps() {
   const clock = new FakeClock();
   const fake = new FakeTimer(clock);
   const deps = {
     clock,
-    timer: timer ?? fake,
+    timer: fake,
     source: new ScriptedSource(countingWorld(Number.MAX_SAFE_INTEGER), []),
     projectionOf: emptyProjection,
   };
@@ -126,18 +137,44 @@ class FakeHost implements Host {
  * Runs `main` over a FakeHost of `env` and the counting world; a server it started is stopped
  * after the test, through SIGTERM when nothing sent a signal yet.
  */
-async function mainOf(env: Record<string, string>) {
+async function mainOf(env: Record<string, string>, replaced: EntryDeps = {}) {
   const host = new FakeHost(env);
   const { deps, fake } = worldDeps();
-  await main(host, deps);
+  await main(host, { ...deps, ...replaced });
   if (host.signals.size > 0) {
     stops.push(async () => {
       if (!host.lines.some(({ event }) => event === "signal")) host.signal("SIGTERM");
       await host.line("stopped");
     });
   }
-  return { host, fake };
+  return { host, fake, clock: deps.clock };
 }
+
+/** A start fault, and a server whose start throws it and whose stop, done, then rejects. */
+function failingServer() {
+  const fault = new Error("a planted start fault");
+  const serverOf: EntryDeps["serverOf"] = (config, deps): Server => {
+    const real = composeServer(config, deps);
+    return {
+      ...real,
+      start: () => {
+        throw fault;
+      },
+      stop: async () => {
+        await real.stop();
+        throw new Error("a planted stop fault");
+      },
+    };
+  };
+  return { fault, serverOf };
+}
+
+/** Whether a connection to `port` on loopback is refused: nothing listens there. */
+const refused = (port: number) =>
+  fetch(`http://${LOOPBACK}:${port}/healthz`).then(
+    () => false,
+    () => true,
+  );
 
 /** A client of the port that `host`'s `listening` line reports, closed after the test. */
 async function clientOf(host: FakeHost): Promise<SocketClient> {
@@ -170,24 +207,20 @@ describe("start", () => {
     expect(logs).toEqual([{ event: "listen_failed", code: "EADDRINUSE" }]);
   });
 
-  test("stops the listener when the server cannot start once bound, and the throw goes on", async () => {
-    const probe = blocker();
-    const port = probe.port ?? 0;
-    await probe.stop(true);
+  test("closes the listener when the server cannot start once bound, and keeps its error as the cause though a stop rejects", async () => {
     const logs: LogEntry[] = [];
-    const failing: Timer = {
-      schedule: () => {
-        throw new Error("a planted timer fault");
-      },
-    };
-    const env = { ...EPHEMERAL, OPEN_ORIGIN_PORT: String(port) };
-    const started = start(env, (entry) => logs.push(entry), worldDeps(failing).deps);
-    await expect(started).rejects.toThrow("a planted timer fault");
-    expect(logs).toEqual([{ event: "start_failed", error: "Error" }]);
-    // The port is free again: another listener binds it.
-    const again = Bun.serve({ hostname: LOOPBACK, port, fetch: () => new Response("") });
-    expect(again.port).toBe(port);
-    await again.stop(true);
+    const { fault, serverOf } = failingServer();
+    const result = await start(EPHEMERAL, (entry) => logs.push(entry), {
+      ...worldDeps().deps,
+      serverOf,
+    });
+    expect(result).toEqual({ ok: false, reason: "start", cause: fault });
+    const port = Number(logs[0]?.port);
+    expect(logs).toEqual([
+      { event: "start_failed", error: "Error", port },
+      { event: "stop_failed", part: "server", error: "Error" },
+    ]);
+    expect(await refused(port)).toBe(true);
   });
 
   test("stops the transport, closing its sockets, before the world flushes", async () => {
@@ -267,14 +300,21 @@ describe("main", () => {
     },
   );
 
-  test("forces exit 1 at a second signal while it stops", async () => {
-    const { host } = await mainOf(EPHEMERAL);
+  test("ignores a signal within 1 s of the first, and forces exit 1 at one 1 s after it, though stdout never drains", async () => {
+    const { host, clock } = await mainOf(EPHEMERAL);
+    // Nothing here runs the callbacks of the writes: stdout is a stalled pipe.
     host.signal("SIGTERM");
+    clock.advance(FORCE_AFTER_MICROS - 1);
     host.signal("SIGINT");
-    host.flush();
-    expect(host.lines.map(({ event }) => event)).toEqual(["listening", "signal", "forced_exit"]);
-    expect(host.lines[2]).toEqual({ event: "forced_exit", signal: "SIGINT" });
+    expect(host.exits).toEqual([]);
+    clock.advance(1);
+    host.signal("SIGINT");
     expect(host.exits).toEqual([1]);
+    expect(host.lines.slice(1, 4)).toEqual([
+      { event: "signal", signal: "SIGTERM" },
+      { event: "signal_ignored", signal: "SIGINT" },
+      { event: "forced_exit", signal: "SIGINT" },
+    ]);
     await host.line("stopped");
   });
 
@@ -306,7 +346,7 @@ describe("main", () => {
     });
   });
 
-  test("exits with 1 once written when the configuration is refused or the port is in use", async () => {
+  test("exits with 1 once written when the configuration is refused, the port is in use, or the start throws", async () => {
     const refused = await mainOf({ AI_MODE: "on" });
     expect(refused.host.calls).toEqual(["write:config_error", "write:config_error"]);
     expect(refused.host.exits).toEqual([]);
@@ -318,5 +358,11 @@ describe("main", () => {
       [{ event: "listen_failed", code: "EADDRINUSE" }],
       [1],
     ]);
+    // A start that throws exits the same way, with no crash.
+    const failed = await mainOf(EPHEMERAL, { serverOf: failingServer().serverOf });
+    expect(failed.host.lines.map(({ event }) => event)).toEqual(["start_failed", "stop_failed"]);
+    expect(failed.host.exits).toEqual([]);
+    failed.host.flush();
+    expect(failed.host.exits).toEqual([1]);
   });
 });

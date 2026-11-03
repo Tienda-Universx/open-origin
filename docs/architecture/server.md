@@ -754,10 +754,13 @@ world is the default world of T5, a new one with a new id at every start; a clie
 2. It logs each warning as `config_warning`: with `CODESPACES=true`, that the forwarded port must
    stay private.
 3. It wires `composeServer` with the real clock and timer of `src/adapters/` (tests may give fake
-   ones, a source, its projection, and a journal) and the transport. A port it cannot bind is
-   logged as `listen_failed` with the error's code (`EADDRINUSE`) and no message.
+   ones, a source, its projection, a journal, or a server of their own, `serverOf`) and the
+   transport. A port it cannot bind is logged as `listen_failed` with the error's code
+   (`EADDRINUSE`) and no message.
 4. It starts the server. When that throws once the listener bound, it logs `start_failed` with the
-   error's name, stops the transport and the server, and the throw goes on.
+   error's name and the port it bound, then stops the transport and the server, logging each stop
+   that fails as `stop_failed` with its part and the error's name, and returns the start's error as
+   the cause: a stop's failure never replaces it.
 
 It returns the running server, whose `stop()` stops the transport first, closing every socket with
 1001, then the server, which flushes every executed tick (RPO 0 once the journal is durable), and
@@ -770,16 +773,18 @@ supervisor that signals on that line always finds the handlers in place.
 
 | Event | What happens |
 |---|---|
-| A refused configuration, or a port it cannot bind | Exit code 1, after the `config_error` or `listen_failed` lines |
-| A start that throws once bound | The throw goes on, after `start_failed`: exit code 1 and Bun's report on stderr |
+| A refused configuration, a port it cannot bind, or a start that throws once bound | Exit code 1, after the `config_error`, `listen_failed`, or `start_failed` lines; no crash |
 | SIGTERM or SIGINT | `signal`, then `stop()`, then exit code 0, or 1 if stopping failed (`stop_failed`, with the error's name) |
-| Another SIGTERM or SIGINT while it stops | `forced_exit`, with the signal, then exit code 1 at once |
+| Another SIGTERM or SIGINT less than 1 s after the first | `signal_ignored`, with the signal: a duplicate, such as the copies a terminal's Ctrl-C sends both a wrapper (`bun run`) and the server |
+| Another SIGTERM or SIGINT 1 s or more after the first | `forced_exit`, with the signal, then exit code 1 at once |
 | `unhandledRejection` | The world halts by `rejectionPolicy(AI_MODE)`: with `off`, every client hears `status` `halted`. The line `unhandled_rejection` carries what was thrown (`causeOf`: an engine error's code, else its message and code) and the ticks; the server keeps serving the halted world |
 
-Every exit waits until the lines before it reached stdout: an empty write goes after them, and the
-process exits in its callback. The server sets no deadline on a stop: once the journal is durable,
-a stop can hang on it, and a supervisor brings its own grace period, then a second signal forces
-the exit.
+Every exit but the forced one waits until the lines before it reached stdout: an empty write goes
+after them, and the process exits in its callback. The forced exit does not wait: stdout may be a
+stalled pipe, the very case in which a stop may hang, and losing the `forced_exit` line is better
+than not exiting. The server sets no deadline on a stop: once the journal is durable, a stop can
+hang on it, and a supervisor brings its own grace period, then a second signal forces the exit.
+The 1 s that separates a duplicate from a forced exit is measured on the server's clock.
 
 The log is JSON lines on stdout, the transport's events among them: events with codes, ticks,
 counts, and sizes, never a payload or an address, which are C2. An exception no handler catches,
@@ -789,13 +794,17 @@ report on stderr, flushing nothing: with the ephemeral journal there is nothing 
 `main.test.ts` runs `start` and `main` in process over the counting world on a fake clock and a
 double of the process:
 
-- `start` refuses every problem at once, reports a port in use as `listen_failed`, frees the port
-  when the server's start throws, and stops the transport before the world flushes: a journal that
-  counts the open sockets at each append sees one at the first batch and none at the last;
+- `start` refuses every problem at once, reports a port in use as `listen_failed`, and, given a
+  server whose start throws and whose stop then rejects, closes the listener on the port it bound
+  and returns the start's error as the cause; and it stops the transport before the world flushes:
+  a journal that counts the open sockets at each append sees one at the first batch and none at
+  the last;
 - `main` binds every handler before `listening`; SIGTERM and SIGINT each close a client with
   1001, publish the two ticks a batch held (seven executed, five committed before), and exit with 0
-  only once the pipe took the `stopped` line; a second signal forces exit 1; an unhandled rejection
-  halts the world; a refused configuration and a port in use exit with 1.
+  only once the pipe took the `stopped` line; on a stdout that never drains, a signal 1 µs short of
+  1 s after the first is ignored and one at 1 s forces exit 1 at once; an unhandled rejection halts
+  the world; a refused configuration, a port in use, and a start that throws exit with 1 once
+  written.
 
 `tests/e2e/server.test.ts` (ADR 0019) spawns `main.ts` with `Bun.spawn` on port 0:
 

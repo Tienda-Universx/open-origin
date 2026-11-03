@@ -6,15 +6,17 @@
  * warnings; wires `composeServer` with the real clock and timer and the transport; and starts both.
  * A port it cannot bind is logged as `listen_failed` with the error's code. A server that cannot
  * start after the listener bound is logged as `start_failed`, and the listener and the server are
- * stopped before the error goes on.
+ * stopped, each failure to stop logged too; the start's error is kept as the cause.
  *
  * `main` binds a started server to its process before it reports `listening` with the port, so a
  * supervisor that signals on that line always finds the handlers in place:
  *
  * - SIGTERM and SIGINT stop the transport first, closing every socket with 1001, then the server,
  *   which flushes every executed tick, and exit with 0 once the `stopped` line reached stdout;
- * - a second signal while stopping forces exit 1, since a durable journal can hang a stop: the
- *   server sets no deadline of its own, and a supervisor brings its grace period;
+ * - a second signal while stopping forces exit 1 at once, without waiting for stdout, since a
+ *   durable journal can hang a stop: the server sets no deadline of its own, and a supervisor
+ *   brings its grace period. A signal within 1 s of the first is a duplicate, such as the copies
+ *   a terminal's Ctrl-C sends a wrapper and the server, and is logged and ignored;
  * - an unhandled rejection halts the world, as AI_MODE's policy says (`rejectionPolicy`).
  *
  * The log is JSON lines on stdout: events with codes, ticks, counts, and sizes, never a payload or
@@ -26,20 +28,27 @@ import { composeServer, type Server, type ServerDeps } from "./compose.ts";
 import { type Config, type Environment, parseConfig } from "./config/config.ts";
 import { serveTransport, type Transport } from "./transport/transport.ts";
 import { causeOf } from "./world/fault.ts";
+import type { Clock } from "./world/time.ts";
 
 /** One line of the log: an event, with what it needs; never a payload or an address. */
 export type LogEntry = { readonly event: string } & Readonly<Record<string, unknown>>;
 
 export type Log = (entry: LogEntry) => void;
 
-/** What tests may replace of the server: its time, its source and projection, and its journal. */
+/**
+ * What tests may replace: the server's time, which also times the signals, its source and
+ * projection, and its journal; and the server itself, composed from the configuration.
+ */
 export type EntryDeps = Partial<
   Pick<ServerDeps, "clock" | "timer" | "source" | "projectionOf" | "journal">
->;
+> & { readonly serverOf?: (config: Config, deps: ServerDeps) => Server };
 
 /** The signals that stop the server. */
 export const SIGNALS = Object.freeze(["SIGTERM", "SIGINT"] as const);
 export type Signal = (typeof SIGNALS)[number];
+
+/** How long after the first signal another one forces the exit: before it, it is a duplicate. */
+export const FORCE_AFTER_MICROS = 1_000_000;
 
 /** What the entry point needs of its process: the real process, or a test's double. */
 export type Host = {
@@ -67,11 +76,15 @@ export type Running = {
   unhandledRejection(reason: unknown): void;
 };
 
-/** A server that started, or why none did: every problem of the configuration, or the bind's code. */
+/**
+ * A server that started, or why none did: every problem of the configuration, the bind's code, or
+ * what the server's start threw.
+ */
 export type Started =
   | { readonly ok: true; readonly running: Running }
   | { readonly ok: false; readonly reason: "config"; readonly errors: readonly string[] }
-  | { readonly ok: false; readonly reason: "listen"; readonly code: string };
+  | { readonly ok: false; readonly reason: "listen"; readonly code: string }
+  | { readonly ok: false; readonly reason: "start"; readonly cause: unknown };
 
 /** The dependencies of `composeServer`: the real clock and timer unless tests replace them. */
 function serverDeps({ clock, timer, source, projectionOf, journal }: EntryDeps): ServerDeps {
@@ -117,6 +130,24 @@ async function stopBoth(transport: Transport, server: Server): Promise<void> {
   }
 }
 
+/**
+ * Stops the transport, then the server, after a failed start: a failure of either is logged by
+ * its name as `stop_failed` and goes no further, so the start's own error stays the cause.
+ */
+async function cleanUp(transport: Transport, server: Server, log: Log): Promise<void> {
+  const parts = [
+    ["transport", () => transport.stop()],
+    ["server", () => server.stop()],
+  ] as const;
+  for (const [part, stop] of parts) {
+    try {
+      await stop();
+    } catch (error) {
+      log({ event: "stop_failed", part, error: nameOf(error) });
+    }
+  }
+}
+
 /** The ticks of the server's status, its state, and why it halted, if it did: for the log. */
 function ticksOf(server: Server) {
   const { executedTick, committedTick, publishedTick, state } = server.status();
@@ -157,8 +188,9 @@ function runningOf(config: Config, server: Server, transport: Transport, log: Lo
  * Starts the server of `env`, logging to `log`: its configuration, or every problem of it, each
  * logged as `config_error` and none started; then its warnings, the server, and the transport. A
  * port it cannot bind is logged as `listen_failed`, with the error's code and no message. A throw
- * of the server's start, after the bind, is logged as `start_failed`, by the error's name; the
- * transport and the server are stopped, and the throw goes on.
+ * of the server's start, after the bind, is logged as `start_failed`, by the error's name and with
+ * the port it bound; the transport and the server are stopped (`cleanUp`), and the throw is
+ * returned as the cause.
  */
 export async function start(env: Environment, log: Log, deps: EntryDeps = {}): Promise<Started> {
   const parsed = parseConfig(env);
@@ -168,7 +200,7 @@ export async function start(env: Environment, log: Log, deps: EntryDeps = {}): P
   }
   for (const message of parsed.warnings) log({ event: "config_warning", message });
   const { config } = parsed;
-  const server = composeServer(config, serverDeps(deps));
+  const server = (deps.serverOf ?? composeServer)(config, serverDeps(deps));
   let transport: Transport;
   try {
     transport = listen(config, server, log);
@@ -179,29 +211,44 @@ export async function start(env: Environment, log: Log, deps: EntryDeps = {}): P
   }
   try {
     server.start();
-  } catch (error) {
-    log({ event: "start_failed", error: nameOf(error) });
-    await stopBoth(transport, server);
-    throw error;
+  } catch (cause) {
+    log({ event: "start_failed", error: nameOf(cause), port: transport.port });
+    await cleanUp(transport, server, log);
+    return { ok: false, reason: "start", cause };
   }
   return { ok: true, running: runningOf(config, server, transport, log) };
 }
 
+/** What `bind` needs besides the process: the log, the drained exit, and the clock of signals. */
+type Binding = {
+  readonly log: Log;
+  /** Exits once what was logged reached stdout. */
+  readonly exit: (code: number) => void;
+  readonly clock: Clock;
+};
+
 /**
  * Binds `running` to `host`: an unhandled rejection halts the world; the first SIGTERM or SIGINT
- * stops the server and exits with 0, or with 1 when stopping failed; another signal while it stops
- * exits with 1 at once. `exit` exits once what was logged reached stdout.
+ * stops the server and exits with 0, or with 1 when stopping failed, once stdout took the log.
+ * Another signal while it stops forces exit 1 at once, without waiting for stdout, which may be a
+ * stalled pipe: losing that last line is better than not exiting. A signal less than
+ * FORCE_AFTER_MICROS after the first is a duplicate: it is logged and ignored.
  */
-function bind(host: Host, running: Running, log: Log, exit: (code: number) => void): void {
+function bind(host: Host, running: Running, { log, exit, clock }: Binding): void {
   host.onRejection((reason) => running.unhandledRejection(reason));
-  let stopping = false;
+  let first: number | undefined;
   const onSignal = (signal: Signal) => {
-    if (stopping) {
-      log({ event: "forced_exit", signal });
-      exit(1);
+    const now = clock.now();
+    if (first !== undefined && now - first < FORCE_AFTER_MICROS) {
+      log({ event: "signal_ignored", signal });
       return;
     }
-    stopping = true;
+    if (first !== undefined) {
+      log({ event: "forced_exit", signal });
+      host.exit(1);
+      return;
+    }
+    first = now;
     log({ event: "signal", signal });
     running.stop().then(
       () => exit(0),
@@ -230,9 +277,10 @@ const PROCESS: Host = Object.freeze({
 });
 
 /**
- * Runs the server of `host`'s environment: it exits with 1 when the configuration is refused or
- * the port cannot be bound; otherwise it binds its handlers, reports `listening`, and runs until a
- * signal stops it. Tests give a double of the process and replace the server's dependencies.
+ * Runs the server of `host`'s environment: it exits with 1 when the configuration is refused, the
+ * port cannot be bound, or the server cannot start; otherwise it binds its handlers, reports
+ * `listening`, and runs until a signal stops it. Tests give a double of the process and replace the
+ * server's dependencies.
  */
 export async function main(host: Host = PROCESS, deps: EntryDeps = {}): Promise<void> {
   const log: Log = (entry) => host.write(`${JSON.stringify(entry)}\n`);
@@ -244,7 +292,7 @@ export async function main(host: Host = PROCESS, deps: EntryDeps = {}): Promise<
     return;
   }
   const { running } = started;
-  bind(host, running, log, exit);
+  bind(host, running, { log, exit, clock: deps.clock ?? systemClock });
   log({ event: "listening", host: running.host, port: running.port });
 }
 
