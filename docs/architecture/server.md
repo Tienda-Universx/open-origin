@@ -822,7 +822,6 @@ double of the process:
 A stdout line that is not JSON is kept and expected absent, so a failure shows it. The server's
 code has no switch for tests.
 
-
 ## Terminal probe
 
 `apps/server/tools/probe.ts` is a minimal public client for a terminal: it connects to a running
@@ -886,7 +885,6 @@ frames the schema refuses; an `error`, shown at once; and `stop`. Then a probe c
 of a model world in the test's process and prints two commits: the clock, the followed being, the
 nine chunks of its window, a greeting in the feed, and speech holding `<script>` shown as text.
 
-
 ## Benchmarks
 
 Three manual benchmarks measure the budgets of plan §11 that tests cannot: `bench/projection.ts`,
@@ -907,10 +905,9 @@ Each tick is stepped with the engine's `step` and projected by `BeingsProjection
 each timed apart. `default` is the default world of T5, ticks 101 to 20,100; `dense` is the beings
 benchmark's "dispersed 1,000" (1,000 beings under `utility@1`, one to a chunk, two chunks apart),
 ticks 101 to 2,100, a third of a simulated day, so a run of both stays under a minute on one core.
-It prints the step's and the projection's p50, p95, and
-p99, the projection's share of the step (the sum of its times over the sum of the step's), the
-chunks the step changed and the records published per tick, and the bytes of each published tick.
-
+It prints the step's and the projection's p50, p95, and p99, the projection's share of the step
+(the sum of its times over the sum of the step's), the chunks the step changed and the records
+published per tick, and the bytes of each published tick.
 
 ### Fan-out
 
@@ -938,7 +935,6 @@ measures 100. It prints the sync's periods and slowest fan-out, the fan-out's an
 p50 and p99, the churn's input, each client's bytes a period (p50 and p99), the most commits a client
 got in a period, the share of client-periods with a commit, and the most clients deferred to the next
 period, which got nothing in it.
-
 
 ### Load
 
@@ -975,10 +971,10 @@ The server's process adds what the protocol must never carry, over its own stdin
 
 It prints the clients that failed to open, the time to open and sync them, the tick (from the status
 and over the window), the status's projection, lateness, and fan-out, the latency from playout to
-receipt (p50, p95, and p99), the ticks executed beyond the played-out one, each client's commits
-per period played out in the window and its
-commits that came less than half a period after the one before, the memory per client, the status's
-lagging clients, slow closes, aborts, and faults, and the highest load average it saw.
+receipt (p50, p95, and p99), the ticks executed beyond the played-out one, each client's commits per
+period played out in the window and its commits that came less than half a period after the one
+before, the memory per client, the status's lagging clients, slow closes, aborts, and faults, and
+the highest load average it saw.
 
 With `--sync`, a fresh server, whose terrain is all uncached, gets one client of the reference
 reducer, which subscribes, once its first (empty) commit arrived, to the 64 chunks of 8 × 8 around
@@ -986,7 +982,6 @@ the spawn area: the milliseconds and bytes from that `subscribe` to the commit t
 
 The driver refuses to start while the load average is 2 or more, stops a run when it stays above 2
 for 15 s, and stops its children, killing any that does not exit within 5 s.
-
 
 ### Measured budgets
 
