@@ -312,6 +312,27 @@ Semantics:
 The silence timer, the resync rate, and reconnecting are the client's: they read the clock, which
 the reducer never does.
 
+### A client around the reducer
+
+The terminal probe ([`apps/server/tools/probe.ts`](server.md#terminal-probe)) is the smallest
+client that does all of it, and the order it keeps is the one a client needs:
+
+1. On every connection, before anything else, send `subscribe`, and `follow` when following: the
+   server keeps no session, so a reconnect that skips them shows nothing.
+2. Read each text frame with `parseServerMessage`, and apply only what it accepts; a frame it
+   refuses is dropped, and the next one shows the gap.
+3. Apply each message with `applyMessage`, and show the view only from a commit's result:
+   `state.view` is the whole view at one tick, and `committed` holds the speech and the feed of
+   `(L, L']`, which a client that shows history keeps itself.
+4. After an anomaly, send `resync` once `RESYNC_INTERVAL_MS` passed since the last one, even if
+   more anomalies came meanwhile: until the reset arrives, the reducer applies nothing but a reset.
+5. Reconnect when the socket closes or after `STALE_AFTER_MS` without a message, after
+   `reconnectDelayMs(attempt, draw, unavailable)`, and count the attempts again from 0 at `hello`.
+   Ignore every event of a socket the client gave up.
+
+Text from the server is data: a terminal client writes its controls as visible escapes, and a web
+client renders it as text, never as markup.
+
 ## Admin contracts
 
 `@open-origin/protocol/admin` (C3, never public):

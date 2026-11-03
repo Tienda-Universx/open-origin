@@ -5,18 +5,18 @@ rate, makes each tick durable before it publishes it, and hands the rest of the 
 published records. Its presentation plane turns those records into each client's view.
 [ADR 0025](../decisions/0025-real-time-world-host.md) and
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
-describes what the code implements as of T6-7: the configuration, the scheduler, the world host
+describes what the code implements as of T6-8: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
 (playout, mirror, interest, transactions, sessions, the send discipline, the fan-out, and the
-limits of memory and terrain), the transport, their composition, the entry point, and the tests
-of observer invariance.
+limits of memory and terrain), the transport, their composition, the entry point, the tests of
+observer invariance, and the terminal probe.
 
-Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
-`scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
-`leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
-`presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`,
-`presentation-terrain`, `presentation-liveness`, `observer-invariance`, `transport`, `ws-world`,
-and `main`),
+Code: `apps/server/src/` (`@open-origin/server`) and `apps/server/tools/` (the probe). Tests:
+`apps/server/test/` (`config`, `scheduler`, `fault`, `adapters`, `publication`, `host`,
+`rejection`, `compose`, `projection`, `leak`, `presentation-mirror`, `presentation`,
+`presentation-reconstruction`, `presentation-sizes`, `presentation-input`,
+`presentation-backpressure`, `presentation-limits`, `presentation-terrain`,
+`presentation-liveness`, `observer-invariance`, `transport`, `ws-world`, `main`, and `probe`),
 `tests/e2e/server.test.ts`, and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
@@ -820,6 +820,67 @@ double of the process:
 
 A stdout line that is not JSON is kept and expected absent, so a failure shows it. The server's
 code has no switch for tests.
+
+
+## Terminal probe
+
+`apps/server/tools/probe.ts` is a minimal public client for a terminal: it connects to a running
+server, applies every message with the protocol's reference reducer, `applyMessage`, and prints a
+screen at each commit. To watch the spawn area of the default world, following its being 1, on a
+server started as above:
+
+```sh
+bun apps/server/tools/probe.ts --around 0,0 --follow 1
+```
+
+| Option | What it does |
+|---|---|
+| `--url ws://host:port/ws` | The server's listener; `ws://127.0.0.1:8080/ws` unless given. A `ws:` or `wss:` URL |
+| `--chunk x,y` | Adds a chunk to the camera; may be given more than once |
+| `--around x,y` | Adds the square of chunks within `--radius` of a chunk, 1 unless given: 9 chunks, at most 49 (radius 3) |
+| `--follow id` | Follows a being: its window of 3 × 3 chunks joins the view |
+| `--commits n` | Exits with 0 after n commits |
+
+With neither `--chunk` nor `--around`, it subscribes to no chunk and shows the clock and the feed.
+The camera is checked with the protocol's own schema before anything is sent, so a camera of more
+than 64 chunks, a repeated chunk, or one outside the world is refused at start; any argument it
+does not know, or gives twice (but `--chunk`), exits with 2 and the usage.
+
+A screen shows the link, the world's id, durability, and state, the clock of the last commit (its
+tick, day, and thousandths of the day), the followed being, the visible chunks with their version
+and count of beings, the beings, the last 16 items of speech and of the feed, the chunks the view's
+limit left out (the last `notice`), and its counts of commits, anomalies, frames the strict schema
+refused, resyncs, and reconnects. On a terminal it redraws in place; otherwise it prints each
+screen after a blank line.
+
+It behaves as ADR 0026 asks of a client:
+
+- On each connection it sends `subscribe` and, when asked, `follow`: the server keeps no session.
+- After an anomaly the reducer reports, it sends `resync`, at most once every 2 s
+  (`RESYNC_INTERVAL_MS`); the reducer keeps the old view, marked stale, until the reset.
+- A connection that does not open, or hears nothing, for 3 s (`STALE_AFTER_MS`) is given up. It
+  then reconnects, as after a close, with `reconnectDelayMs`: 0.5 s to 1 s at first, doubling up to
+  30 s, and at least 5 s after an HTTP 503, which Bun's client reports only in the text of its
+  error event (`Expected 101 status code: 503`). A `hello` starts the backoff over. Each connection
+  has a generation, and the events of a socket it gave up are ignored.
+- Ctrl-C (SIGINT) or SIGTERM closes the socket with 1000 and exits with 0.
+
+**Nothing the server sends reaches the terminal raw.** `sanitize` (`tools/probe-screen.ts`) writes
+every code point a terminal could act on as `\u{XXXX}`: the C0 and C1 controls, DEL, the line and
+paragraph separators, the bidirectional controls and every invisible code point of the protocol's
+`FORBIDDEN_CODE_POINTS`, and lone surrogates. So `\x1b[2J` prints as `\u{1B}[2J` and clears
+nothing, and U+202E prints as `\u{202E}` and reorders nothing. A backslash is doubled, so text that
+spells `\u{1B}` out never reads like an escaped ESC. Markup such as `<script>` is text, kept as it
+is. Every line of a screen passes through it, so the protocol's refusal of text that is not plain
+text is not the probe's only defense.
+
+`probe.test.ts` checks `sanitize` on hostile inputs with exact outputs (ANSI, OSC, C1, NUL, DEL, a
+line feed, U+202E, U+2028, U+200D, a lone surrogate, a tag, and a backslash), at both ends of
+every range of `FORBIDDEN_CODE_POINTS` and of the surrogates, and just outside them; the arguments; the backoff, 7.5 s after a 503 at the test's draw of 0.5, and
+its reset at `hello`; a socket given up that cannot act; the silence of 3 s; one `resync` per 2 s;
+frames the schema refuses; and `stop`. Then a probe connects over a real socket to a presentation
+of a model world in the test's process and prints two commits: the clock, the followed being, the
+nine chunks of its window, a greeting in the feed, and speech holding `<script>` shown as text.
 
 ## Observer invariance
 

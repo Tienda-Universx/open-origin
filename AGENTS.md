@@ -31,6 +31,7 @@ Bun are allowed when they add value.
 | Beings benchmark (manual, not part of `check`) | `bun packages/agents/bench/beings.ts` |
 | Gate of the entity section (manual, not part of `check`) | `bun packages/agents/bench/gate.ts` |
 | Run the server on this machine, in ephemeral mode (manual; `OPEN_ORIGIN_PORT=0` picks a free port) | `OPEN_ORIGIN_DURABILITY=ephemeral bun run --bun apps/server/src/main.ts` |
+| Watch a running server from a terminal (manual): the default world's spawn area, following being 1 | `bun apps/server/tools/probe.ts --around 0,0 --follow 1`; its options are in `docs/architecture/server.md` ("Terminal probe") |
 
 CLIs whose launcher targets Node (for example `tsc`, `biome`) run with `bunx --no-install --bun`:
 `--bun` keeps them on Bun, and `--no-install` stops bunx from downloading a registry package when
