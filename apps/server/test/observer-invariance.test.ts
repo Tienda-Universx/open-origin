@@ -11,6 +11,13 @@
  * its full command list, rejected commands included, its checksum, and the bytes of its
  * PublishedTick must be equal, and so must the final snapshot.
  *
+ * The run with 32 observers also holds four clients of the protocol's reducer that watch the
+ * subject's first chunk crossing (plan test 9): one of the chunk the being leaves, one of the chunk
+ * it enters, one of both, and one that follows it. After every commit each view must equal the
+ * published world at the commit's tick, and the crossing must fall between two of each client's
+ * commits: the being leaves the first chunk and enters the second in one transaction, and the
+ * follower's window moves with it.
+ *
  * Three permanent negative controls, test doubles injected through compose()'s dependencies and
  * never production code, must make the comparison fail at the exact tick they leak at: NC1, a
  * source that adds an admin command, one the engine rejects, once a being is followed; NC2, a brain
@@ -20,7 +27,10 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { type beings, type Command, encodeSnapshot, type World } from "@open-origin/engine";
 import {
+  type BeingPublic,
   type ChunkCoord,
+  type ClientState,
+  type Clock,
   chunkKey,
   encodeTerrain,
   type TerrainPublic,
@@ -33,14 +43,16 @@ import {
 } from "../../../packages/agents/test/support/mind-subject.ts";
 import type { SuiteRuleset } from "../../../packages/engine/test/support/determinism-records.ts";
 import { Random } from "../../../packages/protocol/test/support/random.ts";
-import { composeServer, type WorldPlaneDeps } from "../src/compose.ts";
+import { composeServer, type Server, type WorldPlaneDeps } from "../src/compose.ts";
 import { parseConfig } from "../src/config/config.ts";
 import type { Presentation } from "../src/presentation/presentation.ts";
 import { BeingsProjection, type WorldProjection } from "../src/projection/projection.ts";
 import { EphemeralJournal, type JournalBatch, type TickJournal } from "../src/world/journal.ts";
+import type { PublishedTick } from "../src/world/published.ts";
 import { FixedRateScheduler, type TickScheduler } from "../src/world/scheduler.ts";
 import type { CommandIntent, WorldSource } from "../src/world/source.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
+import { type ChunkState, shown, ViewClient, windowKeys } from "./support/presentation.ts";
 
 /** One period at 5 Hz, in microseconds. */
 const P = 200_000;
@@ -306,11 +318,22 @@ beforeAll(() => {
   script = subjectScript();
 });
 
+/** What a run varies. */
+type RunOptions = {
+  readonly observers: number;
+  readonly ticks: number;
+  readonly leak?: Leak;
+  /** The step at which the first observers join. */
+  readonly firstJoin?: number;
+  /** Called once the server is composed, before it starts: clients of the test's own join there. */
+  readonly watch?: (server: Server) => void;
+};
+
 /**
  * Runs the subject world for `ticks` ticks through composeServer, with `observers` acting half a
  * period after each tick and `leak` injected; returns the run's timeline and what observers did.
  */
-async function runWorld(observers: number, ticks: number, leak: Leak = {}, firstJoin = 0) {
+async function runWorld({ observers, ticks, leak = {}, firstJoin = 0, watch }: RunOptions) {
   const clock = new FakeClock();
   const timer = new FakeTimer(clock);
   const probe: Probe = {
@@ -333,6 +356,7 @@ async function runWorld(observers: number, ticks: number, leak: Leak = {}, first
     ...(schedulerOf === undefined ? {} : { schedulerOf }),
   });
   probe.presentation = server.presentation;
+  watch?.(server);
   const audience = new Audience(observers, ticks, probe, firstJoin);
   const published = new Map<number, string>();
   server.world.subscribeToPublished((tick) => {
@@ -415,10 +439,181 @@ const NC3: Leak = {
   },
 };
 
+/** A being that left one chunk for another in one tick. */
+type Crossing = {
+  readonly tick: number;
+  readonly being: number;
+  readonly from: ChunkCoord;
+  readonly to: ChunkCoord;
+};
+
+/** The first crossing in `published`: a being gone from one chunk and upserted in another. */
+function firstCrossing(published: ReadonlyMap<number, string>): Crossing {
+  for (const [tick, text] of published) {
+    const { chunks }: PublishedTick = JSON.parse(text);
+    for (const to of chunks) {
+      for (const { id } of to.upsert) {
+        const from = chunks.find(({ gone }) => gone.includes(id));
+        if (from !== undefined) return { tick, being: id, from: from.at, to: to.at };
+      }
+    }
+  }
+  throw new Error("no being of the subject world crossed a chunk");
+}
+
+/** The public world at each published tick, as the C0 projection published it. */
+class PublicHistory {
+  readonly #chunks = new Map<number, ReadonlyMap<string, ChunkState>>();
+  readonly #clocks = new Map<number, Clock>();
+  #boot = 0;
+
+  /** Applies the next published tick, the boot record first. */
+  readonly apply = (published: PublishedTick): void => {
+    if (this.#chunks.size === 0) this.#boot = published.tick;
+    const chunks = new Map(this.#chunks.get(published.tick - 1));
+    for (const { at, v, upsert, gone } of published.chunks) {
+      const beings = new Map(chunks.get(chunkKey(at))?.beings);
+      for (const id of gone) beings.delete(id);
+      for (const record of upsert) beings.set(record.id, record);
+      chunks.set(chunkKey(at), { v, beings });
+    }
+    this.#chunks.set(published.tick, chunks);
+    this.#clocks.set(published.tick, published.clock);
+  };
+
+  /** The chunks `keys` at `tick`: a chunk no tick published is empty at the boot tick. */
+  chunks(tick: number, keys: Iterable<string>): Map<string, ChunkState> {
+    const world = this.#chunks.get(tick);
+    if (world === undefined) throw new Error(`no tick ${tick} was published`);
+    const empty: ChunkState = { v: this.#boot, beings: new Map() };
+    return new Map([...keys].map((key) => [key, world.get(key) ?? empty]));
+  }
+
+  /** The record of `being` at `tick`, or undefined when no chunk holds it. */
+  record(tick: number, being: number): BeingPublic | undefined {
+    for (const { beings } of this.#chunks.get(tick)?.values() ?? []) {
+      const record = beings.get(being);
+      if (record !== undefined) return record;
+    }
+    return undefined;
+  }
+
+  clock(tick: number): Clock {
+    const clock = this.#clocks.get(tick);
+    if (clock === undefined) throw new Error(`no tick ${tick} was published`);
+    return clock;
+  }
+}
+
+/** What a client's view showed after a commit. */
+type Shown = {
+  readonly tick: number;
+  readonly clock: Clock;
+  readonly chunks: Map<string, ChunkState>;
+  readonly followed: BeingPublic | null;
+  /** Whether every chunk shown had the constant terrain. */
+  readonly terrain: boolean;
+};
+
+/** What the view of `state` shows. */
+function snapshot(state: ClientState): Shown {
+  const { view } = state;
+  if (view === undefined) throw new Error("a commit left no view");
+  const chunks = [...view.chunks.values()];
+  return {
+    tick: view.tick,
+    clock: view.clock,
+    chunks: shown(state),
+    followed: view.followed,
+    terrain: chunks.every(({ terrain }) => Bun.deepEquals(terrain, TERRAIN)),
+  };
+}
+
+/** A client that watches a crossing: its camera, whether it follows the being, and its commits. */
+type Viewer = {
+  readonly client: ViewClient;
+  readonly camera: readonly ChunkCoord[];
+  readonly follows: boolean;
+  readonly shown: Shown[];
+};
+
+/** Clients of the chunk a crossing leaves, of the one it enters, of both, and its being's follower. */
+class CrossingWatch {
+  readonly history = new PublicHistory();
+  readonly crossing: Crossing;
+  readonly viewers: Readonly<Record<"source" | "destination" | "both" | "follower", Viewer>>;
+
+  constructor(crossing: Crossing) {
+    this.crossing = crossing;
+    const { from, to } = crossing;
+    const viewer = (camera: readonly ChunkCoord[], follows = false): Viewer => ({
+      client: new ViewClient(),
+      camera,
+      follows,
+      shown: [],
+    });
+    this.viewers = {
+      source: viewer([from]),
+      destination: viewer([to]),
+      both: viewer([from, to]),
+      follower: viewer([], true),
+    };
+  }
+
+  /** Records the published world and connects the clients, before `server` starts. */
+  readonly attach = (server: Server): void => {
+    server.world.subscribeToPublished(this.history.apply);
+    for (const { client, camera, follows, shown: commits } of Object.values(this.viewers)) {
+      const id = server.presentation.connect(client);
+      server.presentation.subscribe(id, camera);
+      if (follows) server.presentation.follow(id, this.crossing.being);
+      client.onCommit = () => commits.push(snapshot(client.state));
+    }
+  };
+}
+
+/** Each commit of each client of `watch` showed the world the gate published at its tick. */
+function expectPublishedViews({ crossing, history, viewers }: CrossingWatch): void {
+  for (const { client, camera, follows, shown: commits } of Object.values(viewers)) {
+    expect(client.anomalies).toEqual([]);
+    for (const commit of commits) {
+      const record = history.record(commit.tick, crossing.being);
+      const window = follows && record !== undefined ? windowKeys(record.cell) : [];
+      const keys = [...window, ...camera.map(chunkKey)];
+      expect(commit.chunks).toEqual(history.chunks(commit.tick, keys));
+      expect(commit.clock).toEqual(history.clock(commit.tick));
+      expect(commit.followed).toEqual(follows ? (record ?? null) : null);
+      expect(commit.terrain).toBe(true);
+    }
+  }
+}
+
+/**
+ * Whether the crossing's being is in the chunk it left and in the one it entered, as each client
+ * of `watch` showed them in its last commit before the crossing's tick and in its first commit
+ * from it on: true, false, or null when the view does not show the chunk.
+ */
+function placesAround({ crossing, viewers }: CrossingWatch) {
+  const { being, from, to } = crossing;
+  const places = (commit: Shown | undefined) =>
+    [from, to].map((at) => commit?.chunks.get(chunkKey(at))?.beings.has(being) ?? null);
+  return Object.fromEntries(
+    Object.entries(viewers).map(([name, { shown: commits }]) => {
+      const after = commits.findIndex(({ tick }) => tick >= crossing.tick);
+      return [name, [places(commits[after - 1]), places(commits[after])]];
+    }),
+  );
+}
+
 describe("observer invariance", () => {
   let reference: Timeline;
+  /** The run of 32 observers, which also holds the clients that watch the subject's first crossing. */
+  let crowd: Awaited<ReturnType<typeof runWorld>>;
+  let watched: CrossingWatch;
   beforeAll(async () => {
-    reference = (await runWorld(0, TICKS)).timeline;
+    reference = (await runWorld({ observers: 0, ticks: TICKS })).timeline;
+    watched = new CrossingWatch(firstCrossing(reference.published));
+    crowd = await runWorld({ observers: 32, ticks: TICKS, watch: watched.attach });
   });
 
   test("the reference run executed every tick and published the subject world", () => {
@@ -432,7 +627,8 @@ describe("observer invariance", () => {
   test.each([1, 32])(
     "%p observers leave every tick and the final snapshot as they were",
     async (count) => {
-      const { timeline, activity } = await runWorld(count, TICKS);
+      const run = count === 32 ? crowd : await runWorld({ observers: count, ticks: TICKS });
+      const { timeline, activity } = run;
       expect(divergence(reference, timeline)).toBeUndefined();
       // The observers watched: they connected, followed, lagged, left, and received messages.
       expect(activity.connects).toBeGreaterThan(count);
@@ -448,14 +644,24 @@ describe("observer invariance", () => {
     ["NC1, an admin command once a being is followed", NC1, "commands"],
     ["NC3, an extra tick per subscribe", NC3, "times"],
   ] as const)("%s fails the comparison at the exact tick it leaks", async (_name, leak, what) => {
-    const { timeline, probe } = await runWorld(4, LEAK_TICKS, leak, LATE_JOIN);
+    const { timeline, probe } = await runWorld({
+      observers: 4,
+      ticks: LEAK_TICKS,
+      leak,
+      firstJoin: LATE_JOIN,
+    });
     const [first] = probe.leaks;
     expect(first).toBeGreaterThan(LATE_JOIN);
     expect(divergence(reference, timeline)).toEqual({ tick: first ?? -1, what });
   });
 
   test("NC2, a brain that reads the observed flag, fails the comparison at a tick it leaks", async () => {
-    const { timeline, probe } = await runWorld(4, LEAK_TICKS, NC2, LATE_JOIN);
+    const { timeline, probe } = await runWorld({
+      observers: 4,
+      ticks: LEAK_TICKS,
+      leak: NC2,
+      firstJoin: LATE_JOIN,
+    });
     const found = divergence(reference, timeline);
     // The engine may discard a decision in the tick it makes it: a being whose step loses the
     // contest for room at that tick fails it, whatever it decided. The comparison then fails at the
@@ -464,5 +670,42 @@ describe("observer invariance", () => {
     expect(probe.leaks[0]).toBeGreaterThan(LATE_JOIN);
     expect(found?.what).toBe("checksums");
     expect(probe.leaks).toContain(found?.tick ?? -1);
+  });
+
+  test("a being that crosses chunks leaves and enters the views of clients of one chunk, the other, both, and its follower (plan test 9)", () => {
+    const { crossing, viewers } = watched;
+    const { being, from, to } = crossing;
+    expectPublishedViews(watched);
+    // The crossing fell between two commits of each client: the being was in the chunk it left,
+    // and is in the one it entered.
+    expect(placesAround(watched)).toEqual({
+      source: [
+        [true, null],
+        [false, null],
+      ],
+      destination: [
+        [null, false],
+        [null, true],
+      ],
+      both: [
+        [true, false],
+        [false, true],
+      ],
+      follower: [
+        [true, false],
+        [false, true],
+      ],
+    });
+    // The client of both chunks got the crossing in one transaction: gone from one, upserted in
+    // the other.
+    const commits = viewers.both.shown;
+    const tick = commits[commits.findIndex((commit) => commit.tick >= crossing.tick)]?.tick;
+    const delta = viewers.both.client.messages.find(
+      (message) => message.type === "delta" && message.tick === tick,
+    );
+    const entries = delta?.type === "delta" ? delta.chunks : [];
+    const entry = (at: ChunkCoord) => entries.find((chunk) => chunkKey(chunk.at) === chunkKey(at));
+    expect(entry(from)?.gone).toContain(being);
+    expect(entry(to)?.upsert.map(({ id }) => id)).toContain(being);
   });
 });

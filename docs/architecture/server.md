@@ -415,6 +415,13 @@ which the host asked for its commands, its full command list, rejected commands 
 checksum, and the bytes of its `PublishedTick` must be equal, and so must the final snapshot. The
 checksums are read from the journal's records, never through the protocol.
 
+The run of 32 observers also checks plan test 9 in the subject world: four clients of the
+protocol's reducer watch its first chunk crossing, the client of the chunk the being leaves, of the
+chunk it enters, of both, and its follower. After every commit each view equals the world the gate
+published at the commit's tick, and the crossing falls between two of each client's commits: the
+being leaves one chunk and enters the other in one transaction, and the follower's window moves
+with it.
+
 Three permanent negative controls are test doubles injected through `compose`'s dependencies, never
 production code:
 
