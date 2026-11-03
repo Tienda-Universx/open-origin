@@ -485,11 +485,12 @@ describe("the server's status", () => {
     const states = client.messages.flatMap((message) =>
       message.type === "hello" || message.type === "status" ? [message.state] : [],
     );
-    // Hello came before the world started; then it ran, and halted. Once the playout ran out of
-    // published ticks, a halted world is heard each period.
-    expect(states.slice(0, 3)).toEqual(["paused", "running", "halted"]);
-    expect(states.slice(2)).toEqual(Array(states.length - 2).fill("halted"));
-    expect(states.length).toBeGreaterThan(3);
+    // Hello came before the world started; then it ran, and halted. A period that brings no commit
+    // brings the state instead, so once the playout ran out of published ticks, a halted world is
+    // heard each period.
+    const changes = states.filter((state, index) => state !== states[index - 1]);
+    expect(changes).toEqual(["paused", "running", "halted"]);
+    expect(states.filter((state) => state === "halted").length).toBeGreaterThan(1);
     expect(ServerStatus.parse(server.status())).toMatchObject({ state: "halted", strikes: 1 });
     server.presentation.close(id);
     expect(ServerStatus.parse(server.status())).toMatchObject({ connections: 0, retainedBytes: 0 });

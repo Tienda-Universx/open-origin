@@ -105,7 +105,7 @@ describe("a connection", () => {
     expect([client.anomalies, client.state.stale, client.state.view?.tick]).toEqual([[], false, 0]);
   });
 
-  test("an up-to-date client gets one commit per period, at the playout tick, and none while it holds", () => {
+  test("an up-to-date client gets one commit per period, at the playout tick, and its state instead while the playout holds", () => {
     const model = new ModelWorld(0);
     const { presentation, advance } = presentationOver(model);
     const client = new ViewClient();
@@ -117,9 +117,11 @@ describe("a connection", () => {
       ["commit", 3, 1],
       ["commit", 4, 2],
     ]);
-    // Nothing was published: the playout tick holds, and no commit could pass the last one.
+    // Nothing was published: the playout tick holds, and no commit could pass the last one. The
+    // client hears the world's state instead, so a period never passes in silence.
     presentation.period();
-    expect(client.messages).toHaveLength(5);
+    expect(client.messages).toHaveLength(6);
+    expect(client.messages[5]).toMatchObject({ type: "status", tick: 2, state: "running" });
     expect(client.commits.map(({ tick }) => tick)).toEqual([0, 1, 2]);
   });
 

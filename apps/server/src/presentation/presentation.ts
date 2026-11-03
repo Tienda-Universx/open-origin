@@ -477,9 +477,8 @@ export class Presentation {
     const { txn } = client;
     if (txn !== undefined) {
       txn.release(this.#mirror);
-      // A client with a transaction does not wait in the terrain queue: only what its transaction
-      // waited for goes.
-      this.#terrain.remove(client.id);
+      // What the transaction waited for goes; the client keeps its place in the terrain queue.
+      this.#terrain.cancel(client.id);
       client.txn = undefined;
       client.queue(abortFrame(txn.txn, txn.tick));
       if (txn.reset) client.view.needsReset = true;
@@ -593,13 +592,14 @@ export class Presentation {
   }
 
   /**
-   * Sends `client` what fits this period, unless its buffer is full. While the world is stopped,
-   * a client that got nothing else this period gets its state: the heartbeat no commit gives.
+   * Sends `client` what fits this period, unless its buffer is full. A client served that got
+   * nothing else this period gets the world's state, whatever it is: the heartbeat no part or commit
+   * gave, while the world is stopped or the client's next part waits for terrain.
    */
   #serve(client: Client): void {
     let blocked: Blocked | undefined = "lagging";
     if (client.sink.buffered() < BUFFER_BYTES) blocked = this.#flush(client, true);
-    if (blocked === undefined && this.#state !== "running" && !client.sentIn(this.#period)) {
+    if (blocked === undefined && !client.sentIn(this.#period)) {
       client.queue(statusFrame(client.view.tick, this.#state), "status");
       blocked = this.#flush(client, false);
     }
@@ -623,12 +623,12 @@ export class Presentation {
 
   /**
    * Whether a transaction of `client` may start: none is in flight and no message waits; it did
-   * not commit or wait for terrain in this period; its buffer has room; and the playout tick passed
-   * its last commit's, or, for its first, reached hello's.
+   * not commit in this period; its buffer has room; and the playout tick passed its last commit's,
+   * or, for its first, reached hello's.
    */
   #mayStart(client: Client): boolean {
     if (client.txn !== undefined || client.waiting > 0) return false;
-    if (client.committedIn === this.#period || client.triedIn === this.#period) return false;
+    if (client.committedIn === this.#period) return false;
     if (client.sink.buffered() >= BUFFER_BYTES) return false;
     const { view } = client;
     const tick = this.#mirror.tick;
@@ -637,34 +637,38 @@ export class Presentation {
 
   /**
    * Starts the next transaction of `client`, at the playout tick, over its effective interest
-   * trimmed to the view's limit, once the terrain of every chunk it brings is at hand. Otherwise
-   * the client waits in the terrain queue, its view at L.
+   * trimmed to the view's limit. A chunk that would enter but whose terrain is not at hand is left
+   * out of this transaction, neither trimmed nor dropped from the interest: the client waits for it
+   * in the terrain queue, and it enters, whole, in a later transaction.
    */
   #begin(client: Client): void {
-    client.triedIn = this.#period;
     const target = this.#interest.target(client.id);
     // The follow window moves with the followed being, to its chunk at the playout tick.
     const center = target === null ? undefined : this.#mirror.locate(target);
     this.#interest.moveWindow(client.id, center);
-    const interest = this.#interest.effective(client.id);
-    const { kept, trimmed } = trimView(this.#mirror, interest, this.#sizes.view);
+    const { kept, trimmed } = trimView(
+      this.#mirror,
+      this.#interest.effective(client.id),
+      this.#sizes.view,
+    );
     this.#notice(client, trimmed);
     const { view } = client;
     const entering = kept.filter((at) => view.needsReset || !view.pinned.has(chunkKey(at)));
     const taken = this.#terrain.take(client.id, entering);
-    if (taken === undefined) return;
-    if (trimmed.length > 0) this.#counts.trims += 1;
+    const later = new Set(entering.map(chunkKey).filter((key) => !taken.has(key)));
     client.txn = Transaction.start({
       txn: client.nextTxn,
       view,
       mirror: this.#mirror,
-      interest: kept,
+      interest: kept.filter((at) => !later.has(chunkKey(at))),
       target,
       terrainBytes: (at) => terrainIn(taken, at).bytes,
       terrain: this.#terrain.reader(client.id),
       partBytes: this.#sizes.part,
     });
     client.nextTxn += 1;
+    // A trim counts once its transaction started.
+    if (trimmed.length > 0) this.#counts.trims += 1;
   }
 
   /** Tells `client` which chunks the view's limit left out, when they changed and are some. */

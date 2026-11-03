@@ -81,8 +81,6 @@ export class Client {
   nextTxn = 0;
   /** The period of its last commit: no transaction starts in it, so none commits twice in one. */
   committedIn = -1;
-  /** The last period in which a transaction tried to start and waited. */
-  triedIn = -1;
   /** The keys of the chunks the last `notice` listed, joined; empty when nothing is trimmed. */
   trimmed = "";
   txn: Transaction | undefined = undefined;

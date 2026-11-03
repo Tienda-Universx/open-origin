@@ -348,9 +348,11 @@ the floor; the ceiling cannot reach it with whole messages.
 
 Each client has a visible tick `L` and the versions it shows, pinned. A transaction starts only
 after the previous one committed, never in the period of that commit, once the playout tick `L'`
-passed the last commit's (for a connection's first, reached hello's), while the client's buffer has
-room, and once the terrain of every chunk it brings is at hand. It pins the versions of `L'` for the
-effective interest, trimmed to the view's limit, and fixes its whole content:
+passed the last commit's (for a connection's first, reached hello's), and while the client's buffer
+has room. It pins the versions of `L'` for the effective interest, trimmed to the view's limit, less
+the chunks that would enter but whose terrain is not at hand: those are neither trimmed nor dropped
+from the interest, and enter, whole, in a later transaction once the terrain queue brings their
+terrain. It fixes its whole content:
 
 1. `drop` of the chunks that leave the view;
 2. for each chunk that stays, the difference by id between its versions at `L` and at `L'`, sent when
@@ -391,10 +393,11 @@ goes to `recordFanOut`, which `composeServer` keeps for the status's percentiles
 
 Hello carries the world's state as the last period read it. Each period reads the world plane's
 state first: when it changed, every client gets `status{state}` at its visible tick, before anything
-else of its period. While the world is not running, its playout soon gives no new tick and so no
-commit, so a client that got nothing else in a period, and whose buffer has room, gets `status` with
-the state again: the heartbeat that keeps a client of a stopped world from taking the silence for a
-dead connection. T6 sends no `reason`; T8's operator pause brings one.
+else of its period. A client the fan-out served, whose buffer has room, that got nothing else in a
+period gets `status` with the state again, whatever the state: the heartbeat that keeps it from
+taking the silence for a dead connection. While the world is stopped its playout soon gives no new
+tick and so no commit; while the world runs, a client whose next part waits for terrain gets no part.
+T6 sends no `reason`; T8's operator pause brings one.
 
 ### Memory limits
 
@@ -425,16 +428,15 @@ dead connection. T6 sends no `reason`; T8's operator pause brings one.
 ### Terrain
 
 At most 16 chunks of terrain are generated a period, across all clients, and kept, encoded, in an
-LRU of 2,048 entries; a cache hit generates nothing and costs no budget. A transaction fixes its
-content when it starts, terrain included, so it starts only once the terrain of every chunk it
-brings is at hand; until then its client waits, its view at `L`, and gets no transaction, as a
-client deferred by the fan-out does. What a client cannot have from the LRU waits in a queue served
-first come, first served. Each period, before any request, the period's budget goes first to the
-head of the queue; in the fan-out, only the head generates at once, or any client while none waits;
-and what is left after the fan-out goes to the waiting clients in the order they arrived. A waiting
-client asks again at each of its turns in the fan-out and keeps its place whatever it needs then:
-its chunks change by themselves when the followed being moves its window or a trim moves with the
-size of chunks.
+LRU of 2,048 entries; a cache hit generates nothing and costs no budget. A transaction brings only
+the entering chunks whose terrain is at hand, so terrain never holds up the rest of a view: a client
+gets its transaction each period, and what it cannot have from the LRU waits in a queue served first
+come, first served, its chunks entering later transactions as their terrain comes. Each period,
+before any request, the period's budget goes first to the head of the queue; in the fan-out, only
+the head generates at once, or any client while none waits; and what is left after the fan-out goes
+to the waiting clients in the order they arrived. A waiting client asks again at each of its turns
+in the fan-out and keeps its place whatever it needs then: its chunks change by themselves when the
+followed being moves its window or a trim moves with the size of chunks.
 
 Terrain is held apart from the LRU for the head alone, so a cache that evicts it cannot make the
 head wait again. The head's hold keeps only the chunks it still needs, at most those of a full view,
@@ -487,25 +489,27 @@ with the strict schema.
   pair; exact pins and retained bytes; rings bounded by H and 2,048 items with exact `missed`; 64
   feed items a tick; the playout's release.
 - `presentation.test.ts`: hello and a reset first, and a late connection no feed from before its
-  hello; one commit per period; the playout's skip beyond F with every tick's feed; a being crossing
-  chunks for clients of one chunk, the other, both, and a follower (plan test 9); the same feed for
-  clients of disjoint regions (plan test 10); a period's budget that counts hello and aborts; a lost
-  message detected as a `seq` gap and healed by a resync (plan test 8); speech of `(L, L']` and the
-  feed of `(L, L']` in every transaction, a reset included, and those released while a transaction
-  spans periods in the next one; `speechMissed` and `missed` counted once however many parts the
-  speech and the feed span; abort; periods on the timer; connect and close cycles that leave
-  interest, index, followings, pins, and retained bytes at zero; and a presentation whose boot
-  record cannot be applied, which leaves no listener.
+  hello; one commit per period, and `status` instead while the playout holds; the playout's skip
+  beyond F with every tick's feed; a being crossing chunks for clients of one chunk, the other,
+  both, and a follower (plan test 9); the same feed for clients of disjoint regions (plan test 10);
+  a period's budget that counts hello and aborts; a lost message detected as a `seq` gap and healed
+  by a resync (plan test 8); speech of `(L, L']` and the feed of `(L, L']` in every transaction, a
+  reset included, and those released while a transaction spans periods in the next one;
+  `speechMissed` and `missed` counted once however many parts the speech and the feed span; abort;
+  periods on the timer; connect and close cycles that leave interest, index, followings, pins, and
+  retained bytes at zero; and a presentation whose boot record cannot be applied, which leaves no
+  listener.
 - `presentation-reconstruction.test.ts` (plan test 7): a seeded model world of beings that walk,
   cross, arrive, leave, and speak, published in bursts now and then and with more feed than a tick
   keeps every 40 ticks, and clients that change camera and follow at random, resync, lag, lose a
   message, abort, and reconnect. After every commit each view equals the model at the commit's tick,
-  terrain and followed record included; unless a lost message left the client behind, the commit
-  brings exactly the feed of `(L, L']`, the items of a tick beyond 64 counted as `missed`, and the
-  local speech of `(L, L']` of the chunks that stayed in view; and no client gets more than its
-  budget or one commit in a period. The run must cover drops, re-entries, returns, fragments,
+  terrain and followed record included, but for chunks whose terrain was not at hand, which enter a
+  later commit and are never ones the view showed; unless a lost message left the client behind, the
+  commit brings exactly the feed of `(L, L']`, the items of a tick beyond 64 counted as `missed`,
+  and the local speech of `(L, L']` of the chunks that stayed in view; and no client gets more than
+  its budget or one commit in a period. The run must cover drops, re-entries, returns, fragments,
   multi-period transactions, crossings, playout skips, aborts, feed, missed feed, speech, resets
-  after the first, and late connections.
+  after the first, late connections, and commits that left out a chunk waiting for its terrain.
 - `presentation-sizes.test.ts` (plan test 7b): under parts of 64 KiB and 256 KiB a period, a chunk of
   1,024 beings of records near the widest spans parts and two periods, the view never shows a
   partial chunk, and the transaction commits at its tick while beings move, arrive, and leave. The
@@ -542,7 +546,8 @@ with the strict schema.
   the follow window, then the camera's prefix that fits, and a later chunk that would fit is left
   out with the rest; the notice goes once while the chunks left out stay the same, and again when
   they change after none were; a followed being's chunk that alone passes the limit drops the whole
-  view, a notice listing every chunk, while the followed record stays; hello announces the limit.
+  view, a notice listing every chunk, while the followed record stays; a trim counts once its
+  transaction starts, so a client whose terrain throws first counts none; hello announces the limit.
   The memory guard aborts a client that pins the oldest version in its transaction, keeping its
   view, and one that pins it at `L` with its view, whose next transaction is a reset; of two clients
   behind, only the one furthest behind; and closes a client with 1013 at a third abort within 60 s,
@@ -551,27 +556,32 @@ with the strict schema.
   no client under the limit; a client that pins one retained version in its transaction and another
   at `L` is aborted twice in a check, its view going at the second, and counted once, while one
   whose first abort released its pin of the next version is not aborted for it; and a version its
-  clients' aborts do not free throws. A flood of ten clients, each entering 64 new chunks, generates
-  16 chunks a period, each chunk once, and serves the clients in the order they arrived, four
-  periods apart, the last at period 41, holding terrain for the head of the queue alone. The queue
-  gives its head the period's generations until it needs nothing more, then the next client; the
-  head's terrain survives a cache that evicts it, and a client behind it gets an evicted chunk
-  generated again; a waiting client keeps its place when its chunks change, the head's hold cut to
-  what it still needs; a head whose chunks change every period gives up the head after its turn of
-  10 periods, and the client behind it is served in the next; a follower whose window moves every
-  tick, behind one client and ahead of 49 that flood the queue, starts in period 5, within its turn;
-  six lagging clients whose transactions are in flight over distinct chunks hold no terrain while
-  the cache of 8 evicts theirs, and once they drain, the terrain of the chunks they had not written
-  yet is generated again ahead of a flooded queue, and each commits within three periods; a chunk a
-  transaction cannot read is served first the next period and held until it reads it, and one whose
-  generation throws drops its client; while clients wait, only the head generates at once; a terrain
-  read again with other bytes than planned drops its client alone; an aborted transaction that
-  waited for terrain leaves nothing in the queue; no client may need more than 73 chunks; a
-  generation that throws removes its client from the queue, whatever the fault callback does,
-  reports it once, and the queue serves the next client in the same period; and in the presentation,
-  a queued generation that throws drops the client waiting for it alone, counted as a fault, while
-  the others are served and the plane runs on. Six cycles of clients closed by a fault, by strikes,
-  and by slowness, aborted, and waiting for terrain leave every count at zero.
+  clients' aborts do not free throws. Six cycles of clients closed by a fault, by strikes, and by
+  slowness, aborted, and waiting for terrain leave every count at zero.
+- `presentation-terrain.test.ts`: the queue gives its head the period's generations until it needs
+  nothing more, then the next client; the head's terrain survives a cache that evicts it, and a
+  client behind it gets an evicted chunk generated again; a waiting client keeps its place when its
+  chunks change and takes what it holds; a head whose chunks change every period gives up the head
+  after its turn of 10 periods, and the client behind it is served in the next; while clients wait
+  only the head generates at once; a chunk a transaction cannot read is served first the next period
+  and held until it reads it, and one whose generation throws drops its client; a generation that
+  throws removes its client from the queue whatever the fault callback does, and the queue serves
+  the next client in the same period; no client may need more than 73 chunks. In the presentation, a
+  flood of ten clients, each entering 64 new chunks, generates 16 chunks a period, each chunk once,
+  and grows each view as its terrain comes, the clients whole four periods apart, the last at period
+  40; a follower whose window moves every tick, behind one client and ahead of 49 that flood the
+  queue, shows its whole window in period 5; six lagging clients whose transactions are in flight
+  over distinct chunks hold no terrain while a cache of 8 evicts theirs, and once they drain, the
+  terrain of the chunks they had not written yet is generated again ahead of a flooded queue, and
+  each commits within three periods; a terrain read again with other bytes than planned drops its
+  client alone; an aborted transaction that waited for terrain leaves nothing in the queue; and a
+  queued generation that throws drops the client waiting for it alone, counted as a fault, while the
+  others are served and the plane runs on.
+- `presentation-liveness.test.ts` (ADR 0026, "Ordering and liveness"): four clients, each entering
+  64 new chunks, hear from the server in every one of the 17 periods their terrain takes, and end up
+  showing their whole cameras; a client that pans to 64 new chunks while three others wait for
+  terrain hears from the server every period, and its view shows its followed being's move at every
+  tick.
 
 ## Composition
 

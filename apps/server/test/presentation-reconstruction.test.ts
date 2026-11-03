@@ -6,13 +6,15 @@
  * random, resync, lag, lose a message, abort, and reconnect. After every commit the protocol's
  * reducer applies, each client's view must equal the model at the commit's tick: the chunks of its
  * camera and follow window as they were when the transaction started, each with its version, its
- * beings, and its terrain, the followed being's record, and the clock. Unless a lost message left
+ * beings, and its terrain, the followed being's record, and the clock; a chunk whose terrain was
+ * not at hand may be missing, entering in a later commit, but never one the view showed. Unless a lost message left
  * the client behind, the commit must also bring exactly the feed of (L, L'], L the tick its view
  * showed, each tick's items beyond 64 counted as missed, and exactly the local speech of (L, L'] of
  * the chunks that stayed in view; and no client may get more than its budget or one commit in a
  * period, hello and aborts counted. The run must also have covered drops and re-entries, beings
  * that left a view and came back, fragmented chunks, multi-period transactions, crossings, playout
- * skips, aborts, feed and speech, missed feed, resets after the first, and late connections.
+ * skips, aborts, feed and speech, missed feed, resets after the first, late connections, and
+ * commits that left out a chunk waiting for its terrain.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -75,6 +77,8 @@ type Coverage = {
   speech: number;
   resets: number;
   lateJoins: number;
+  /** Commits that left out a chunk whose terrain was not at hand. */
+  waits: number;
 };
 
 /** What a client's view showed when a commit arrived, and whether it was the server's view. */
@@ -199,11 +203,15 @@ function followedAt(model: ModelWorld, tick: number, declared: Declared): BeingP
   return model.at(tick).beings.get(declared.target) ?? null;
 }
 
-/** Checks the view of `tracked` after the commit of `txn` at `tick` against the model. */
+/**
+ * Checks the view of `tracked` after the commit of `txn` at `tick` against the model. A chunk that
+ * would enter but whose terrain is not at hand waits for a later transaction, so the view may lack
+ * some chunks of the interest, never one it showed before but in a reset.
+ */
 function check(
   model: ModelWorld,
   tracked: Tracked,
-  { txn, tick }: { readonly txn: number; readonly tick: number },
+  { txn, tick, reset }: { readonly txn: number; readonly tick: number; readonly reset: boolean },
   coverage: Coverage,
 ) {
   const { view } = tracked.client.state;
@@ -212,7 +220,15 @@ function check(
     throw new Error(`no view of transaction ${txn}`);
   expect([view.tick, view.clock]).toEqual([tick, clockAt(tick)]);
   const keys = expectedKeys(model, tick, declared);
-  expect(shown(tracked.client.state)).toEqual(expected(model, tick, keys, 0));
+  const showing = shown(tracked.client.state);
+  const missing = [...keys].filter((key) => !showing.has(key));
+  const { before } = tracked;
+  if (!reset && before?.synced === true) {
+    expect(missing.filter((key) => before.keys.has(key))).toEqual([]);
+  }
+  if (missing.length > 0) coverage.waits += 1;
+  const present = [...keys].filter((key) => showing.has(key));
+  expect(showing).toEqual(expected(model, tick, present, 0));
   for (const [key, chunk] of view.chunks) expect(chunk.terrain).toEqual(terrainAt(parseKey(key)));
   expect(view.followed).toEqual(followedAt(model, tick, declared));
   coverage.checked += 1;
@@ -462,6 +478,7 @@ function run(seed: number) {
     speech: 0,
     resets: 0,
     lateJoins: 0,
+    waits: 0,
   };
   let next = 1000;
   const nextId = () => {

@@ -111,9 +111,12 @@ Capacity is refused at the upgrade, with HTTP 503 and `Retry-After`.
   - A `seq` gap, or a `commit` whose tick does not exceed the previous one, is an anomaly. The client
     then sends `resync`.
 - **The server's duty.** While a client is not lagging, it gets at least one message per period: a
-  part or a `commit`, or, while the world is stopped and its playout gives no new tick, `status`.
-  A lagging client is quiet only while its own buffer is full, and Bun's idle timeout and pings
-  still apply.
+  part or a `commit`, or, in a period that brings it neither, `status` with the world's state,
+  whatever that state is: while the world is stopped and its playout gives no new tick, or while
+  the next part of its transaction waits for terrain. Terrain never holds up a view: a
+  transaction brings the entering chunks whose terrain is at hand, and the others enter a later
+  one. A lagging client is quiet only while its own buffer is full, and Bun's idle timeout and
+  pings still apply.
 - **Fields.**
   - `v` is the tick at which a chunk's C0 content last changed.
   - `followed` is the followed being's `BeingPublic`, or `null` when it is outside the view or gone.
@@ -163,7 +166,9 @@ with the classes of the clock's fields, and with those of the chunk and global m
 - **What a transaction is.** Each client has a visible tick `L` and pins the versions it shows. A
   transaction `txn` takes its whole view from `L` to `L'`, the playout tick at which it **starts**, and
   pins the versions of `L'` for its interest. A transaction starts only after the previous one
-  committed and while the client is not lagging. Its content, in order:
+  committed and while the client is not lagging. A chunk that would enter but whose terrain is not
+  at hand yet is left out of it, neither trimmed nor dropped from the interest: it enters, whole,
+  in a later transaction, once its terrain comes. Its content, in order:
   1. `drop` for the chunks that leave;
   2. the differences by id between the pinned versions at `L` and at `L'` of every visible chunk
      (`upsert`, `gone`), computed once per pair of versions and shared;

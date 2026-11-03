@@ -4,9 +4,9 @@
  * Terrain is generated from the world's genesis by `readTerrain`, a closure of the world plane,
  * and encoded once; the most recently used entries are kept, and a cache hit generates nothing.
  *
- * A transaction fixes its content when it starts, terrain included, so it starts only once the
- * terrain of every chunk it brings is at hand; until then the client waits, its view at L. What a
- * client cannot have from the cache waits in a queue served first come, first served. Each period,
+ * A transaction brings the entering chunks whose terrain is at hand, so terrain never holds up the
+ * rest of a view; `take` gives a client what is at hand, and the chunks it cannot have from the
+ * cache wait in a queue served first come, first served, to enter a later transaction. Each period,
  * before any request, the period's budget goes first to the head of the queue; in the fan-out,
  * only the head generates at once, or any client while none waits; and what is left after the
  * fan-out goes to the clients that wait, in the order they arrived. A waiting client asks again at
@@ -252,25 +252,22 @@ export class TerrainQueue {
   }
 
   /**
-   * The terrain of every chunk of `chunks` for `client`, generated now while the period's budget
-   * lasts, by the head of the queue, or by any client while none waits; or undefined while some
-   * chunk still waits, and the client then waits in the queue: in its place when it waited
-   * already, whatever it needs now, else at the back. The head's hold keeps only what it still
-   * needs. Once it returns the terrain, the client leaves the queue.
+   * The terrain at hand of the chunks of `chunks` for `client`: held for it, in the cache, or
+   * generated now while the period's budget lasts, by the head of the queue, or by any client while
+   * none waits. The chunks missing wait: the client waits for them in the queue, in its place when
+   * it waited already, whatever it needs now, else at the back; with none missing, it leaves the
+   * queue. What it takes goes back in the cache, its first chunks used last, for its transaction to
+   * read; the head holds nothing more, since it took all it held that it still needs.
    */
-  take(
-    client: ClientId,
-    chunks: readonly ChunkCoord[],
-  ): ReadonlyMap<string, EncodedText> | undefined {
+  take(client: ClientId, chunks: readonly ChunkCoord[]): ReadonlyMap<string, EncodedText> {
     if (chunks.length > MAX_VIEW_CHUNKS) {
       throw new RangeError(
         `a client needs at most ${MAX_VIEW_CHUNKS} chunks of terrain, not ${chunks.length}`,
       );
     }
-    const needs = keyed(chunks);
     const head = this.#isHead(client);
     const { found, missing } = fromCache(
-      needs.values(),
+      keyed(chunks).values(),
       head ? this.#held : NOTHING_HELD,
       this.#cache,
     );
@@ -280,14 +277,10 @@ export class TerrainQueue {
       if (generates && this.#left > 0) found.set(chunkKey(at), this.#generate(at));
       else pending.push(at);
     }
-    if (pending.length === 0) {
-      this.remove(client);
-      // The transaction reads its terrain from the cache, its first chunks used last.
-      for (const [key, terrain] of [...found].reverse()) this.#cache.keep(key, terrain);
-      return found;
-    }
-    this.#wait(client, needs, pending, found);
-    return undefined;
+    if (pending.length === 0) this.remove(client);
+    else this.#wait(client, pending);
+    for (const [key, terrain] of [...found].reverse()) this.#cache.keep(key, terrain);
+    return found;
   }
 
   /** Where the transaction in flight of `client` reads its terrain: see `read`. */
@@ -317,10 +310,15 @@ export class TerrainQueue {
    * for; the next client is the head.
    */
   remove(client: ClientId): void {
-    this.#missed.delete(client);
-    this.#given.delete(client);
+    this.cancel(client);
     const head = this.#isHead(client);
     if (this.#waiting.delete(client) && head) this.#promote();
+  }
+
+  /** Forgets what the transaction of `client` waited for, once it is aborted; its place stays. */
+  cancel(client: ClientId): void {
+    this.#missed.delete(client);
+    this.#given.delete(client);
   }
 
   /** Serves the chunks transactions in flight could not read, in the order they asked. */
@@ -338,13 +336,9 @@ export class TerrainQueue {
     }
   }
 
-  /** Records what `client` waits for, at the back unless it waits already; the head holds `found`. */
-  #wait(
-    client: ClientId,
-    needs: ReadonlyMap<string, ChunkCoord>,
-    pending: ChunkCoord[],
-    found: Map<string, EncodedText>,
-  ): void {
+  /** Records the chunks `client` waits for, at the back unless it waits already. */
+  #wait(client: ClientId, pending: ChunkCoord[]): void {
+    const needs = keyed(pending);
     const waiting = this.#waiting.get(client);
     if (waiting === undefined) {
       this.#waiting.set(client, { needs, pending });
@@ -353,7 +347,7 @@ export class TerrainQueue {
       waiting.needs = needs;
       waiting.pending = pending;
     }
-    if (this.#isHead(client)) this.#held = found;
+    if (this.#isHead(client)) this.#held = new Map();
   }
 
   /** The head's turn is over: it goes to the back, nothing held for it, and the next is the head. */

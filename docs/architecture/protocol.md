@@ -114,9 +114,10 @@ with `bad_json` or `bad_message`, and never throws.
 What the server sends besides transactions:
 
 - **`status`** goes to every client when the world's state changes, at its visible tick, before
-  anything else; `hello` carries the state at connection. While the world is not running, a client
-  that gets nothing else in a period, and is not lagging, gets `status` again, so a client of a
-  stopped world that keeps up does not take the silence for a lost connection.
+  anything else; `hello` carries the state at connection. A client that gets nothing else in a
+  period, and is not lagging, gets `status` again, whatever the world's state: while the world is
+  stopped and gives no new tick, or while its next part waits for terrain. A client that keeps up
+  never takes the silence for a lost connection.
 - **`notice`** lists the chunks the view's limit left out when a transaction starts, when they
   changed and are some. The server measures a view, at the transaction's tick, as the bytes of each
   chunk's being records, a comma between two of them, and the widest terrain, 12,401 bytes, and
@@ -243,7 +244,8 @@ Semantics:
 - **Transactions apply whole.** The parts of a transaction are kept aside, and the whole
   transaction applies at its `commit`, so the visible view is always at one tick. `abort` discards
   the parts. A transaction with no parts still commits: a heartbeat that moves the tick and the
-  clock.
+  clock. A chunk whose terrain the server does not have at hand yet does not enter: the
+  transaction brings the rest of the view, and the chunk enters, whole, in a later one.
 - **Order.** A commit applies the chunks that leave (`drop`), then every visible chunk's `gone`,
   then every visible chunk's `upsert`, then the full content of the chunks that enter. A being that
   crosses between two visible chunks leaves one and enters the other in the same transaction, so

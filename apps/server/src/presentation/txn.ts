@@ -105,7 +105,8 @@ function followedToSend(
 /**
  * The followed record this transaction sends, and the being the client shows as followed after
  * it, as the reducer computes it: the being a part named, or the one shown before; its record in
- * the view, else the record sent, else none.
+ * the view, else the record sent, else none. A followed being whose chunk the view does not show,
+ * trimmed or waiting for its terrain, has its record sent, so the client keeps it.
  */
 function followPlan(
   start: TransactionStart,
@@ -114,15 +115,20 @@ function followPlan(
 ): { readonly send: string | undefined; readonly followed: number | null } {
   const { view, mirror, target } = start;
   const record = target === null ? undefined : mirror.record(target);
-  const send = followedToSend(view.followed, target, reset, record);
+  const unseen = record !== undefined && !inView(mirror, record.id, visible);
+  const send = unseen ? record.json : followedToSend(view.followed, target, reset, record);
   // The being the client follows after the commit: the one a part named, else the one it showed.
   const shownBefore = reset ? null : view.followed;
   const named = send === undefined ? shownBefore : target;
   const id = send === "null" ? null : named;
   if (id === null) return { send, followed: null };
+  return { send, followed: inView(mirror, id, visible) || send !== undefined ? id : null };
+}
+
+/** Whether the chunk that holds the being `id` is one of `visible`. */
+function inView(mirror: Mirror, id: number, visible: ReadonlySet<string>): boolean {
   const at = mirror.locate(id);
-  const inView = at !== undefined && visible.has(chunkKey(at));
-  return { send, followed: inView || send !== undefined ? id : null };
+  return at !== undefined && visible.has(chunkKey(at));
 }
 
 /** The differences and speech of every chunk that stays visible and has any. */
