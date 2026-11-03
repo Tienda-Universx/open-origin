@@ -411,8 +411,8 @@ dead connection. T6 sends no `reason`; T8's operator pause brings one.
   check; the third within 60 s on the injected clock ends it with 1013. A version still pinned once
   every client that pinned it was aborted is a fault of the plane, never a guard that loops.
 - **Per client**, outside what is shared: references to its pinned versions, its interest, its
-  outbox of at most 13 small messages, its transaction's cursor, its terrain while it waits,
-  and counters.
+  outbox of at most 13 small messages, its transaction's cursor, its terrain while it waits at the
+  head of the terrain queue, and counters.
 
 ### Terrain
 
@@ -421,13 +421,25 @@ LRU of 2,048 entries; a cache hit generates nothing and costs no budget. A trans
 content when it starts, terrain included, so it starts only once the terrain of every chunk it
 brings is at hand; until then its client waits, its view at `L`, and gets no transaction, as a
 client deferred by the fan-out does. While the period's budget lasts, missing terrain is generated
-at once. What the budget cannot cover waits in a fair queue: at the start of each period, the
-clients that wait are served one chunk each in turn, the first served moving to the back, before any
-new request. Terrain generated for a waiting client is kept for it, apart from the LRU, until its
-transaction starts, so a cache that evicts it meanwhile cannot make it wait again: a client waiting
-for n chunks behind w other waiting clients is served within about ⌈n·(w + 1) / 16⌉ periods. A
-client that changes its interest while it waits waits for its new chunks, and what was kept for it
-and no longer needed is let go.
+at once. What the budget cannot cover waits in a queue served first come, first served: at the start
+of each period, before any new request, the budget goes to the waiting clients in the order they
+arrived, each until it needs nothing more, then to the next. A client that needs n chunks behind
+clients that still wait for N is served within ⌈(N + n) / 16⌉ periods, unless the LRU evicts some of
+those chunks meanwhile. A waiting client asks again at each of its turns in the fan-out; when its
+chunks changed, by a new camera, a follow window that moved, a trim, or a reset, it goes to the back
+of the queue with nothing held for it, so no client keeps its place, or the budget of the head, by
+asking for other chunks.
+
+Terrain is held apart from the LRU for the head of the queue alone, so a cache that evicts it cannot
+make the head wait again. What is held is some of the head's chunks, at most those of a full view,
+73 (`MAX_VIEW_CHUNKS`, which the queue checks), of at most 12,401 bytes each: 905,273 bytes,
+whatever the number of clients. The head's hold only grows while its chunks stay the same, so it
+needs nothing more within ⌈73 / 16⌉ = 5 periods of reaching the head; it keeps its place until its
+transaction starts, at its next turn in the fan-out with room in its buffer, and meanwhile the queue
+serves the clients behind it. Those hold nothing: what the queue serves them goes to the LRU, and a
+chunk the LRU evicts before their transaction starts waits for them again, served in their turn,
+at the latest once they are the head, which then holds what the LRU has of its chunks. Every client
+whose chunks stay the same is thus served in the order it arrived.
 
 ### Telemetry
 
@@ -507,8 +519,12 @@ with the strict schema.
   of two clients behind, only the one furthest behind; and closes a client with 1013 at a third
   abort within 60 s, at 60.999999 s, and not at a third when the first is 60 s old. A flood of ten
   clients, each entering 64 new chunks, generates 16 chunks a period, each chunk once, and serves
-  every client within 42 periods, the last nine within two periods of each other; terrain kept for
-  a waiting client survives a cache that evicts it. Six cycles of clients closed by a fault, by
+  the clients in the order they arrived, four periods apart, the last at period 41, holding terrain
+  for the head of the queue alone. The queue gives its head the period's generations until it needs
+  nothing more, then the next client; the head's terrain survives a cache that evicts it, and a
+  client behind it gets an evicted chunk generated again; a waiting client whose chunks change goes
+  to the back with nothing held, while one that asks for the same chunks in another order keeps its
+  place; no client may need more than 73 chunks. Six cycles of clients closed by a fault, by
   strikes, and by slowness, aborted, and waiting for terrain leave every count at zero.
 
 ## Composition
