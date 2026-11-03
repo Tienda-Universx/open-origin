@@ -112,6 +112,7 @@ describe("the server's planes", () => {
         `${SERVER_SRC}/world/published.ts`,
         `${SERVER_SRC}/adapters/timer.ts`,
         `${SERVER_SRC}/transport/transport.ts`,
+        `${SERVER_SRC}/main.ts`,
       ]),
     );
     expect(checkServerBoundaries(files)).toEqual([]);

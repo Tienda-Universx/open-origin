@@ -8,15 +8,15 @@ published records. Its presentation plane turns those records into each client's
 describes what the code implements as of T6-7: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
 (playout, mirror, interest, transactions, sessions, the send discipline, the fan-out, and the
-limits of memory and terrain), the transport, their composition, and the test of observer
-invariance.
+limits of memory and terrain), the transport, their composition, the entry point, and the tests
+of observer invariance.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
 `presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`,
-`presentation-terrain`, `presentation-liveness`, `observer-invariance`, and `transport`), and
-`tests/repo/server-boundaries.test.ts`.
+`presentation-terrain`, `presentation-liveness`, `observer-invariance`, `transport`, and `main`),
+`tests/e2e/server.test.ts`, and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -29,6 +29,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | `src/transport/` | Presentation | `transport.ts` (`serveTransport`: the `Bun.serve` adapter), `http.ts` (routing and refusals), and `capacity.ts` (the connection caps) |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane; `composeServer(config, deps)`: both planes |
+| `src/main.ts` | — | `start(env, deps)` and `main()`: the process entry point |
 
 The package depends on `@open-origin/engine`, `@open-origin/agents`, `@open-origin/scenarios`,
 `@open-origin/protocol`, and zod 4.6.7, pinned exactly.
@@ -681,7 +682,7 @@ host, and the scheduler, and returns:
 | `unhandledRejection()` | Asks `rejectionPolicy(AI_MODE)`; with `off`, the world halts |
 | `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |
 
-`deps` carries the clock and the timer, which the entry point of T6-7 takes from `src/adapters/`,
+`deps` carries the clock and the timer, which the entry point takes from `src/adapters/`,
 and, for tests, the journal, the source, the projection of its world, the scheduler (`schedulerOf`,
 a `TickScheduler` over the options a `FixedRateScheduler` takes), and K. A journal failure
 halts the host with `journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P`
@@ -693,7 +694,7 @@ projection may not, and counts 0).
 
 `rejectionPolicy` is a pure function: with `AI_MODE=off` an unhandled rejection halts the world,
 because no code of the world awaits anything, and async work in a brain would be a wall-clock
-channel. T6-7's entry point installs the process handler that calls `unhandledRejection`.
+channel. The entry point installs the process handler that calls `unhandledRejection`.
 
 `composeServer(config, deps)` wires both planes: it calls `compose`, then builds the `Presentation`
 from the world plane's `subscribeToPublished`, `readTerrain`, and `state` alone, with the same clock
@@ -703,10 +704,64 @@ bytes, fresh at every boot unless a test gives `worldId`, and the configured dur
 start leaves no world running; `stop()` stops the periods and detaches the presentation, then stops
 the world, resolving once every executed tick is published. Its `status()` is the world plane's
 status with the presentation's telemetry, and `fanOutMicros`, the percentiles of the last 1,024
-fan-outs' durations on the injected clock. T6-7's entry point calls it, and T8's admin listener
+fan-outs' durations on the injected clock. The entry point calls it, and T8's admin listener
 serves its status. `compose.test.ts` runs it with a small limit of retained bytes: the memory guard
 aborts a lagging client three times and closes it with 1013, and the status carries every count of
 the presentation's telemetry, each but `trims` above zero.
+
+## Entry point
+
+`src/main.ts` runs the server as a process. To run it on this machine, in ephemeral mode, on
+`127.0.0.1:8080`:
+
+```sh
+OPEN_ORIGIN_DURABILITY=ephemeral bun run --bun apps/server/src/main.ts
+```
+
+`OPEN_ORIGIN_PORT=0` lets the system choose the port, which the `listening` line reports. The
+world is the default world of T5, a new one with a new id at every start; a client connects to
+`ws://127.0.0.1:<port>/ws` with the subprotocol `open-origin.public.v1`.
+
+`start(env, deps)` does what the process does, for tests too:
+
+1. It reads the configuration with `parseConfig`. When the configuration is refused, it logs each
+   problem as `config_error`, naming the variable and its rule, all at once, and starts nothing:
+   among them, no `OPEN_ORIGIN_DURABILITY=ephemeral` ("no durable journal is available until T7"),
+   a host that is not loopback, and an `AI_MODE` other than `off`.
+2. It logs each warning as `config_warning`: with `CODESPACES=true`, that the forwarded port must
+   stay private.
+3. It wires `composeServer` with the real clock and timer of `src/adapters/` (tests may give fake
+   ones, a source, and its projection) and the transport, starts both, and logs `listening` with
+   the host and the port.
+
+It returns the running server, whose `stop()` stops the transport first, closing every socket with
+1001, then the server, which flushes every executed tick (RPO 0 once the journal is durable), and
+logs `stopped` with the executed, committed, and published ticks, the state, and the halt, if
+any. The server stops even when the transport fails to; every call returns the same promise.
+
+`main()` binds `start` to the process:
+
+| Event | What happens |
+|---|---|
+| A refused configuration | Exit code 1, after the `config_error` lines |
+| SIGTERM or SIGINT | `signal`, then `stop()`, then exit code 0, or 1 if stopping failed (`stop_failed`, with the error's name) |
+| `unhandledRejection` | The world halts by `rejectionPolicy(AI_MODE)`: with `off`, every client hears `status` `halted`. The line `unhandled_rejection` carries what was thrown (`causeOf`: an engine error's code, else its message and code) and the ticks; the server keeps serving the halted world |
+
+The log is JSON lines on stdout, the transport's events among them: events with codes, ticks,
+counts, and sizes, never a payload or an address, which are C2. An exception no handler catches,
+such as a fault of the whole presentation plane, ends the process with exit code 1 and Bun's own
+report on stderr, flushing nothing: with the ephemeral journal there is nothing durable to lose.
+
+`main.test.ts` runs `start` in process over the counting world on a fake clock: the refusal of
+every problem at once, the warning, the port it reports, and a `stop` that closes a client with
+1001 and publishes the two ticks a batch held (seven executed, five committed before it), and an
+unhandled rejection that halts the world. `tests/e2e/server.test.ts` (ADR 0019) spawns `main.ts`
+with `Bun.spawn` at 50 Hz on port 0: it reports its port; two clients receive commits, follow the
+same being, and show the same views at every tick both committed; a rejection that
+`tests/e2e/fixtures/reject-on-input.ts` plants on request, as a `bun --preload` in the server's own
+process, halts the world for both; SIGTERM closes them with 1001 and exits with 0, every executed
+tick published. Started without ephemeral mode, on `0.0.0.0`, and with `AI_MODE=on`, it names the
+three problems and exits with 1. The server's code has no switch for tests.
 
 ## Observer invariance
 
