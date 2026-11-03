@@ -6,8 +6,17 @@
  * those still waiting enter a later one.
  */
 import { describe, expect, test } from "bun:test";
-import { type ChunkCoord, chunkKey } from "@open-origin/protocol/public";
-import { being, ModelWorld, presentationOver, ViewClient } from "./support/presentation.ts";
+import { type ChunkCoord, chunkKey, MAX_PART_BYTES } from "@open-origin/protocol/public";
+import { FEED, Mirror } from "../src/presentation/mirror.ts";
+import { type EncodedText, TERRAIN_PENDING } from "../src/presentation/parts.ts";
+import { Transaction, ViewState } from "../src/presentation/txn.ts";
+import {
+  being,
+  ModelWorld,
+  presentationOver,
+  terrainAt,
+  ViewClient,
+} from "./support/presentation.ts";
 
 /** A camera of 64 chunks no other client asks for, eight rows of eight from `[x, 1000]`. */
 const camera = (x: number): ChunkCoord[] =>
@@ -18,6 +27,9 @@ const keysOf = (client: ViewClient) => [...(client.state.view?.chunks.keys() ?? 
 
 /** The keys of `chunks`, sorted. */
 const sortedKeys = (chunks: readonly ChunkCoord[]) => chunks.map(chunkKey).sort();
+
+/** The chunks `[0, y]` to `[n − 1, y]`. */
+const row = (y: number, n = 3) => Array.from({ length: n }, (_, x): ChunkCoord => [x, y]);
 
 /** Runs `periods` periods with `step`, and returns, for each client, the periods it heard nothing. */
 function silences(clients: readonly ViewClient[], periods: number, step: () => void): number[][] {
@@ -72,5 +84,61 @@ describe("liveness", () => {
     // Each period's commit brings the being's move: the view shows it at every tick.
     expect(seen).toEqual(Array.from({ length: 20 }, (_, n) => model.tick - 19 + n));
     expect(watcher.anomalies).toEqual([]);
+  });
+
+  test("a client whose transaction waits for terrain hears status meanwhile, and the transaction stays in flight until it commits", () => {
+    const { presentation, advance } = presentationOver(new ModelWorld(0), {
+      terrainEntries: 2,
+      partBytes: 16_384,
+      periodBytes: 16_384,
+    });
+    const reader = new ViewClient();
+    presentation.subscribe(presentation.connect(reader), row(0, 20));
+    // Its first transaction takes 16 chunks and waits in the queue for 4: its third chunk, which
+    // the cache of two evicted, waits for the next period, the second part for the one after,
+    // and its fifth for the third: in that period it has no part to send.
+    const types: string[][] = [];
+    for (let period = 0; period < 3; period += 1) {
+      const from = reader.messages.length;
+      advance();
+      types.push(reader.messages.slice(from).map(({ type }) => type));
+    }
+    expect(types).toEqual([["hello"], ["snapshot"], ["status"]]);
+    expect(reader.messages.at(-1)).toMatchObject({ type: "status", state: "running", tick: 0 });
+    expect(reader.commits).toEqual([]);
+    // It never goes a period in silence, and its transaction commits once every part went out.
+    expect(silences([reader], 20, () => advance())).toEqual([[]]);
+    expect(reader.commits.length).toBeGreaterThan(0);
+    expect(keysOf(reader)).toEqual(sortedKeys(row(0, 20)));
+    expect(reader.anomalies).toEqual([]);
+  });
+});
+
+describe("a transaction", () => {
+  test("whose next part waits for terrain says so, stays in flight with its pins, and goes on once the terrain comes", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const mirror = new Mirror();
+    mirror.apply(model.boot());
+    const json = JSON.stringify(terrainAt([0, 0]));
+    let terrain: EncodedText | undefined;
+    const txn = Transaction.start({
+      txn: 0,
+      view: new ViewState(0, mirror.feed.count(FEED)),
+      mirror,
+      interest: [[0, 0]],
+      target: null,
+      terrainBytes: () => json.length,
+      terrain: () => terrain,
+      partBytes: MAX_PART_BYTES,
+    });
+    expect(txn.peek()).toBe(TERRAIN_PENDING);
+    expect(txn.peek()).toBe(TERRAIN_PENDING);
+    expect(mirror.pins).toBe(1);
+    terrain = { json, bytes: json.length };
+    expect(txn.peek()).toMatchObject({ type: "snapshot" });
+    txn.advance();
+    expect(txn.peek()).toMatchObject({ type: "commit" });
+    txn.advance();
+    expect(txn.peek()).toBeUndefined();
   });
 });

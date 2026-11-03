@@ -16,6 +16,7 @@ import { CLOSE_CODES, type ErrorCode } from "@open-origin/protocol/public";
 import { type Frame, frameBytes, frameText } from "./frames.ts";
 import type { ClientId } from "./interest.ts";
 import type { Mirror } from "./mirror.ts";
+import { TERRAIN_PENDING } from "./parts.ts";
 import { RecentEvents, Session } from "./session.ts";
 import type { Transaction, ViewState } from "./txn.ts";
 
@@ -110,9 +111,15 @@ export class Client {
     else this.#outbox[index] = { frame, slot };
   }
 
-  /** The next message to send: the outbox's first, else the transaction's next part. */
+  /**
+   * The next message to send: the outbox's first, else the transaction's next part; none while that
+   * part waits for terrain, the transaction still in flight.
+   */
   next(): Frame | undefined {
-    return this.#outbox[0]?.frame ?? this.txn?.peek();
+    const queued = this.#outbox[0]?.frame;
+    if (queued !== undefined) return queued;
+    const next = this.txn?.peek();
+    return next === TERRAIN_PENDING ? undefined : next;
   }
 
   /** Whether anything went out to the client in `period`. */

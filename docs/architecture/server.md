@@ -341,8 +341,8 @@ one abort, and one message of each other kind. A transaction starts only when th
 A period that leaves part of a transaction unsent sent more than the budget less a part, since the
 fan-out stops only when the next message does not fit. A transaction of B bytes, every message of
 its periods counted, therefore commits within ⌊B / (256 KiB − 64 KiB)⌋ + 1 periods while its client
-drains, once its terrain is at hand and while its turn comes each period. ⌈B / 256 KiB⌉ periods is
-the floor; the ceiling cannot reach it with whole messages.
+drains and its turn comes each period, plus the periods its parts wait for terrain the LRU evicted
+(see Terrain). ⌈B / 256 KiB⌉ periods is the floor; the ceiling cannot reach it with whole messages.
 
 ### Transactions
 
@@ -431,43 +431,50 @@ At most 16 chunks of terrain are generated a period, across all clients, and kep
 LRU of 2,048 entries; a cache hit generates nothing and costs no budget. A transaction brings only
 the entering chunks whose terrain is at hand, so terrain never holds up the rest of a view: a client
 gets its transaction each period, and what it cannot have from the LRU waits in a queue served first
-come, first served, its chunks entering later transactions as their terrain comes. Each period,
-before any request, the period's budget goes first to the head of the queue; in the fan-out, only
-the head generates at once, or any client while none waits; and what is left after the fan-out goes
-to the waiting clients in the order they arrived. A waiting client asks again at each of its turns
-in the fan-out and keeps its place whatever it needs then: its chunks change by themselves when the
-followed being moves its window or a trim moves with the size of chunks.
-
-Terrain is held apart from the LRU for the head alone, so a cache that evicts it cannot make the
-head wait again. The head's hold keeps only the chunks it still needs, at most those of a full view,
-73 (`MAX_VIEW_CHUNKS`, which the queue checks), of at most 12,401 bytes each: 905,273 bytes,
-whatever the number of clients. The clients behind the head hold nothing: what the queue serves
-them goes to the LRU, and a chunk the LRU evicts before they start waits for them again, in their
-turn.
-
-The head's turn lasts T = ⌈2 · 73 / B⌉ periods, B being the budget of a period: 10 at 16, the
-periods in which the head is served first. A head that has not started by then goes to the back with
-nothing held; what was generated for it stays in the LRU, so its next turn needs only what changed
-or was evicted. So:
-
-- A client with k clients ahead is the head within k · (T + 1) periods, whatever any client's chunks
-  do: each head keeps the head at most T periods after the one in which it became the head, and the
-  clients that arrive later or go to the back wait behind it. A client that changes its chunks on
-  purpose holds the others for a turn at most.
-- A head whose chunks gain at most d new ones a period has them all within ⌈73 / (B − d)⌉ periods,
-  when its turn in the fan-out comes each period: the queue's pass and its own take at once
-  generate B a period for it, d of which go to what changed. A follow window that moves one chunk a
-  period gains at most 5, so the head has its chunks within 7 periods, inside its turn of 10, and
-  starts at its next turn in the fan-out with room in its buffer.
+come, first served, its chunks entering later transactions as their terrain comes. A waiting client
+asks again at each of its turns in the fan-out and keeps its place whatever it needs then: its
+chunks change by themselves when the followed being moves its window or a trim moves with the size
+of chunks.
 
 A transaction in flight reads its terrain from the LRU as it writes its parts; at its start the
 terrain it took goes back in the LRU, its first chunks used last. A chunk the LRU evicted meanwhile
-is generated at once while the budget lasts and no client waits; otherwise the next period serves it
-first, before the head, and holds it until the transaction reads it, one chunk per transaction. So
-the terrain held apart from the LRU is at most the head's 73 chunks and one chunk per transaction in
-flight, and a transaction holds no other terrain than in the text of the one snapshot part it
-writes or has ready: a lagging client holds at most 64 KiB of terrain text, not the 905,273 bytes of
-a full view.
+is generated at once while the budget lasts and no client waits; otherwise it waits in the lane, in
+the order the transactions asked, and is held until its transaction reads it, one chunk per
+transaction. Meanwhile the transaction stays in flight, its next part waiting, and the client hears
+`status` in a period with nothing else.
+
+Each period the budget B goes first to the lane, at most L = min(⌈B / 4⌉, B − 1) generations of it,
+4 at 16; then to the head of the queue; in the fan-out only the head generates at once, or any
+client while none waits; and what is left after the fan-out goes to the lane, then to the waiting
+clients in the order they arrived. Terrain is held apart from the LRU for the head and the lane
+alone: the head's hold keeps only the chunks it still needs, at most those of a full view, 73
+(`MAX_VIEW_CHUNKS`, which the queue checks), and the lane one chunk per transaction, each of at most
+12,401 bytes: at most 905,273 bytes and 12,401 more per transaction in flight, whatever the number
+of waiting clients. The clients behind the head hold nothing: what the queue serves them goes to the
+LRU, and a chunk the LRU evicts before they take it waits for them again, in their turn. A
+transaction holds no other terrain than in the text of the one snapshot part it writes or has
+ready: a lagging client holds at most 64 KiB of terrain text, not the 905,273 bytes of a full view.
+
+The head's turn lasts T = ⌈2 · 73 / (B − L)⌉ periods, 13 at 16: the periods in which it is served
+right after the lane's share, with at least B − L generations each. A head that still waits for
+chunks then goes to the back with nothing held; what was generated for it stays in the LRU, so its
+next turn needs only what changed or was evicted. So, for B of 2 or more:
+
+- A client with k clients ahead is the head within k · (T + 1) periods, whatever any client's chunks
+  or the lane do: each head keeps the head at most T periods after the one in which it became the
+  head, the lane never takes more than its share of a period, and the clients that arrive later or
+  go to the back wait behind it. A client that changes its chunks on purpose holds the others for a
+  turn at most.
+- A head whose chunks gain at most d new ones a period has them all within ⌈73 / (B − L − d)⌉
+  periods, when its turn in the fan-out comes each period: the queue's pass and its own take at once
+  generate at least B − L a period for it, d of which go to what changed. A follow window that moves
+  one chunk a period gains at most 5, so the head has its chunks within 11 periods, inside its turn
+  of 13.
+- A chunk a transaction in flight missed, behind m others in the lane, is served within
+  ⌈(m + 1) / L⌉ periods, sooner when the fan-out leaves budget, and held until read. A transaction
+  of N bytes therefore commits within ⌊N / (256 KiB − 64 KiB)⌋ + 1 periods while its client drains
+  and its turn comes each period, plus that wait for each of its chunks the LRU evicted before it
+  wrote them.
 
 ### Telemetry
 
@@ -562,26 +569,30 @@ with the strict schema.
   nothing more, then the next client; the head's terrain survives a cache that evicts it, and a
   client behind it gets an evicted chunk generated again; a waiting client keeps its place when its
   chunks change and takes what it holds; a head whose chunks change every period gives up the head
-  after its turn of 10 periods, and the client behind it is served in the next; while clients wait
+  after its turn of 13 periods, and the client behind it is served in the next; while clients wait
   only the head generates at once; a chunk a transaction cannot read is served first the next period
-  and held until it reads it, and one whose generation throws drops its client; a generation that
-  throws removes its client from the queue whatever the fault callback does, and the queue serves
-  the next client in the same period; no client may need more than 73 chunks. In the presentation, a
-  flood of ten clients, each entering 64 new chunks, generates 16 chunks a period, each chunk once,
-  and grows each view as its terrain comes, the clients whole four periods apart, the last at period
-  40; a follower whose window moves every tick, behind one client and ahead of 49 that flood the
-  queue, shows its whole window in period 5; six lagging clients whose transactions are in flight
-  over distinct chunks hold no terrain while a cache of 8 evicts theirs, and once they drain, the
-  terrain of the chunks they had not written yet is generated again ahead of a flooded queue, and
-  each commits within three periods; a terrain read again with other bytes than planned drops its
-  client alone; an aborted transaction that waited for terrain leaves nothing in the queue; and a
-  queued generation that throws drops the client waiting for it alone, counted as a fault, while the
-  others are served and the plane runs on.
+  and held until it reads it, and one whose generation throws drops its client; the lane takes at
+  most a quarter of a period's budget before the head, and is served first from what the fan-out
+  leaves; a generation that throws removes its client from the queue whatever the fault callback
+  does, and the queue serves the next client in the same period; no client may need more than 73
+  chunks. In the presentation, a flood of ten clients, each entering 64 new chunks, generates 16
+  chunks a period, each chunk once, and grows each view as its terrain comes, the clients whole four
+  periods apart, the last at period 40; a follower whose window moves every tick, behind one client
+  and ahead of 49 that flood the queue, shows its whole window in period 5; six lagging clients
+  whose transactions are in flight over distinct chunks hold no terrain while a cache of 8 evicts
+  theirs, and once they drain, the terrain of the chunks they had not written yet is generated again
+  ahead of a flooded queue, and each commits within three periods; a terrain read again with other
+  bytes than planned drops its client alone; an aborted transaction that waited for terrain leaves
+  nothing in the queue; and a queued generation that throws drops the client waiting for it alone,
+  counted as a fault, while the others are served and the plane runs on.
 - `presentation-liveness.test.ts` (ADR 0026, "Ordering and liveness"): four clients, each entering
   64 new chunks, hear from the server in every one of the 17 periods their terrain takes, and end up
   showing their whole cameras; a client that pans to 64 new chunks while three others wait for
   terrain hears from the server every period, and its view shows its followed being's move at every
-  tick.
+  tick. A client whose transaction's next part waits for terrain the LRU evicted hears `status` in
+  that period, its transaction in flight and uncommitted, and never goes a period in silence until
+  it commits; a transaction whose part waits says so with `TERRAIN_PENDING`, keeps its pins, and
+  goes on once the terrain comes.
 
 ## Composition
 

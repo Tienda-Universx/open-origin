@@ -18,8 +18,8 @@
  *
  * The terrain of the chunks that enter is fixed by the world's genesis, so a transaction keeps only
  * its bytes, which plan its parts, and reads its text through `terrain` as each part is written. A
- * part whose terrain cannot be had in this period waits: `peek` gives nothing, and tries again at
- * the next call.
+ * part whose terrain cannot be had in this period waits: `peek` says so with TERRAIN_PENDING, and
+ * tries again at the next call.
  */
 import { type ChunkCoord, type Clock, chunkKey } from "@open-origin/protocol/public";
 import { commitFrame, type Frame } from "./frames.ts";
@@ -242,15 +242,15 @@ export class Transaction {
   }
 
   /**
-   * The next frame to send; undefined once the commit went out, or while the terrain of the next
-   * part cannot be had in this period. A part that waited for terrain tries again first.
+   * The next frame to send; TERRAIN_PENDING while the next part waits for terrain this period, the
+   * transaction still in flight; or undefined once the commit went out. A part that waited for
+   * terrain tries again first.
    */
-  peek(): Frame | undefined {
+  peek(): Frame | TerrainPending | undefined {
     if (this.#next.done !== true && this.#next.value === TERRAIN_PENDING) {
       this.#next = this.#frames.next();
     }
-    const next = this.#next;
-    return next.done === true || next.value === TERRAIN_PENDING ? undefined : next.value;
+    return this.#next.done === true ? undefined : this.#next.value;
   }
 
   /** Moves past the frame `peek` gave, which was sent. */
