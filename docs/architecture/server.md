@@ -489,6 +489,14 @@ with the strict schema.
   10 ms on the injected clock, in the rotation 1–4, 5–8, 9, 10, 1, 2, and so on, and records each
   period's 40 ms. The world's state reaches hello, every client's `status` on each change, and a
   client of a stopped world each period.
+  A seeded property runs sockets that drain at random rates, from none to all, and call `drained`
+  as they cross the threshold; clients that change camera and follow, ping, resync, send rejected
+  messages, are aborted by hand and by the memory guard, close with 1013, and come back; and a world
+  that stops and resumes. No client gets more than its budget between two periods, every message
+  counted; no message goes out at or above 256 KiB buffered, so no buffer passes 256 KiB and a part;
+  and every kind of message, a lagging socket, a drain, and a close for slowness occur. Then, while
+  every socket drains, every period that leaves a transaction unsent sent more than the budget less
+  a part, and every client ends up to date.
 - `presentation-limits.test.ts` (plan tests 7b and 14 in process): a view trimmed to its limit keeps
   the follow window, then the camera's prefix that fits, and a later chunk that would fit is left
   out with the rest; the notice goes once while the chunks left out stay the same; hello announces
@@ -550,12 +558,16 @@ serves its status.
 T5: three beings that greet, tell, forage, and cross chunks, and a research injection, an admin
 command, at tick 30. The default world sleeps from its second tick until past tick 260, too still
 for a brain's leak to show in a run. A reference run with no observer is compared with runs of 100
-ticks with 1 and 32 simulated observers, which act half a period after each tick: they connect,
-all follow the same being, change camera and followed being at random, drain slowly by lagging
-for periods, resync, and disconnect midway and come back. For every tick, the fake-clock time at
-which the host asked for its commands, its full command list, rejected commands included, its
-checksum, and the bytes of its `PublishedTick` must be equal, and so must the final snapshot. The
-checksums are read from the journal's records, never through the protocol.
+ticks with 1 and 32 simulated observers, which act half a period after each tick. They connect and,
+through `receive` with the text a client would send, subscribe, all follow the same being, change
+camera and followed being at random, resync, ping, and send hostile messages (no JSON, binary-like
+text, types that would control time, extra keys, `__proto__`) that earn strikes, and, in the run of
+32, closes for strikes. Their sockets stall, holding at least 256 KiB, and then drain slowly, so the
+presentation holds their messages back until `drained`. They disconnect midway and come back. The
+four clients of the crossing below subscribe and follow through `receive` too. For every tick, the
+fake-clock time at which the host asked for its commands, its full command list, rejected commands
+included, its checksum, and the bytes of its `PublishedTick` must be equal, and so must the final
+snapshot. The checksums are read from the journal's records, never through the protocol.
 
 The run of 32 observers also checks plan test 9 in the subject world: four clients of the
 protocol's reducer watch its first chunk crossing, the client of the chunk the being leaves, of the

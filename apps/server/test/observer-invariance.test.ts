@@ -5,11 +5,13 @@
  * tell, forage, and cross chunks, and a research injection, an admin command, at tick 30. (The
  * default world sleeps from its second tick until its night, past 260 ticks: too still to show a
  * brain's leak within a run.) A reference run with no observer
- * is compared with runs with 1 and 32 simulated observers, which connect, change camera and
- * followed being at random, all follow the same being, churn their subscriptions, drain slowly by
- * skipping periods, resync, and disconnect midway. For every tick the fake-clock time it ran at,
- * its full command list, rejected commands included, its checksum, and the bytes of its
- * PublishedTick must be equal, and so must the final snapshot.
+ * is compared with runs with 1 and 32 simulated observers, which connect and, through the
+ * presentation's entry point for raw client messages, change camera and followed being at random,
+ * all follow the same being, churn their subscriptions, resync, ping, and send hostile messages
+ * that earn strikes and closes; their sockets stall and drain slowly, so the presentation's
+ * backpressure holds their messages back; and they disconnect midway. For every tick the
+ * fake-clock time it ran at, its full command list, rejected commands included, its checksum, and
+ * the bytes of its PublishedTick must be equal, and so must the final snapshot.
  *
  * The run with 32 observers also holds four clients of the protocol's reducer that watch the
  * subject's first chunk crossing (plan test 9): one of the chunk the being leaves, one of the chunk
@@ -46,7 +48,7 @@ import { Random } from "../../../packages/protocol/test/support/random.ts";
 import { composeServer, type Server, type WorldPlaneDeps } from "../src/compose.ts";
 import { parseConfig } from "../src/config/config.ts";
 import { BUFFER_BYTES } from "../src/presentation/client.ts";
-import type { Presentation } from "../src/presentation/presentation.ts";
+import type { Ending, Presentation } from "../src/presentation/presentation.ts";
 import { BeingsProjection, type WorldProjection } from "../src/projection/projection.ts";
 import { EphemeralJournal, type JournalBatch, type TickJournal } from "../src/world/journal.ts";
 import type { PublishedTick } from "../src/world/published.ts";
@@ -178,10 +180,30 @@ function recordingSource(clock: FakeClock, probe: Probe, leak: Leak) {
   return { source, times, world };
 }
 
-/** One simulated observer. */
+/**
+ * Messages no correct client sends: text that is no JSON, binary-like text, types that would
+ * control time, extra keys, `__proto__`, and a repeated chunk. Each earns an `error` and a strike.
+ */
+const HOSTILE = [
+  "{",
+  "\u0000\u0001\u00ff",
+  '{"type":"pause"}',
+  '{"type":"speed","factor":2}',
+  '{"type":"step"}',
+  '{"type":"seek","tick":0}',
+  '{"type":"rewind"}',
+  '{"type":"tick"}',
+  '{"type":"rate","hz":50}',
+  '{"type":"ping","nonce":1,"extra":true}',
+  '{"type":"subscribe","chunks":[],"__proto__":{"chunks":[[0,0]]}}',
+  '{"type":"subscribe","chunks":[[0,0],[0,0]]}',
+];
+
+/** One simulated observer and its socket: the bytes it buffers, and how many it drains a period. */
 type Observer = {
   id: number | undefined;
-  lag: boolean;
+  buffer: number;
+  drain: number;
   bytes: number;
   readonly joinAt: number;
   readonly leaveAt: number;
@@ -191,8 +213,12 @@ type Observer = {
 type Activity = {
   connects: number;
   closes: number;
+  strikeCloses: number;
   follows: number;
   lagged: number;
+  drains: number;
+  pings: number;
+  hostile: number;
   received: number;
   watched: number;
 };
@@ -207,8 +233,12 @@ class Audience {
   readonly activity: Activity = {
     connects: 0,
     closes: 0,
+    strikeCloses: 0,
     follows: 0,
     lagged: 0,
+    drains: 0,
+    pings: 0,
+    hostile: 0,
     received: 0,
     watched: 0,
   };
@@ -218,7 +248,8 @@ class Audience {
     this.#probe = probe;
     this.#observers = Array.from({ length: count }, (_, index) => ({
       id: undefined,
-      lag: false,
+      buffer: 0,
+      drain: 0,
       bytes: 0,
       joinAt: firstJoin + (index % 4),
       leaveAt: Math.floor(ticks / 3) + this.#random.below(Math.floor(ticks / 3)),
@@ -258,36 +289,78 @@ class Audience {
       this.activity.closes += 1;
       return;
     }
-    this.#churn(presentation, observer, observer.id);
+    this.#drain(presentation, observer, observer.id);
+    if (observer.id !== undefined) this.#churn(presentation, observer, observer.id);
   }
 
   #join(presentation: Presentation, observer: Observer): void {
-    observer.id = presentation.connect({
+    observer.buffer = 0;
+    observer.drain = 1 << 20;
+    const id = presentation.connect({
       send: (frame) => {
         observer.bytes += frame.length;
+        observer.buffer += frame.length;
         this.activity.received += 1;
       },
-      // A lagging observer's socket holds as much as the presentation lets it.
-      buffered: () => (observer.lag ? BUFFER_BYTES : 0),
-      end: (ending) => {
-        throw ending.reason === "fault" ? ending.cause : new Error(`ended: ${ending.reason}`);
-      },
+      buffered: () => observer.buffer,
+      end: (ending) => this.#ended(observer, ending),
     });
+    observer.id = id;
     this.activity.connects += 1;
-    this.#subscribe(presentation, observer.id);
-    this.#follow(presentation, observer.id, this.#probe.common ?? null);
+    this.#subscribe(presentation, id);
+    this.#follow(presentation, id, this.#probe.common ?? null);
+  }
+
+  /** The presentation closed `observer`, for strikes; a fault fails the run. */
+  #ended(observer: Observer, ending: Ending): void {
+    if (ending.reason === "fault") throw ending.cause;
+    observer.id = undefined;
+    this.activity.closes += 1;
+    if (ending.reason === "strikes") this.activity.strikeCloses += 1;
+  }
+
+  /**
+   * The socket writes what its drain allows; when that takes a full buffer under the threshold,
+   * the transport says it drained.
+   */
+  #drain(presentation: Presentation, observer: Observer, id: number): void {
+    const full = observer.buffer >= BUFFER_BYTES;
+    observer.buffer = Math.max(0, observer.buffer - observer.drain);
+    if (!full) return;
+    this.activity.lagged += 1;
+    if (observer.buffer >= BUFFER_BYTES) return;
+    this.activity.drains += 1;
+    presentation.drained(id);
   }
 
   #churn(presentation: Presentation, observer: Observer, id: number): void {
     const roll = this.#random.below(100);
     if (roll < 12) this.#subscribe(presentation, id);
     else if (roll < 20) this.#follow(presentation, id, this.#target());
-    else if (roll < 30) observer.lag = !observer.lag;
-    else if (roll < 32) presentation.resync(id);
-    if (observer.lag) this.activity.lagged += 1;
-    if (this.#probe.common !== undefined && presentation.followers(this.#probe.common) > 0) {
-      this.activity.watched += 1;
+    else if (roll < 26) this.#stall(observer);
+    else if (roll < 28) this.#send(presentation, id, { type: "resync" });
+    else if (roll < 34) {
+      this.#send(presentation, id, { type: "ping", nonce: this.#random.below(1 << 30) });
+      this.activity.pings += 1;
+    } else if (roll < 36) {
+      presentation.receive(id, this.#random.pick(HOSTILE));
+      this.activity.hostile += 1;
     }
+    const common = this.#probe.common;
+    if (common !== undefined && presentation.followers(common) > 0) this.activity.watched += 1;
+  }
+
+  /**
+   * The socket stalls: as if the frames before had not been written, its buffer holds at least the
+   * threshold, and it drains slowly from then on, from 8 KiB to 64 KiB a period.
+   */
+  #stall(observer: Observer): void {
+    observer.buffer = Math.max(observer.buffer, BUFFER_BYTES + this.#random.below(1 << 16));
+    observer.drain = (8 + this.#random.below(57)) << 10;
+  }
+
+  #send(presentation: Presentation, id: number, message: object): void {
+    presentation.receive(id, JSON.stringify(message));
   }
 
   /** The common being most of the time, else another being, or nothing. */
@@ -306,12 +379,12 @@ class Audience {
       const at: ChunkCoord = [x + this.#random.below(3) - 1, y + this.#random.below(3) - 1];
       camera.set(chunkKey(at), at);
     }
-    presentation.subscribe(id, [...camera.values()]);
+    this.#send(presentation, id, { type: "subscribe", chunks: [...camera.values()] });
     this.#probe.subscribes += 1;
   }
 
   #follow(presentation: Presentation, id: number, being: number | null): void {
-    presentation.follow(id, being);
+    this.#send(presentation, id, { type: "follow", being });
     if (being !== null) this.activity.follows += 1;
   }
 }
@@ -567,8 +640,11 @@ class CrossingWatch {
     server.world.subscribeToPublished(this.history.apply);
     for (const { client, camera, follows, shown: commits } of Object.values(this.viewers)) {
       const id = server.presentation.connect(client);
-      server.presentation.subscribe(id, camera);
-      if (follows) server.presentation.follow(id, this.crossing.being);
+      server.presentation.receive(id, JSON.stringify({ type: "subscribe", chunks: camera }));
+      if (follows) {
+        const follow = { type: "follow", being: this.crossing.being };
+        server.presentation.receive(id, JSON.stringify(follow));
+      }
       client.onCommit = () => commits.push(snapshot(client.state));
     }
   };
@@ -632,11 +708,16 @@ describe("observer invariance", () => {
       const run = count === 32 ? crowd : await runWorld({ observers: count, ticks: TICKS });
       const { timeline, activity } = run;
       expect(divergence(reference, timeline)).toBeUndefined();
-      // The observers watched: they connected, followed, lagged, left, and received messages.
+      // The observers watched: they connected, followed, lagged and drained, pinged, sent hostile
+      // messages, left, and received messages.
       expect(activity.connects).toBeGreaterThan(count);
       expect(activity.closes).toBeGreaterThanOrEqual(count);
       expect(activity.follows).toBeGreaterThan(count);
       expect(activity.lagged).toBeGreaterThan(0);
+      expect(activity.drains).toBeGreaterThan(0);
+      expect(activity.pings).toBeGreaterThan(0);
+      expect(activity.hostile).toBeGreaterThan(0);
+      if (count === 32) expect(activity.strikeCloses).toBeGreaterThan(0);
       expect(activity.watched).toBeGreaterThan(0);
       expect(activity.received).toBeGreaterThan(TICKS / 4);
     },
