@@ -183,6 +183,19 @@ function startOf(clients: readonly Client[], id: ClientId | undefined): number {
   );
 }
 
+/**
+ * How many of the `count` clients from index `from` on, in turn, have a full buffer: the fan-out
+ * deferred them, and the gauge of lagging clients still counts them.
+ */
+function laggingAmong(clients: readonly Client[], from: number, count: number): number {
+  let lagging = 0;
+  for (let turn = 0; turn < count; turn += 1) {
+    const client = clients[(from + turn) % clients.length];
+    if (client !== undefined && client.sink.buffered() >= BUFFER_BYTES) lagging += 1;
+  }
+  return lagging;
+}
+
 /** The terrain `taken` holds for the chunk `at`. */
 function terrainIn(taken: ReadonlyMap<string, EncodedText>, at: ChunkCoord): EncodedText {
   const terrain = taken.get(chunkKey(at));
@@ -549,6 +562,7 @@ export class Presentation {
       if (client === undefined) continue;
       if (turn > 0 && this.#clock.now() - started >= FAN_OUT_MICROS) {
         this.#cursor = client.id;
+        this.#lagging += laggingAmong(clients, first + turn, clients.length - turn);
         break;
       }
       // A client the period already dropped is not served.

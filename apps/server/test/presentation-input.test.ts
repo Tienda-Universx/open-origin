@@ -192,6 +192,18 @@ describe("a client's message", () => {
     expect(codes(since(client, before))).toHaveLength(3);
   });
 
+  test("a message the schema accepts takes a token whatever its outcome, so even a harmless refusal is paced", () => {
+    const { presentation, client, id } = served();
+    const before = client.messages.length;
+    for (let n = 0; n < 20; n += 1) send(presentation, id, { type: "follow", being: 999 });
+    send(presentation, id, { type: "ping", nonce: 1 });
+    expect(codes(since(client, before))).toEqual([
+      ...Array(20).fill("unknown_being"),
+      "rate_limited",
+    ]);
+    expect(presentation.telemetry().strikes).toBe(1);
+  });
+
   test("answers to a lagging client wait, coalesce by kind, and go first once it drains", () => {
     const { presentation, client, id } = served();
     const before = client.messages.length;

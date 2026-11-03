@@ -316,7 +316,9 @@ unless a correct client may meet the code too: `unknown_being`, after a being it
 `resync_too_soon`, after two anomalies close together. The third strike within 10 s ends the client
 with 1008 and no `error` for it. Both buckets are counted in whole microseconds on the injected
 clock, so every timing is exact: a message costs 100,000 µs of a bucket of 2,000,000, and a chunk
-31,250 µs of a bucket of 2,000,000. A rejected message takes nothing from them. A strike counts
+31,250 µs of a bucket of 2,000,000. A message the schema refuses takes no token; every other one
+takes a token of the bucket of messages whatever its outcome, so a refusal that earns no strike is
+still paced; a `subscribe` the bucket of chunks refuses takes no chunk. A strike counts
 while it is younger than 10 s, and a resync waits 2 s from the last one allowed.
 
 ### Send budget and backpressure
@@ -429,8 +431,8 @@ and no longer needed is let go.
 
 ### Telemetry
 
-`telemetry()` reports, as C3 for the admin status: `connections`; `laggingClients`, the clients the
-last fan-out found with a full buffer; `retainedBytes`; `terrainQueue`, the chunks waiting clients
+`telemetry()` reports, as C3 for the admin status: `connections`; `laggingClients`, the clients with
+a full buffer at the last fan-out, those its time budget deferred included; `retainedBytes`; `terrainQueue`, the chunks waiting clients
 wait for; and the counts since start of `aborts`, `trims`, `strikes`, `strikeCloses`, `slowCloses`,
 and `faults`. No public message carries any of them: every public frame is built from the
 protocol's strict schemas. `usage()` reports, for tests, what the presentation holds: clients,

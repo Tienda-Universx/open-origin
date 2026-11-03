@@ -66,7 +66,10 @@ that applies:
 
 The server then holds each message to the client's limits, in this order: the bucket of messages
 (`messagesPerSecond` with a burst of `burst`), and, for a `subscribe`, the bucket of chunks new to
-the camera (`newChunksPer2s` every 2 s); a rejected message takes nothing from either. It answers:
+the camera (`newChunksPer2s` every 2 s). A message the schema refuses takes no token. Every other
+message takes one from the bucket of messages, whatever its outcome, so even a refusal that earns no
+strike, such as `unknown_being` or `resync_too_soon`, cannot repeat faster than that bucket allows;
+a `subscribe` the bucket of chunks refuses takes no chunk from it. It answers:
 
 | Code | When |
 |---|---|
@@ -290,8 +293,8 @@ the reducer never does.
   `tickRateHz` (1 to 1,000) and `simSecondsPerTick` (from 1); `durability` and `state`; the
   percentiles `{p50, p95, p99}`, in rising order and whole microseconds, of `latenessMicros`,
   `stepMicros`, `projectionMicros`, and `fanOutMicros`; the counts `shortfallTicks`, `rebases`, and
-  `connections`; the presentation's gauges `laggingClients` (the clients the last fan-out found with
-  a full buffer), `retainedBytes` (replaced chunk versions still pinned), and `terrainQueue` (chunks
+  `connections`; the presentation's gauges `laggingClients` (the clients with a full buffer at the
+  last fan-out, those its time budget deferred included), `retainedBytes` (replaced chunk versions still pinned), and `terrainQueue` (chunks
   of terrain clients wait for); its counts since start `aborts`, `trims`, `strikes`,
   `strikeCloses` (1008), `slowCloses` (1013), and `faults`; and `omittedSpeech`, the items of
   speech the projection left out because their text was not plain text. Every count is an integer

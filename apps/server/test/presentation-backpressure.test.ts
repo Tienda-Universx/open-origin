@@ -31,9 +31,11 @@ import { RETAINED_BYTES } from "../src/presentation/retention.ts";
 import {
   being,
   chunkOfCell,
+  expected,
   ModelWorld,
   plain,
   presentationOver,
+  shown,
   type TickChanges,
   ViewClient,
 } from "./support/presentation.ts";
@@ -390,9 +392,57 @@ describe("the fan-out", () => {
     expect(fanOuts).toEqual(Array(6).fill(FAN_OUT_MICROS));
     expect(clients.every((client) => client.anomalies.length === 0)).toBe(true);
   });
+
+  test("counts as lagging a client with a full buffer that the time budget deferred", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const { presentation, clock, advance } = presentationOver(model);
+    const clients = Array.from({ length: 6 }, () => {
+      const client = new ViewClient();
+      // Each commit costs 10 ms on the injected clock: four clients fit in a period.
+      client.onCommit = () => clock.advance(FAN_OUT_MICROS / 4);
+      presentation.connect(client);
+      return client;
+    });
+    const [deferred] = clients.slice(5);
+    if (deferred === undefined) throw new Error("six clients were made");
+    deferred.lag = true;
+    advance();
+    // Clients 5 and 6 waited for the next period; the sixth's buffer is full all the same.
+    expect(clients.map((client) => client.commits.length)).toEqual([1, 1, 1, 1, 0, 0]);
+    expect(presentation.telemetry().laggingClients).toBe(1);
+  });
 });
 
 describe("the world's state", () => {
+  test("may reach a client between the parts of its transaction, at its visible tick", () => {
+    const dense = Array.from({ length: 300 }, (_, index) => being(index + 1, [index % 32, 3]));
+    const model = new ModelWorld(0, dense);
+    let state: WorldState = "running";
+    const { presentation, advance } = presentationOver(model, {
+      worldState: () => state,
+      partBytes: MIN_PART_BYTES,
+      periodBytes: MIN_PART_BYTES,
+    });
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    // An empty view first: its reset commits at tick 0 in the first period.
+    presentation.period();
+    expect(client.commits.map(({ tick }) => tick)).toEqual([0]);
+    presentation.subscribe(id, [[0, 0]]);
+    advance();
+    state = "paused";
+    for (let period = 0; period < 8; period += 1) presentation.period();
+    const types = client.messages.map(({ type, tick }) => `${type}@${tick}`);
+    const status = types.indexOf("status@0");
+    const commit = types.indexOf("commit@1");
+    // The status, at the visible tick 0, falls between the parts of the transaction to tick 1.
+    expect(types.slice(3, status)).toContain("snapshot@1");
+    expect(status).toBeLessThan(commit);
+    expect(client.anomalies).toEqual([]);
+    expect(client.state.world.state).toBe("paused");
+    expect(shown(client.state)).toEqual(expected(model, 1, ["0,0"], 0));
+  });
+
   test("reaches every client in hello and as status on each change; a stopped world sends it each period", () => {
     const model = new ModelWorld(0, [being(1, [5, 5])]);
     let state: WorldState = "paused";
