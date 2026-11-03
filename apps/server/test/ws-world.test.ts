@@ -149,6 +149,16 @@ const MOVES: readonly Move[] = [
   [20, (crowd) => crowd.rejoin()],
 ];
 
+/** What a client showed at each commit. */
+type Shown = { readonly tick: number; readonly chunks: Map<string, ChunkState> };
+
+/** Records what `client` shows at each of its commits from now on. */
+function recordCommits(client: SocketClient): Shown[] {
+  const commits: Shown[] = [];
+  client.view.onCommit = ({ tick }) => commits.push({ tick, chunks: shown(client.view.state) });
+  return commits;
+}
+
 /** Ten clients of the transport at `port`, whose frames `counting` counts on the server's side. */
 class Crowd {
   readonly #port: number;
@@ -156,8 +166,9 @@ class Crowd {
   readonly #random = new Random(0x50c7e7);
   readonly #ids = new Map<SocketClient, ClientId>();
   readonly clients = {} as Record<Role, SocketClient>;
-  /** The leaver's socket once it came back. */
+  /** The leaver's socket once it came back, and what it showed at each commit from its first. */
   returned: SocketClient | undefined;
+  returnedCommits: Shown[] = [];
 
   constructor(port: number, counting: CountingPort) {
     this.#port = port;
@@ -177,6 +188,7 @@ class Crowd {
 
   async rejoin(): Promise<void> {
     this.returned = await this.#open();
+    this.returnedCommits = recordCommits(this.returned);
     this.returned.send(subscribe(CAMERA));
   }
 
@@ -257,16 +269,6 @@ async function quietRun(): Promise<Timeline> {
   return run.finish();
 }
 
-/** What a client showed at each commit. */
-type Shown = { readonly tick: number; readonly chunks: Map<string, ChunkState> };
-
-/** Records what `client` shows at each of its commits from now on. */
-function recordCommits(client: SocketClient): Shown[] {
-  const commits: Shown[] = [];
-  client.view.onCommit = ({ tick }) => commits.push({ tick, chunks: shown(client.view.state) });
-  return commits;
-}
-
 /** A run of the subject with the crowd behind the real transport. */
 async function crowdRun() {
   const run: SubjectRun = subjectRun();
@@ -283,8 +285,7 @@ async function crowdRun() {
   await transport.stop();
   await until(() => crowd.all.every(({ closed }) => closed), "every socket to close");
   const timeline = await run.finish();
-  const returned = crowd.returned === undefined ? [] : recordCommits(crowd.returned);
-  return { run, timeline, crowd, calm, returned, history, counting, logs, transport };
+  return { run, timeline, crowd, calm, history, counting, logs, transport };
 }
 
 let reference: Timeline;
@@ -336,6 +337,8 @@ describe("the world through real sockets", () => {
     expect(leaver.closed).toBe(true);
     expect(live.crowd.returned?.view.messages[0]).toMatchObject({ type: "hello", seq: 0 });
     expect(live.crowd.returned?.view.messages[1]).toMatchObject({ type: "snapshot", reset: true });
+    expectPublished(live.crowd.returnedCommits, CAMERA);
+    expect(live.crowd.returnedCommits.at(-1)?.tick).toBe(calmA.at(-1)?.tick);
   });
 
   test("a client of a distant region hears the same feed (test 10)", () => {
