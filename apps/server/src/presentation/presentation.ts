@@ -55,11 +55,10 @@ import { type ClientId, Interest } from "./interest.ts";
 import { FEED, Mirror } from "./mirror.ts";
 import type { EncodedText } from "./parts.ts";
 import { Playout } from "./playout.ts";
-import { holdersOf, RETAINED_BYTES } from "./retention.ts";
+import { guardRetention, RETAINED_BYTES } from "./retention.ts";
 import { noCounts, type PresentationTelemetry } from "./telemetry.ts";
 import { TERRAIN_PER_PERIOD, TerrainCache, TerrainQueue } from "./terrain.ts";
 import { Transaction, ViewState } from "./txn.ts";
-import type { ChunkVersion } from "./version.ts";
 import { trimView, VIEW_BYTES } from "./view.ts";
 
 export type { ClientSink, Ending } from "./client.ts";
@@ -666,32 +665,21 @@ export class Presentation {
   /**
    * While the retained versions pass their limit, aborts every client that pins the oldest one,
    * with its view when it pins that version at L. Each client aborted counts one abort; the third
-   * within 60 s closes it with 1013.
+   * within 60 s closes it with 1013. A version still pinned once its clients were aborted is a
+   * fault of the plane.
    */
   #guardRetention(): void {
-    const aborted = new Set<Client>();
-    for (let oldest = this.#overLimit(); oldest !== undefined; oldest = this.#overLimit()) {
-      for (const { client, atL } of holdersOf(this.#clients.values(), oldest)) {
-        this.#abort(client, atL);
-        aborted.add(client);
-      }
-      // Each pass frees the version it took: one still pinned is a fault of the plane, not a loop.
-      if (this.#mirror.oldestRetained() === oldest) {
-        const at = `version ${oldest.v} of chunk ${oldest.key}`;
-        throw new Error(`the retained ${at} is still pinned once its clients were aborted`);
-      }
-    }
+    const aborted = guardRetention(
+      this.#mirror,
+      this.#sizes.retained,
+      this.#clients.values(),
+      (client, atL) => this.#abort(client, atL),
+    );
     const now = this.#clock.now();
     for (const client of aborted) {
       this.#counts.aborts += 1;
       if (client.aborts.add(now) >= ABORTS_TO_CLOSE) this.#end(client, TOO_SLOW_ENDING);
     }
-  }
-
-  /** The oldest retained version while the retained bytes pass their limit. */
-  #overLimit(): ChunkVersion | undefined {
-    const mirror = this.#mirror;
-    return mirror.retainedBytes > this.#sizes.retained ? mirror.oldestRetained() : undefined;
   }
 
   /** The deadline of the period `n` after the anchor. */

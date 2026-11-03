@@ -80,6 +80,11 @@ export class Mirror {
     return this.#retained.size;
   }
 
+  /** Whether `version` was replaced and is still pinned. */
+  retains(version: ChunkVersion): boolean {
+    return this.#retained.has(version);
+  }
+
   /** The retained version replaced first, or undefined when none is retained. */
   oldestRetained(): ChunkVersion | undefined {
     for (const version of this.#retained) return version;

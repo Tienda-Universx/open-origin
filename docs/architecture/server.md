@@ -409,7 +409,10 @@ dead connection. T6 sends no `reason`; T8's operator pause brings one.
   reset. The version replaced first is pinned by the clients furthest behind, never by a client
   whose view and transaction are newer than its replacement. Each client aborted counts one abort a
   check; the third within 60 s on the injected clock ends it with 1013. A version still pinned once
-  every client that pinned it was aborted is a fault of the plane, never a guard that loops.
+  every client that pinned it was aborted is a fault of the plane, never a guard that loops. A check
+  under the limit reads no client; one over it indexes the clients that pin each retained version
+  in one pass over their pins, so it costs the pins plus the versions it frees, never a pass over
+  the clients per version freed.
 - **Per client**, outside what is shared: references to its pinned versions, its interest, its
   outbox of at most 13 small messages, its transaction's cursor, its terrain while it waits at the
   head of the terrain queue, and counters.
@@ -515,17 +518,21 @@ with the strict schema.
   the follow window, then the camera's prefix that fits, and a later chunk that would fit is left
   out with the rest; the notice goes once while the chunks left out stay the same; hello announces
   the limit. The memory guard aborts a client that pins the oldest version in its transaction,
-  keeping its view, and one that pins it at `L` with its view, whose next transaction is a reset;
-  of two clients behind, only the one furthest behind; and closes a client with 1013 at a third
-  abort within 60 s, at 60.999999 s, and not at a third when the first is 60 s old. A flood of ten
-  clients, each entering 64 new chunks, generates 16 chunks a period, each chunk once, and serves
-  the clients in the order they arrived, four periods apart, the last at period 41, holding terrain
-  for the head of the queue alone. The queue gives its head the period's generations until it needs
-  nothing more, then the next client; the head's terrain survives a cache that evicts it, and a
-  client behind it gets an evicted chunk generated again; a waiting client whose chunks change goes
-  to the back with nothing held, while one that asks for the same chunks in another order keeps its
-  place; no client may need more than 73 chunks. Six cycles of clients closed by a fault, by
-  strikes, and by slowness, aborted, and waiting for terrain leave every count at zero.
+  keeping its view, and one that pins it at `L` with its view, whose next transaction is a reset; of
+  two clients behind, only the one furthest behind; and closes a client with 1013 at a third abort
+  within 60 s, at 60.999999 s, and not at a third when the first is 60 s old. The guard itself, over
+  a mirror and clients modeled in the test, reads each client once a check, however many versions it
+  frees, and no client under the limit; a client that pins one retained version in its transaction
+  and another at `L` is aborted twice in a check, its view going at the second, and counted once;
+  and a version its clients' aborts do not free throws. A flood of ten clients, each entering 64 new
+  chunks, generates 16 chunks a period, each chunk once, and serves the clients in the order they
+  arrived, four periods apart, the last at period 41, holding terrain for the head of the queue
+  alone. The queue gives its head the period's generations until it needs nothing more, then the
+  next client; the head's terrain survives a cache that evicts it, and a client behind it gets an
+  evicted chunk generated again; a waiting client whose chunks change goes to the back with nothing
+  held, while one that asks for the same chunks in another order keeps its place; no client may need
+  more than 73 chunks. Six cycles of clients closed by a fault, by strikes, and by slowness,
+  aborted, and waiting for terrain leave every count at zero.
 
 ## Composition
 

@@ -19,7 +19,9 @@ import {
 } from "@open-origin/protocol/public";
 import type { ClientId } from "../src/presentation/interest.ts";
 import type { Presentation } from "../src/presentation/presentation.ts";
+import { guardRetention } from "../src/presentation/retention.ts";
 import { TerrainCache, TerrainQueue, WIDEST_TERRAIN_BYTES } from "../src/presentation/terrain.ts";
+import { ChunkVersion } from "../src/presentation/version.ts";
 import {
   being,
   ModelWorld,
@@ -264,6 +266,131 @@ describe("the limit of retained versions", () => {
     expect(() => presentation.close(id)).toThrow(`client ${id} is not connected`);
     advance();
     expect(presentation.usage()).toMatchObject({ clients: 0, pins: 0, retainedBytes: 0 });
+  });
+});
+
+/** A client as the memory guard reads it, with a name the test reports aborts by. */
+type Pinning = {
+  readonly name: string;
+  view: { pinned: Map<string, ChunkVersion> };
+  txn: { pins: Map<string, ChunkVersion> } | undefined;
+};
+
+/** A client whose view at L pins `view` and whose transaction, if any, pins `txn`. */
+function pinning(name: string, view: ChunkVersion[], txn?: ChunkVersion[]): Pinning {
+  const byKey = (versions: ChunkVersion[]) => new Map(versions.map((v) => [v.key, v]));
+  return { name, view: { pinned: byKey(view) }, txn: txn && { pins: byKey(txn) } };
+}
+
+/**
+ * The guard over `clients` and `versions`, the replaced versions, oldest first, each one byte while
+ * a client pins it. It aborts as the presentation does: a client's transaction goes, and its view
+ * too at L. The guard reads the clients through an iterable that counts the clients it yields.
+ */
+function guarding(versions: readonly ChunkVersion[], clients: readonly Pinning[], limit: number) {
+  const pinned = (version: ChunkVersion) =>
+    clients.some(
+      ({ view, txn }) =>
+        view.pinned.get(version.key) === version || txn?.pins.get(version.key) === version,
+    );
+  const mirror = {
+    get retainedBytes() {
+      return versions.filter(pinned).length;
+    },
+    oldestRetained: () => versions.find(pinned),
+    retains: (version: ChunkVersion) => versions.includes(version) && pinned(version),
+  };
+  let read = 0;
+  const counted = {
+    *[Symbol.iterator]() {
+      for (const client of clients) {
+        read += 1;
+        yield client;
+      }
+    },
+  };
+  const aborts: [string, boolean][] = [];
+  const abort = (client: Pinning, atL: boolean) => {
+    aborts.push([client.name, atL]);
+    client.txn = undefined;
+    if (atL) client.view.pinned = new Map();
+  };
+  const aborted = guardRetention(mirror, limit, counted, abort);
+  return {
+    aborted: [...aborted].map(({ name }) => name),
+    aborts,
+    read,
+    left: mirror.retainedBytes,
+  };
+}
+
+/** The version `v` of the chunk `[x, 0]`. */
+const versionOf = (x: number, v: number) => ChunkVersion.empty([x, 0], v);
+
+describe("the memory guard", () => {
+  test("aborts every client that pins the oldest retained version, with its view when it pins it at L, and reports each client once", () => {
+    const [a1, b1, a2, b2] = [versionOf(0, 1), versionOf(1, 1), versionOf(0, 2), versionOf(1, 2)];
+    const clients = [
+      pinning("at L", [a1]),
+      // Its transaction pins a1, and its view b1: two aborts in one check, reported once.
+      pinning("both", [b1], [a1]),
+      pinning("current", [a2, b2]),
+      pinning("in transaction", [a2], [b1]),
+    ];
+    // Down to one byte, the oldest goes alone: one version, b1, may stay.
+    expect(guarding([a1, b1], clients, 1)).toEqual({
+      aborted: ["at L", "both"],
+      aborts: [
+        ["at L", true],
+        ["both", false],
+      ],
+      read: 4,
+      left: 1,
+    });
+  });
+
+  test("frees every version over the limit", () => {
+    const [a1, b1, a2, b2] = [versionOf(0, 1), versionOf(1, 1), versionOf(0, 2), versionOf(1, 2)];
+    const clients = [
+      pinning("at L", [a1]),
+      pinning("both", [b1], [a1]),
+      pinning("current", [a2, b2]),
+      pinning("in transaction", [a2], [b1]),
+    ];
+    expect(guarding([a1, b1], clients, 0)).toEqual({
+      aborted: ["at L", "both", "in transaction"],
+      aborts: [
+        ["at L", true],
+        ["both", false],
+        ["both", true],
+        ["in transaction", false],
+      ],
+      read: 4,
+      left: 0,
+    });
+  });
+
+  test("reads every client once a check, however many versions it frees, and none under the limit", () => {
+    const versions = Array.from({ length: 50 }, (_, x) => versionOf(x, 1));
+    const clients = versions.map((version, x) => pinning(`client ${x}`, [], [version]));
+    const freed = guarding(versions, clients, 0);
+    expect(freed.aborted).toEqual(clients.map(({ name }) => name));
+    expect([freed.read, freed.left]).toEqual([50, 0]);
+    const within = guarding(
+      versions,
+      versions.map((version, x) => pinning(`${x}`, [version])),
+      50,
+    );
+    expect([within.aborted, within.read, within.left]).toEqual([[], 0, 50]);
+  });
+
+  test("fails fast when aborting the clients that pin the oldest version does not free it", () => {
+    const old = versionOf(0, 1);
+    const stuck = pinning("stuck", [old]);
+    const mirror = { retainedBytes: 1, oldestRetained: () => old, retains: () => true };
+    expect(() => guardRetention(mirror, 0, [stuck], () => undefined)).toThrow(
+      "the retained version 1 of chunk 0,0 is still pinned once its clients were aborted",
+    );
   });
 });
 
