@@ -15,7 +15,7 @@ import {
   runFanOut,
   WARM_UP_PERIODS,
 } from "../bench/fanout.ts";
-import { block, bursts, latencies, parseArguments as parseLoad } from "../bench/load.ts";
+import { aheadOf, block, bursts, latencies, parseArguments as parseLoad } from "../bench/load.ts";
 import {
   parseArguments as parseProjection,
   row,
@@ -251,8 +251,8 @@ describe("the load benchmark", () => {
 
   test("measure each receipt from the playout of its tick, and count those with no mark", () => {
     const marks = [
-      [10, 1_000],
-      [11, 1_200],
+      [10, 1_000, 2],
+      [11, 1_200, 1],
     ] as const;
     const clients = [
       [
@@ -265,6 +265,16 @@ describe("the load benchmark", () => {
       ],
     ] as const;
     expect(latencies(marks, clients)).toEqual({ ms: [2.5, 1, 50], unmarked: 1 });
+  });
+
+  test("say how far the executed tick ran ahead of the played-out one", () => {
+    const marks = [
+      [1, 0, 2],
+      [2, 200, 3],
+      [3, 400, 7],
+    ] as const;
+    expect(aheadOf(marks)).toBe("3 / 7 / 7");
+    expect(aheadOf([])).toBe("0 / 0 / 0");
   });
 
   test("count the commits that came less than half a period after the one before", () => {

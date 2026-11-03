@@ -98,15 +98,18 @@ export function parseArguments(argv: readonly string[]): LoadArguments {
 /** A tick and the wall-clock time, in milliseconds, at which it was played out or received. */
 export type Stamp = readonly [tick: number, at: number];
 
+/** A period's mark: the tick it played out, when it began, and the ticks executed beyond it. */
+export type Mark = readonly [tick: number, at: number, ahead: number];
+
 /**
  * The latency of each receipt: its time less the mark of its tick, in milliseconds; a receipt
  * whose tick has no mark is counted apart.
  */
 export function latencies(
-  marks: readonly Stamp[],
+  marks: readonly (Stamp | Mark)[],
   clients: readonly (readonly Stamp[])[],
 ): { readonly ms: number[]; readonly unmarked: number } {
-  const playedOut = new Map(marks);
+  const playedOut = new Map(marks.map(([tick, at]) => [tick, at]));
   const found: number[] = [];
   let unmarked = 0;
   for (const receipts of clients) {
@@ -265,8 +268,9 @@ async function guardedWait(seconds: number): Promise<number> {
   return most;
 }
 
-/** A tick and a time, as the children print them. */
+/** A tick and a time, as the clients print them, and a mark, as the server prints it. */
 const StampSchema = z.tuple([z.number(), z.number()]);
+const MarkSchema = z.tuple([z.number(), z.number(), z.number()]);
 
 /** A status line of the server process: its C3 status, checked by the admin contract. */
 const StatusLine = z.object({ status: ServerStatus, rss: z.number(), heapUsed: z.number() });
@@ -289,7 +293,7 @@ type LoadRun = {
   readonly before: StatusLine;
   readonly rested: StatusLine;
   readonly after: StatusLine;
-  readonly marks: readonly Stamp[];
+  readonly marks: readonly Mark[];
   /** The microseconds of each tick of the window. */
   readonly ticks: readonly number[];
   readonly reports: readonly ClientReport[];
@@ -315,7 +319,7 @@ async function loadRun(clients: number, seconds: number, ramp: number): Promise<
     load.send("measure");
     const mostLoad = await guardedWait(seconds);
     const report = await load.request("report", "clients_report");
-    const marks = z.array(StampSchema).parse((await server.request("marks", "bench_marks")).marks);
+    const marks = z.array(MarkSchema).parse((await server.request("marks", "bench_marks")).marks);
     const ticks = z.array(z.number()).parse((await server.request("ticks", "bench_ticks")).micros);
     const after = StatusLine.parse(await server.request("status", "bench_status"));
     const reports = z.array(ClientReport).parse(report.clients);
@@ -346,6 +350,7 @@ const LOAD_COLUMNS = [
   "Lateness p50 / p95 / p99 ms",
   "Fan-out p50 / p95 / p99 ms",
   "Playout to receipt p50 / p95 / p99 ms",
+  "Executed beyond playout, ticks: p50 / p99 / max",
   "Commits per client and period",
   "Commits in a burst",
   "RSS per client KiB",
@@ -353,6 +358,13 @@ const LOAD_COLUMNS = [
   "Lagging, slow closes, aborts, faults",
   "Most load average",
 ];
+
+/** How far the executed tick ran ahead of the played-out one at each mark: p50 / p99 / max. */
+export function aheadOf(marks: readonly Mark[]): string {
+  const ahead = marks.map((mark) => mark[2]);
+  const { p50, p99 } = percentilesOf(ahead);
+  return `${p50} / ${p99} / ${Math.max(0, ...ahead)}`;
+}
 
 /** The row of a load run. */
 export function loadRow(run: LoadRun): string[] {
@@ -376,6 +388,7 @@ export function loadRow(run: LoadRun): string[] {
     micros(status.latenessMicros),
     micros(status.fanOutMicros),
     `${ms(late.p50 * 1e6)} / ${ms(late.p95 * 1e6)} / ${ms(late.p99 * 1e6)}${delays.unmarked > 0 ? ` (${delays.unmarked} unmarked)` : ""}`,
+    aheadOf(run.marks),
     (receipts / (run.clients * run.marks.length)).toFixed(3),
     String(burst),
     kib(rss),

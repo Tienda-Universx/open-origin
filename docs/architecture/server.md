@@ -956,13 +956,14 @@ The server's process adds what the protocol must never carry, over its own stdin
 
 - **Marks.** Its presentation's `period` is wrapped on that instance, so each period that plays out
   a new tick records the wall-clock time it began (`performance.timeOrigin + performance.now()`,
-  which every process of the machine reads alike). The latency of a commit is the time a client got
-  it less the mark of its tick.
+  which every process of the machine reads alike), and how many ticks the world had executed beyond
+  it: E less the played-out tick, the publication's delay. The latency of a commit is the time a
+  client got it less the mark of its tick.
 - **Ticks.** It composes the server as `composeServer` does, through `start`'s `serverOf`, with a
   `FixedRateScheduler` whose `runTick` is timed on the server's clock: the span the status's
   `stepMicros` covers (the step, the projection, and the journal's append), read over the window
   alone. The status's own window is the last 1,024 ticks, which in a run of under a minute holds the
-  boot: the spawns at tick 1 and the first decisions at tick 2.
+  boot. The scheduler's ticks are counted too, which is E, since the default world boots at tick 0.
 - **Status and memory.** The server's C3 status, as `server.status()` gives it and the admin
   contract checks it, and the process's resident and heap memory after a full collection: before any
   client connected and once every client synced. Their difference over N is the memory per client
@@ -970,7 +971,8 @@ The server's process adds what the protocol must never carry, over its own stdin
 
 It prints the clients that failed to open, the time to open and sync them, the tick (from the status
 and over the window), the status's projection, lateness, and fan-out, the latency from playout to
-receipt (p50, p95, and p99), each client's commits per period played out in the window and its
+receipt (p50, p95, and p99), the ticks executed beyond the played-out one, each client's commits
+per period played out in the window and its
 commits that came less than half a period after the one before, the memory per client, the status's
 lagging clients, slow closes, aborts, and faults, and the highest load average it saw.
 

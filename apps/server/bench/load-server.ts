@@ -5,9 +5,9 @@
  * protocol:
  *
  * - **marks**: the presentation's `period` is wrapped on this instance only, so each period that
- *   plays out a new tick records the tick and the wall-clock time the period began, in
- *   milliseconds (`performance.timeOrigin + performance.now()`, which another process on the same
- *   machine reads the same way);
+ *   plays out a new tick records the tick, the wall-clock time the period began, in milliseconds
+ *   (`performance.timeOrigin + performance.now()`, which another process on the same machine reads
+ *   the same way), and how many ticks the world had executed beyond it;
  * - **ticks**: the server is composed as `composeServer` composes it, through `start`'s `serverOf`,
  *   with a `FixedRateScheduler` whose `runTick` is timed on the server's clock, the span the
  *   status's `stepMicros` covers, so a window of ticks can be read apart from the boot;
@@ -29,20 +29,28 @@ import { wallMs } from "./report.ts";
 /** Writes one JSON line to stdout. */
 const print = (entry: object) => process.stdout.write(`${JSON.stringify(entry)}\n`);
 
+/**
+ * What the wrappers record: a mark of each period that played out a new tick, [the tick, the
+ * wall-clock time the period began, the executed tick less the played-out one]; the microseconds
+ * of each tick; and the ticks executed, which is E since the default world boots at tick 0.
+ */
+type Recorder = { marks: [number, number, number][]; ticks: number[]; executed: number };
+
 /** Wraps the presentation's `period` so each one that plays out a new tick is marked. */
-function markPeriods(running: Running, marks: [number, number][]): void {
+function markPeriods(running: Running, recorder: Recorder): void {
   const { presentation } = running.server;
   const period = presentation.period.bind(presentation);
   presentation.period = () => {
     const before = presentation.tick;
     const at = wallMs();
     period();
-    if (presentation.tick !== before) marks.push([presentation.tick, at]);
+    const { tick } = presentation;
+    if (tick !== before) recorder.marks.push([tick, at, recorder.executed - tick]);
   };
 }
 
-/** The server `composeServer` composes, its scheduler's ticks timed into `ticks` in microseconds. */
-function timedServer(ticks: number[]) {
+/** The server `composeServer` composes, its scheduler's ticks timed and counted into `recorder`. */
+function timedServer(recorder: Recorder) {
   return (config: Config, deps: ServerDeps) => {
     const schedulerOf = (options: SchedulerOptions) =>
       new FixedRateScheduler({
@@ -51,8 +59,9 @@ function timedServer(ticks: number[]) {
           const start = deps.clock.now();
           try {
             options.runTick();
+            recorder.executed += 1;
           } finally {
-            ticks.push(deps.clock.now() - start);
+            recorder.ticks.push(deps.clock.now() - start);
           }
         },
       });
@@ -75,13 +84,13 @@ async function stop(running: Running): Promise<never> {
 }
 
 /** Answers the driver's commands, one per line, until stdin ends or `stop`. */
-async function serve(running: Running, marks: [number, number][], ticks: number[]): Promise<void> {
+async function serve(running: Running, recorder: Recorder): Promise<void> {
   for await (const line of console) {
     const command = line.trim();
     if (command === "status" || command === "status gc")
       print(statusLine(running, command === "status gc"));
-    else if (command === "marks") print({ event: "bench_marks", marks: marks.splice(0) });
-    else if (command === "ticks") print({ event: "bench_ticks", micros: ticks.splice(0) });
+    else if (command === "marks") print({ event: "bench_marks", marks: recorder.marks.splice(0) });
+    else if (command === "ticks") print({ event: "bench_ticks", micros: recorder.ticks.splice(0) });
     else if (command === "stop") await stop(running);
     else print({ event: "bench_unknown_command" });
   }
@@ -89,15 +98,14 @@ async function serve(running: Running, marks: [number, number][], ticks: number[
 
 /** Starts the server of this process's environment and serves the driver until it stops. */
 async function main(): Promise<void> {
-  const ticks: number[] = [];
-  const started = await start(process.env, print, { serverOf: timedServer(ticks) });
+  const recorder: Recorder = { marks: [], ticks: [], executed: 0 };
+  const started = await start(process.env, print, { serverOf: timedServer(recorder) });
   if (!started.ok) process.exit(1);
   const { running } = started;
-  const marks: [number, number][] = [];
-  markPeriods(running, marks);
+  markPeriods(running, recorder);
   process.on("SIGTERM", () => void stop(running));
   print({ event: "bench_listening", port: running.port, pid: process.pid });
-  await serve(running, marks, ticks);
+  await serve(running, recorder);
   await stop(running);
 }
 
