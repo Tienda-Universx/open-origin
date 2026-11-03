@@ -657,13 +657,14 @@ export class Presentation {
   #guardRetention(): void {
     const aborted = new Set<Client>();
     for (let oldest = this.#overLimit(); oldest !== undefined; oldest = this.#overLimit()) {
-      const holders = holdersOf(this.#clients.values(), oldest);
-      if (holders.length === 0) {
-        throw new Error(`no client pins the retained version ${oldest.v} of chunk ${oldest.key}`);
-      }
-      for (const { client, atL } of holders) {
+      for (const { client, atL } of holdersOf(this.#clients.values(), oldest)) {
         this.#abort(client, atL);
         aborted.add(client);
+      }
+      // Each pass frees the version it took: one still pinned is a fault of the plane, not a loop.
+      if (this.#mirror.oldestRetained() === oldest) {
+        const at = `version ${oldest.v} of chunk ${oldest.key}`;
+        throw new Error(`the retained ${at} is still pinned once its clients were aborted`);
       }
     }
     const now = this.#clock.now();

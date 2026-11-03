@@ -406,8 +406,8 @@ dead connection. T6 sends no `reason`; T8's operator pause brings one.
   it pins that version in its view at `L`, its view's pins go too, and its next transaction is a
   reset. The version replaced first is pinned by the clients furthest behind, never by a client
   whose view and transaction are newer than its replacement. Each client aborted counts one abort a
-  check; the third within 60 s on the injected clock ends it with 1013. A version that passes the
-  limit and that no client pins is a fault of the plane.
+  check; the third within 60 s on the injected clock ends it with 1013. A version still pinned once
+  every client that pinned it was aborted is a fault of the plane, never a guard that loops.
 - **Per client**, outside what is shared: references to its pinned versions, its interest, its
   outbox of at most 13 small messages, its transaction's cursor, its terrain while it waits,
   and counters.
