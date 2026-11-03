@@ -20,11 +20,16 @@ export const Percentiles = z
   });
 
 /**
- * The server's status (C3, ADR 0025): the executed, committed, and published ticks, with
+ * The server's status (C3, ADR 0025, ADR 0026): the executed, committed, and published ticks, with
  * E ≥ C ≥ P; the configured rate and the simulated seconds per tick, which no public message
  * carries; durability and state; the scheduler's lateness and the durations of a step, a
  * projection, and a fan-out, as percentiles in microseconds; the ticks lost to lateness, the
- * rebases of the schedule, and the open public connections.
+ * rebases of the schedule, and the open public connections. Then what the presentation plane
+ * reports of its clients now: those the last fan-out found with a full buffer, the bytes of
+ * replaced chunk versions still pinned, and the chunks of terrain clients wait for; and its counts
+ * since start: clients the memory guard aborted, transactions the view limit trimmed, strikes,
+ * clients closed for strikes (1008) and for slowness (1013), and clients dropped on a fault. Last,
+ * the items of speech the projection left out because their text was not plain text.
  */
 export const ServerStatus = z
   .strictObject({
@@ -42,6 +47,16 @@ export const ServerStatus = z
     shortfallTicks: Count,
     rebases: Count,
     connections: Count,
+    laggingClients: Count,
+    retainedBytes: Count,
+    terrainQueue: Count,
+    aborts: Count,
+    trims: Count,
+    strikes: Count,
+    strikeCloses: Count,
+    slowCloses: Count,
+    faults: Count,
+    omittedSpeech: Count,
   })
   .refine(
     ({ executedTick, committedTick, publishedTick }) =>

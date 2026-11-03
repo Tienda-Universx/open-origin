@@ -234,6 +234,19 @@ describe("FixedRateScheduler", () => {
     expect(scheduler.metrics().state).toBe("journalStall");
   });
 
+  test("state() reads the state its metrics report, through every change", () => {
+    const { timer, scheduler, setHold } = harness();
+    const both = () => [scheduler.state(), scheduler.metrics().state];
+    expect(both()).toEqual(["paused", "paused"]);
+    scheduler.start();
+    expect(both()).toEqual(["running", "running"]);
+    setHold("journalStall");
+    timer.runUntil(P);
+    expect(both()).toEqual(["journalStall", "journalStall"]);
+    scheduler.pause();
+    expect(both()).toEqual(["paused", "paused"]);
+  });
+
   test("stops at once when a tick leaves the world held, without arming another timer", () => {
     const clock = new FakeClock();
     const timer = new FakeTimer(clock);

@@ -81,7 +81,7 @@ Every message carries `type`, `seq`, and `tick`, defined under Ordering and live
 | `events` | `txn`, `items[]`, `missed?` | The feed in the transaction's range |
 | `commit` | `txn`, `clock{tick, day, dayPermille}` | Closes and applies the transaction. An empty transaction still gets its `commit`, so a client that is up to date gets one per period: heartbeat and clock |
 | `abort` | `txn` | Memory protection cancelled the transaction; the client discards its parts |
-| `notice` | `code: "interest_trimmed"`, `chunks[]` | The view limit trimmed the interest |
+| `notice` | `code: "interest_trimmed"`, `chunks[]` | The view limit trimmed the interest: the chunks left out, or none when nothing is left out any more |
 | `pong` | `nonce` | Answer to `ping` |
 | `status` | `state: "running" \| "paused" \| "stalled" \| "halted"`, `reason?` | World stops and resumes, for everyone |
 | `error` | `code` | A rejected message. The fixed codes are `bad_json`, `bad_message`, `unknown_type`, `too_many_chunks`, `out_of_bounds`, `unknown_being`, `rate_limited`, and `resync_too_soon`. The input is never echoed |
@@ -111,11 +111,16 @@ Capacity is refused at the upgrade, with HTTP 503 and `Retry-After`.
   - A `seq` gap, or a `commit` whose tick does not exceed the previous one, is an anomaly. The client
     then sends `resync`.
 - **The server's duty.** While a client is not lagging, it gets at least one message per period: a
-  part or a `commit`. A lagging client is quiet only while its own buffer is full, and Bun's idle
-  timeout and pings still apply.
+  part or a `commit`, or, in a period that brings it neither, `status` with the world's state,
+  whatever that state is: while the world is stopped and its playout gives no new tick, or while
+  the next part of its transaction waits for terrain. Terrain never holds up a view: a
+  transaction brings the entering chunks whose terrain is at hand, and the others enter a later
+  one. A lagging client is quiet only while its own buffer is full, and Bun's idle timeout and
+  pings still apply.
 - **Fields.**
   - `v` is the tick at which a chunk's C0 content last changed.
-  - `followed` is the followed being's `BeingPublic`, or `null` when it is outside the view or gone.
+  - `followed` is the followed being's `BeingPublic`, even while its chunk is not shown (trimmed, or
+    waiting for terrain), or `null` when it is gone.
   - `hello.state` takes the values of `status.state`.
   - `limits` holds `maxChunks`, `maxFollowChunks`, `maxMessageBytes`, `messagesPerSecond`, `burst`,
     `newChunksPer2s`, and `maxViewBytes`: limits on the client, none on the world's rate.
@@ -162,7 +167,9 @@ with the classes of the clock's fields, and with those of the chunk and global m
 - **What a transaction is.** Each client has a visible tick `L` and pins the versions it shows. A
   transaction `txn` takes its whole view from `L` to `L'`, the playout tick at which it **starts**, and
   pins the versions of `L'` for its interest. A transaction starts only after the previous one
-  committed and while the client is not lagging. Its content, in order:
+  committed and while the client is not lagging. A chunk that would enter but whose terrain is not
+  at hand yet is left out of it, neither trimmed nor dropped from the interest: it enters, whole,
+  in a later transaction, once its terrain comes. Its content, in order:
   1. `drop` for the chunks that leave;
   2. the differences by id between the pinned versions at `L` and at `L'` of every visible chunk
      (`upsert`, `gone`), computed once per pair of versions and shared;
@@ -225,7 +232,7 @@ per tick and shared by all clients.
 | Input message | At most 4 KB (`maxPayloadLength`). Binary frames are refused |
 | Message rate | A token bucket of 10 per second, burst 20 |
 | New chunks | At most 64 every 2 s |
-| Strikes | 3 in 10 s close with 1008 |
+| Strikes | 3 in 10 s close with 1008. Every rejected message earns one, except `unknown_being` and `resync_too_soon`, which a correct client may meet |
 | Connections | 1,024 in all and 16 per IP, both configurable, refused at the upgrade |
 | Idle | `idleTimeout` 120 s, with `sendPings` |
 | Origin | Exact match against `PUBLIC_ORIGINS`. A request without `Origin` is accepted, for non-browser tools |
@@ -233,7 +240,7 @@ per tick and shared by all clients.
 | Send per client and period | At most 256 KB, counting every message to that client (parts, commits, `pong`, `status`, `error`, `notice`, `abort`, and sends that `drain` triggers), and only while `getBufferedAmount()` is under 256 KB, so a client's buffer never passes 512 KB |
 | Fan-out | At most 40 ms per period across all clients. Clients that do not fit wait for the next period, in rotating order |
 | Bun's own limit | `backpressureLimit` 1 MB, with `closeOnBackpressureLimit` |
-| View per client | At most 32 MB encoded, measured at `L'`. A larger interest is trimmed deterministically: the follow window is kept first, then camera chunks in the order the client sent them, until 32 MB. The rest are listed in a `notice` |
+| View per client | At most 32 MB encoded, measured at `L'`. A larger interest is trimmed deterministically: the follow window is kept first, then camera chunks in the order the client sent them, until 32 MB. The rest are listed in a `notice`, sent again with none when nothing is left out any more |
 | Parts per transaction | At most 1,024; above it the client discards the transaction as malformed |
 | Retained replaced versions | At most 128 MB in all, configurable, with exact accounting, checked after each period's fan-out. While above it, the oldest retained version is taken, and every client that pins it gets `abort`. The abort releases that client's transaction pins and, if it pins that version at `L`, its `L` pins too, so its next transaction is a reset. Each aborted client counts one abort; 3 in 60 s close with 1013, and the client reconnects with a smaller interest |
 | Terrain | At most 16 chunks generated per period across all clients, from a fair queue, with an LRU of 2,048 entries |
@@ -250,7 +257,9 @@ no session for a client that disconnected.
 `protocol/admin` defines three contracts:
 
 - `ServerStatus` (C3): the executed, committed, and published ticks, rates, lateness, shortfall,
-  connections, durability, and state;
+  connections, durability, and state; the fan-out's durations; the presentation's lagging clients,
+  retained bytes, and terrain queue; its counts of aborts, trims, strikes, closes for strikes and
+  for slowness, and faults; and the speech the projection left out;
 - `OperatorCommand` (`pause{reason}`, `resume`);
 - `AuditEntry`.
 

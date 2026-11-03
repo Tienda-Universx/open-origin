@@ -6,8 +6,8 @@
  *
  * Clients pin the versions they show and the versions their transaction reads. A pin is counted
  * per version; a version replaced while pinned is retained until its last pin goes, and the bytes
- * of retained versions are counted exactly (the limit that acts on them comes in T6-6b). A version
- * replaced with no pin is freed at once.
+ * of retained versions are counted exactly, in the order they were replaced, so the presentation's
+ * memory guard finds the oldest at once. A version replaced with no pin is freed at once.
  */
 import {
   type ChunkCoord,
@@ -36,6 +36,8 @@ export class Mirror {
   readonly #chunkOf = new Map<number, string>();
   /** The pins of each pinned version. */
   readonly #pins = new Map<ChunkVersion, number>();
+  /** The versions replaced while pinned and still pinned, in the order they were replaced. */
+  readonly #retained = new Set<ChunkVersion>();
   #pinCount = 0;
   #retainedBytes = 0;
   /** Local speech, one stream per chunk key. */
@@ -71,6 +73,22 @@ export class Mirror {
   /** The bytes of the versions that were replaced but are still pinned. */
   get retainedBytes(): number {
     return this.#retainedBytes;
+  }
+
+  /** How many replaced versions are still pinned. */
+  get retained(): number {
+    return this.#retained.size;
+  }
+
+  /** Whether `version` was replaced and is still pinned. */
+  retains(version: ChunkVersion): boolean {
+    return this.#retained.has(version);
+  }
+
+  /** The retained version replaced first, or undefined when none is retained. */
+  oldestRetained(): ChunkVersion | undefined {
+    for (const version of this.#retained) return version;
+    return undefined;
   }
 
   /**
@@ -133,7 +151,8 @@ export class Mirror {
       return;
     }
     this.#pins.delete(version);
-    if (this.#versions.get(version.key) !== version) this.#retainedBytes -= version.bytes;
+    if (!this.#retained.delete(version)) return;
+    this.#retainedBytes -= version.bytes;
   }
 
   #booted(): Booted {
@@ -149,7 +168,9 @@ export class Mirror {
     // A being that crossed in this tick may be upserted in its new chunk before it leaves the old.
     for (const id of change.gone) if (this.#chunkOf.get(id) === key) this.#chunkOf.delete(id);
     for (const { id } of change.upsert) this.#chunkOf.set(id, key);
-    if (this.#pins.has(old)) this.#retainedBytes += old.bytes;
+    if (!this.#pins.has(old)) return;
+    this.#retained.add(old);
+    this.#retainedBytes += old.bytes;
   }
 
   /** Keeps the speech and the feed of `tick` in the rings, which then drop what is too old. */

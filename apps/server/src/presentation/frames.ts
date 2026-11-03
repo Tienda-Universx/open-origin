@@ -6,9 +6,11 @@
  */
 import {
   AUDIENCE,
-  CLIENT_LIMITS,
+  type ChunkCoord,
+  type CLIENT_LIMITS,
   type Clock,
   type DURABILITIES,
+  type ErrorCode,
   PROTOCOL_ID,
   type SERVER_MESSAGE_TYPES,
   type WORLD_STATES,
@@ -68,11 +70,21 @@ export type WorldInfo = {
   readonly durability: (typeof DURABILITIES)[number];
 };
 
-/** The first message of a connection, with the visible tick `clock.tick` and the world's state. */
+/** The state of the world, the same for every client. */
+export type WorldState = (typeof WORLD_STATES)[number];
+
+/** The limits on one client that hello announces. */
+export type Limits = { readonly [Name in keyof typeof CLIENT_LIMITS]: number };
+
+/**
+ * The first message of a connection, with the visible tick `clock.tick`, the world's state, and
+ * the client's limits.
+ */
 export function helloFrame(
   world: WorldInfo,
   clock: Clock,
-  state: (typeof WORLD_STATES)[number],
+  state: WorldState,
+  limits: Limits,
 ): Frame {
   return frameFrom("hello", {
     tick: clock.tick,
@@ -82,7 +94,7 @@ export function helloFrame(
     durability: world.durability,
     state,
     clock,
-    limits: { ...CLIENT_LIMITS },
+    limits: { ...limits },
   });
 }
 
@@ -94,4 +106,24 @@ export function commitFrame(txn: number, clock: Clock): Frame {
 /** Cancels the transaction `txn` of tick `tick`: the client discards its parts. */
 export function abortFrame(txn: number, tick: number): Frame {
   return frameFrom("abort", { tick, txn });
+}
+
+/** The answer to a ping with `nonce`, at the client's visible tick. */
+export function pongFrame(tick: number, nonce: number): Frame {
+  return frameFrom("pong", { tick, nonce });
+}
+
+/** The rejection of a client message, with only its code: the input is never echoed. */
+export function errorFrame(tick: number, code: ErrorCode): Frame {
+  return frameFrom("error", { tick, code });
+}
+
+/** The world's state, at the client's visible tick. */
+export function statusFrame(tick: number, state: WorldState): Frame {
+  return frameFrom("status", { tick, state });
+}
+
+/** The chunks of the interest that the view limit left out, at the client's visible tick. */
+export function noticeFrame(tick: number, chunks: readonly ChunkCoord[]): Frame {
+  return frameFrom("notice", { tick, code: "interest_trimmed", chunks });
 }

@@ -5,7 +5,10 @@
  * stop flushes the partial batch; a lagging journal stalls the scheduler without shortfall; a
  * journal failure, an engine fault, and an unhandled rejection halt the world; the source's world
  * is projected once per tick, timed, and its terrain served, and one that is not a world of beings
- * is refused; and the status validates against the admin contract.
+ * is refused; and the status validates against the admin contract. composeServer feeds the
+ * presentation from the world plane alone, which tells every client the world's state, joins
+ * both planes' telemetry in the server's status, every count of the presentation's included, and
+ * hands the configured limit of retained bytes to the presentation's memory guard.
  */
 import { describe, expect, test } from "bun:test";
 import { readView, type World, worldgen } from "@open-origin/engine";
@@ -20,11 +23,12 @@ import { type Config, parseConfig } from "../src/config/config.ts";
 import { calendarClock } from "../src/projection/clock.ts";
 import { BeingsProjection, type WorldProjection } from "../src/projection/projection.ts";
 import type { TickJournal } from "../src/world/journal.ts";
-import type { PublishedTick } from "../src/world/published.ts";
+import { deepFrozen, type PublishedTick } from "../src/world/published.ts";
 import { ScenarioSource, ScriptedSource, type WorldSource } from "../src/world/source.ts";
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import { ControlledJournal, settle } from "./support/journals.ts";
+import { being, terrainAt, ViewClient } from "./support/presentation.ts";
 import { emptyProjection, publishedAt } from "./support/projections.ts";
 
 /** One period at 5 Hz, in microseconds. */
@@ -93,7 +97,18 @@ describe("compose", () => {
       shortfallTicks: 0,
       rebases: 0,
       connections: 0,
+      laggingClients: 0,
+      retainedBytes: 0,
+      terrainQueue: 0,
+      aborts: 0,
+      trims: 0,
+      strikes: 0,
+      strikeCloses: 0,
+      slowCloses: 0,
+      faults: 0,
+      omittedSpeech: 0,
     });
+    expect(world.state()).toBe("paused");
     world.start();
     await timer.runUntilSettled(10 * P);
     // Ticks 1 to 11 ran at 0, P, …, 10P; the batches of F = 5 that the journal acknowledged hold
@@ -105,6 +120,7 @@ describe("compose", () => {
       state: "running",
       shortfallTicks: 0,
     });
+    expect(world.state()).toBe("running");
     expect(published).toEqual(ticks(1, 10));
     expect(world.halted()).toBeUndefined();
   });
@@ -340,6 +356,9 @@ describe("compose", () => {
         },
         readTerrain: (chunk) => projection.readTerrain(chunk),
         boot: () => projection.boot(),
+        get omittedSpeech() {
+          return projection.omittedSpeech;
+        },
       };
     };
     const plane = compose(configOf(), { clock, timer, source, projectionOf });
@@ -393,7 +412,7 @@ describe("composeServer", () => {
         const parsed = parseServerMessage(frame);
         if (parsed.ok) messages.push(parsed.message);
       },
-      lagging: () => false,
+      buffered: () => 0,
       end: (cause) => {
         throw cause;
       },
@@ -422,7 +441,7 @@ describe("composeServer", () => {
       const hello: string[] = [];
       presentation.connect({
         send: (frame) => hello.push(frame),
-        lagging: () => false,
+        buffered: () => 0,
         end: (cause) => {
           throw cause;
         },
@@ -433,5 +452,158 @@ describe("composeServer", () => {
     expect(ids[0]).toMatch(/^[0-9a-f]{32}$/);
     expect(ids[1]).toMatch(/^[0-9a-f]{32}$/);
     expect(ids[0]).not.toBe(ids[1]);
+  });
+});
+
+/**
+ * A projection of the counting world that holds a crowd of 150 beings in the chunk (1, 0), one of
+ * which moves each tick, and one being in the chunk (2, 0), which moves when `moves.small` is set;
+ * its terrain is terrainAt's.
+ */
+function movingProjection(moves: { small: boolean }) {
+  return (world: World): WorldProjection => {
+    const boot = readView(world).tick;
+    const clockOf = (tick: number) => ({ tick, day: 0, dayPermille: 0 });
+    const crowd = Array.from({ length: 150 }, (_, n) =>
+      being(100 + n, [32 + (n % 32), Math.floor(n / 32)]),
+    );
+    return {
+      boot: () =>
+        deepFrozen({
+          tick: boot,
+          clock: clockOf(boot),
+          chunks: [
+            { at: [1, 0], v: boot, upsert: crowd, gone: [] },
+            { at: [2, 0], v: boot, upsert: [being(1, [64, 0])], gone: [] },
+          ],
+          speech: [],
+          feed: [],
+        }),
+      project: ({ tick }) => {
+        const chunks: PublishedTick["chunks"][number][] = [
+          { at: [1, 0], v: tick, upsert: [being(100, [32 + (tick % 32), 31])], gone: [] },
+        ];
+        if (moves.small)
+          chunks.push({ at: [2, 0], v: tick, upsert: [being(1, [64 + (tick % 32), 1])], gone: [] });
+        moves.small = false;
+        return deepFrozen({ tick, clock: clockOf(tick), chunks, speech: [], feed: [] });
+      },
+      readTerrain: terrainAt,
+      omittedSpeech: 0,
+    };
+  };
+}
+
+describe("the server's status", () => {
+  test("carries every count of the presentation's telemetry, and the configured limit of retained bytes reaches its memory guard", async () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const moves = { small: false };
+    // The crowd's versions pass the limit, the small chunk's do not.
+    const server = composeServer(
+      { ...configOf(), retainedBytes: 2_000 },
+      {
+        clock,
+        timer,
+        source: new ScriptedSource(countingWorld(1_000_000), []),
+        projectionOf: movingProjection(moves),
+      },
+    );
+    const step = () => timer.runUntilSettled(clock.time + P);
+    const [slow, pinner, striker] = [new ViewClient(), new ViewClient(), new ViewClient()];
+    const slowId = server.presentation.connect(slow);
+    server.presentation.subscribe(slowId, [[1, 0]]);
+    const pinnerId = server.presentation.connect(pinner);
+    server.presentation.subscribe(pinnerId, [[2, 0]]);
+    server.start();
+    for (let period = 0; period < 8; period += 1) await step();
+    // The slow client lags while the crowd moves: the guard aborts it, three times within 60 s.
+    for (let abort = 0; abort < 3; abort += 1) {
+      slow.lag = true;
+      await step();
+      slow.lag = false;
+      for (let period = 0; period < 3; period += 1) await step();
+    }
+    // The pinner lags while its small chunk moves once: its old version stays, under the limit.
+    pinner.lag = true;
+    moves.small = true;
+    for (let period = 0; period < 8; period += 1) await step();
+    const strikerId = server.presentation.connect(striker);
+    for (const text of ["{", "{", "{"]) server.presentation.receive(strikerId, text);
+    server.presentation.connect({
+      send: () => {
+        throw new Error("socket gone");
+      },
+      buffered: () => 0,
+      end: () => undefined,
+    });
+    const waiter = server.presentation.connect(new ViewClient());
+    server.presentation.subscribe(
+      waiter,
+      Array.from({ length: 64 }, (_, n) => [100 + n, 100] as [number, number]),
+    );
+    await step();
+    // Every count but trims, which needs a view past 32 MiB, is above zero, and the status carries
+    // each as the presentation counts it. The guard acted on the configured limit: under the
+    // default 128 MiB, nothing would be aborted.
+    const telemetry = server.presentation.telemetry();
+    expect(telemetry).toEqual({
+      aborts: 3,
+      trims: 0,
+      strikes: 3,
+      strikeCloses: 1,
+      slowCloses: 1,
+      faults: 1,
+      connections: 2,
+      laggingClients: 1,
+      retainedBytes: 89,
+      terrainQueue: 48,
+    });
+    expect(slow.ended).toEqual({ reason: "too_slow", code: 1013 });
+    expect(ServerStatus.parse(server.status())).toMatchObject(telemetry);
+    await server.stop();
+  });
+
+  test("joins the presentation's telemetry and the projection's omitted speech, and every client hears the world's state", async () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const server = composeServer(configOf(), {
+      clock,
+      timer,
+      source: new ScriptedSource(countingWorld(1_000_000), []),
+      projectionOf: (world) => ({ ...emptyProjection(world), omittedSpeech: 3 }),
+    });
+    const client = new ViewClient();
+    // Each message takes 100 µs on the injected clock, where the fan-out is measured.
+    client.onMessage = () => clock.advance(100);
+    const id = server.presentation.connect(client);
+    server.start();
+    await timer.runUntilSettled(10 * P);
+    server.presentation.receive(id, "{");
+    expect(ServerStatus.parse(server.status())).toMatchObject({
+      state: "running",
+      connections: 1,
+      laggingClients: 0,
+      strikes: 1,
+      strikeCloses: 0,
+      omittedSpeech: 3,
+    });
+    expect(ServerStatus.parse(server.status()).fanOutMicros.p50).toBeGreaterThanOrEqual(100);
+    server.world.unhandledRejection();
+    await timer.runUntilSettled(20 * P);
+    const states = client.messages.flatMap((message) =>
+      message.type === "hello" || message.type === "status" ? [message.state] : [],
+    );
+    // Hello came before the world started; then it ran, and halted. A period that brings no commit
+    // brings the state instead, so once the playout ran out of published ticks, a halted world is
+    // heard each period.
+    const changes = states.filter((state, index) => state !== states[index - 1]);
+    expect(changes).toEqual(["paused", "running", "halted"]);
+    expect(states.filter((state) => state === "halted").length).toBeGreaterThan(1);
+    expect(ServerStatus.parse(server.status())).toMatchObject({ state: "halted", strikes: 1 });
+    server.presentation.close(id);
+    expect(ServerStatus.parse(server.status())).toMatchObject({ connections: 0, retainedBytes: 0 });
+    await server.stop();
+    expect(client.anomalies).toEqual([]);
   });
 });

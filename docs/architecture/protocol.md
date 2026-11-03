@@ -64,6 +64,25 @@ that applies:
 | `out_of_bounds` | A `subscribe` whose only problems are safe integer coordinates outside the world |
 | `bad_message` | Any other problem: an extra key (`__proto__` and `constructor` included), a wrong type, a fraction, an unsafe integer, a repeated chunk |
 
+The server then holds each message to the client's limits, in this order: the bucket of messages
+(`messagesPerSecond` with a burst of `burst`), and, for a `subscribe`, the bucket of chunks new to
+the camera (`newChunksPer2s` every 2 s). A message the schema refuses takes no token. Every other
+message takes one from the bucket of messages, whatever its outcome, so even a refusal that earns no
+strike, such as `unknown_being` or `resync_too_soon`, cannot repeat faster than that bucket allows;
+a `subscribe` the bucket of chunks refuses takes no chunk from it. It answers:
+
+| Code | When |
+|---|---|
+| `rate_limited` | A message beyond the bucket of messages, or a `subscribe` whose chunks new to the camera are beyond theirs |
+| `unknown_being` | A `follow` of a being the world the server plays out does not hold |
+| `resync_too_soon` | A `resync` less than 2 s after the last one the server allowed |
+
+Every rejected message gets `error{code}`, the code alone, and a strike, except `unknown_being` and
+`resync_too_soon`, which a correct client may meet: a being it saw may have died, and two anomalies
+may come close together. The third strike within 10 s closes the connection with 1008, with no
+`error` for it. A `ping` gets `pong` with its nonce; a `resync` the server allows makes its next
+transaction a reset.
+
 ## Server to client
 
 Every message carries `type`, `seq`, and `tick`. `seq` starts at 0 with `hello` and grows by exactly
@@ -78,7 +97,7 @@ carry its target tick; every other message carries the client's visible tick whe
 | `events` | `txn`, `items[]`, `missed?` | Items are FeedItem records; no item's `tick` exceeds `tick` |
 | `commit` | `txn`, `clock{tick, day, dayPermille}` | `clock.tick` equals `tick`; `dayPermille` from 0 to 999 |
 | `abort` | `txn` | |
-| `notice` | `code: "interest_trimmed"`, `chunks[]` | At least one chunk, each once |
+| `notice` | `code: "interest_trimmed"`, `chunks[]` | Each chunk once; none when nothing is left out any more |
 | `pong` | `nonce` | From 0 to 2^31 − 1 |
 | `status` | `state`, `reason?` | `reason` is plain text |
 | `error` | `code` | One of `ERROR_CODES` |
@@ -91,6 +110,27 @@ others are positive integers the server's policy sets. Arrays are bounded by the
 allows: 73 chunks a view (`MAX_VIEW_CHUNKS`), 65,536 beings a chunk, and 2,048 items a ring.
 `parseServerMessage(text)` reads a server frame into `{ok: true, message}` or `{ok: false, code}`,
 with `bad_json` or `bad_message`, and never throws.
+
+What the server sends besides transactions:
+
+- **`status`** goes to every client when the world's state changes, at its visible tick, before
+  anything else; `hello` carries the state at connection. A client that gets nothing else in a
+  period, and is not lagging, gets `status` again, whatever the world's state: while the world is
+  stopped and gives no new tick, or while its next part waits for terrain. A client that keeps up
+  never takes the silence for a lost connection.
+- **`notice`** lists the chunks the view's limit left out when a transaction starts, when they
+  changed; an empty list says that nothing is left out any more, and clears the client's `trimmed`.
+  The server measures a view, at the transaction's tick, as the bytes of each chunk's being records,
+  a comma between two of them, and the widest terrain, 12,401 bytes, and keeps the longest prefix of
+  the interest within `maxViewBytes`: the follow window first, the followed being's chunk first in
+  it, then the camera in the order the client sent it.
+- **`abort`** cancels a transaction the server's memory guard took back; the next transaction is a
+  reset when the client's view went with it. A client aborted three times within 60 s is closed
+  with 1013.
+- **Answers that wait.** A message goes out only while the client's socket buffers less than
+  256 KiB and within the period's budget of 256 KiB. While a client does not read, a newer `pong`,
+  `status`, or `notice` replaces the one that waits, and an `error` waits once per code: a client
+  that pings faster than it reads gets the newest nonce.
 
 ### Field classes
 
@@ -205,7 +245,8 @@ Semantics:
 - **Transactions apply whole.** The parts of a transaction are kept aside, and the whole
   transaction applies at its `commit`, so the visible view is always at one tick. `abort` discards
   the parts. A transaction with no parts still commits: a heartbeat that moves the tick and the
-  clock.
+  clock. A chunk whose terrain the server does not have at hand yet does not enter: the
+  transaction brings the rest of the view, and the chunk enters, whole, in a later one.
 - **Order.** A commit applies the chunks that leave (`drop`), then every visible chunk's `gone`,
   then every visible chunk's `upsert`, then the full content of the chunks that enter. A being that
   crosses between two visible chunks leaves one and enters the other in the same transaction, so
@@ -254,8 +295,13 @@ the reducer never does.
 - **`ServerStatus`**: `executedTick`, `committedTick`, and `publishedTick`, with E ≥ C ≥ P;
   `tickRateHz` (1 to 1,000) and `simSecondsPerTick` (from 1); `durability` and `state`; the
   percentiles `{p50, p95, p99}`, in rising order and whole microseconds, of `latenessMicros`,
-  `stepMicros`, `projectionMicros`, and `fanOutMicros`; and the counts `shortfallTicks`, `rebases`,
-  and `connections`.
+  `stepMicros`, `projectionMicros`, and `fanOutMicros`; the counts `shortfallTicks`, `rebases`, and
+  `connections`; the presentation's gauges `laggingClients` (the clients with a full buffer at the
+  last fan-out, those its time budget deferred included), `retainedBytes` (replaced chunk versions still pinned), and `terrainQueue` (chunks
+  of terrain clients wait for); its counts since start `aborts`, `trims`, `strikes`,
+  `strikeCloses` (1008), `slowCloses` (1013), and `faults`; and `omittedSpeech`, the items of
+  speech the projection left out because their text was not plain text. Every count is an integer
+  from 0.
 - **`OperatorCommand`**: `{type: "pause", reason}`, with a plain-text reason, or `{type: "resume"}`.
 - **`AuditEntry`**: `seq`, `atMs` (wall-clock milliseconds since the Unix epoch), `actor` (an
   identifier), `command`, `tick` (the published tick), and `outcome`, `applied` or `rejected`.

@@ -93,13 +93,15 @@ negative tests of its own:
 Rule 1 realizes control 2 of [0005](0005-observer-independence.md) for the cognitive allocator of T9
 anywhere in `apps/server`. T9 extends the scan to the AI gateway's package.
 
-The presentation plane never receives the `World`, the host, or a source. It receives two functions
-only:
+The presentation plane never receives the `World`, the host, or a source. It receives three
+functions only:
 
 - `subscribeToPublished(listener)`, which delivers deep-frozen C0 records. Their return value is
   ignored and their exceptions are isolated;
 - `readTerrain(chunk)`, a pure closure in `projection/` over the prepared genesis. It returns surface
-  observables and never materializes a chunk.
+  observables and never materializes a chunk;
+- the world's state (`running`, `paused`, `stalled`, or `halted`), which every client shares, for
+  `hello.state` and `status` (T6-6b refined this list, which held the first two).
 
 What enters the world comes only from a `WorldSource`, whose type admits no presentation data:
 

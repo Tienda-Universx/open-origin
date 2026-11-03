@@ -26,6 +26,8 @@ export type Config = {
   readonly allowedHosts: readonly string[];
   /** The open public connections allowed in all, and from one IP address. */
   readonly connections: { readonly global: number; readonly perIp: number };
+  /** The most bytes of replaced chunk versions that clients may keep pinned, in all (ADR 0026). */
+  readonly retainedBytes: number;
   /** Whether models may run: only `off` until T9. */
   readonly aiMode: "off";
 };
@@ -43,6 +45,10 @@ const MAX_PORT = 65_535;
 const MAX_CONNECTIONS = 65_536;
 /** The cap per IP when MAX_CONNECTIONS_PER_IP is unset, unless the global cap is lower. */
 const DEFAULT_PER_IP = 16;
+/** The bounds of MAX_RETAINED_BYTES, from 1 MiB to 16 GiB, and its default, 128 MiB (ADR 0026). */
+const MIN_RETAINED_BYTES = 1024 * 1024;
+const MAX_RETAINED_BYTES = 16 * 1024 * 1024 * 1024;
+const DEFAULT_RETAINED_BYTES = 128 * 1024 * 1024;
 
 /** A decimal integer from `min` to `max`, read from text: no sign, no fraction, no exponent. */
 function integerIn(min: number, max: number) {
@@ -131,6 +137,10 @@ const PER_IP_CAP: Variable<number | undefined> = {
   schema: integerIn(1, MAX_CONNECTIONS).optional(),
   rule: `must be an integer from 1 to ${MAX_CONNECTIONS}`,
 };
+const RETAINED: Variable<number> = {
+  schema: integerIn(MIN_RETAINED_BYTES, MAX_RETAINED_BYTES).default(DEFAULT_RETAINED_BYTES),
+  rule: `must be an integer from ${MIN_RETAINED_BYTES} to ${MAX_RETAINED_BYTES}`,
+};
 const AI_MODE: Variable<"off"> = {
   schema: z.literal("off").default("off"),
   rule: 'must be "off": other modes refuse to start until T9',
@@ -197,6 +207,7 @@ export function parseConfig(env: Environment): ConfigResult {
   const allowedHosts = reader.read("ALLOWED_HOSTS", HOSTS, []);
   const global = reader.read("MAX_CONNECTIONS", GLOBAL_CAP, undefined);
   const perIp = reader.read("MAX_CONNECTIONS_PER_IP", PER_IP_CAP, undefined);
+  const retainedBytes = reader.read("MAX_RETAINED_BYTES", RETAINED, DEFAULT_RETAINED_BYTES);
   const aiMode = reader.read("AI_MODE", AI_MODE, "off");
   const connections = capsOf(reader, global, perIp);
   // A cap at fault leaves no caps, and an error that names it.
@@ -212,6 +223,7 @@ export function parseConfig(env: Environment): ConfigResult {
     publicOrigins: Object.freeze(publicOrigins),
     allowedHosts: Object.freeze(allowedHosts ?? defaultAllowedHosts(host, port)),
     connections: Object.freeze(connections),
+    retainedBytes,
     aiMode,
   });
   return { ok: true, config, warnings: Object.freeze(warningsOf(env)) };

@@ -19,6 +19,7 @@ import {
   MAX_FEED_ITEMS_PER_TICK,
   type ServerMessage,
 } from "@open-origin/protocol/public";
+import type { WorldState } from "../src/presentation/frames.ts";
 import { Presentation } from "../src/presentation/presentation.ts";
 import { EphemeralJournal } from "../src/world/journal.ts";
 import { PublicationGate } from "../src/world/publication.ts";
@@ -105,7 +106,7 @@ describe("a connection", () => {
     expect([client.anomalies, client.state.stale, client.state.view?.tick]).toEqual([[], false, 0]);
   });
 
-  test("an up-to-date client gets one commit per period, at the playout tick, and none while it holds", () => {
+  test("an up-to-date client gets one commit per period, at the playout tick, and its state instead while the playout holds", () => {
     const model = new ModelWorld(0);
     const { presentation, advance } = presentationOver(model);
     const client = new ViewClient();
@@ -117,9 +118,11 @@ describe("a connection", () => {
       ["commit", 3, 1],
       ["commit", 4, 2],
     ]);
-    // Nothing was published: the playout tick holds, and no commit could pass the last one.
+    // Nothing was published: the playout tick holds, and no commit could pass the last one. The
+    // client hears the world's state instead, so a period never passes in silence.
     presentation.period();
-    expect(client.messages).toHaveLength(5);
+    expect(client.messages).toHaveLength(6);
+    expect(client.messages[5]).toMatchObject({ type: "status", tick: 2, state: "running" });
     expect(client.commits.map(({ tick }) => tick)).toEqual([0, 1, 2]);
   });
 
@@ -183,6 +186,7 @@ describe("the playout", () => {
       tickRateHz: 5,
       batchTicks: 5,
       world: { id: WORLD_ID, durability: "ephemeral" },
+      worldState: () => "running",
     });
     const client = new ViewClient();
     presentation.connect(client);
@@ -533,6 +537,32 @@ describe("a transaction", () => {
     expect(client.anomalies).toEqual([]);
   });
 
+  test("an abort and a status that wait for a lagging client both reach it: neither replaces the other", () => {
+    const beings = Array.from({ length: 200 }, (_, index) => being(index + 1, [index % 32, 1]));
+    let state: WorldState = "running";
+    const { presentation, advance } = presentationOver(new ModelWorld(0, beings), {
+      partBytes: 16_384,
+      periodBytes: 16_384,
+      worldState: () => state,
+    });
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.subscribe(id, [[0, 0]]);
+    // Hello and the reset's first part go; its second part waits, and the client lags.
+    presentation.period();
+    client.lag = true;
+    state = "paused";
+    advance();
+    presentation.abort(id);
+    const before = client.messages.length;
+    client.lag = false;
+    presentation.drained(id);
+    expect(client.messages.slice(before)).toEqual([
+      { type: "status", seq: 2, tick: 0, state: "paused" },
+      { type: "abort", seq: 3, tick: 0, txn: 0 },
+    ]);
+  });
+
   test("that is aborted is discarded; the next one moves the view from L, or resets it", () => {
     const beings = Array.from({ length: 200 }, (_, index) => being(index + 1, [index % 32, 1]));
     const model = new ModelWorld(0, beings);
@@ -593,7 +623,7 @@ describe("closing", () => {
       // A sink that drops what it gets: these clients only hold pins and interest.
       const id = presentation.connect({
         send: () => undefined,
-        lagging: () => false,
+        buffered: () => 0,
         end: rethrow,
       });
       presentation.subscribe(id, [
@@ -618,6 +648,8 @@ describe("closing", () => {
       interest: { clients: 0, indexEntries: 0, following: 0 },
       pins: 0,
       retainedBytes: 0,
+      retained: 0,
+      terrain: { queued: 0, held: 0 },
       faults: 0,
       failed: false,
     });
@@ -656,21 +688,21 @@ describe("faults", () => {
         sent += 1;
         if (sent === 2) throw failure;
       },
-      lagging: () => false,
-      end: (cause) => ended.push(cause),
+      buffered: () => 0,
+      end: (ending) => ended.push(ending),
     });
     presentation.subscribe(faulty, [[0, 0]]);
     const healthy = new ViewClient();
     const id = presentation.connect(healthy);
     presentation.subscribe(id, [[0, 0]]);
     presentation.period();
-    expect(ended).toEqual([failure]);
+    expect(ended).toEqual([{ reason: "fault", cause: failure }]);
     expect(healthy.commits.map(({ tick }) => tick)).toEqual([0]);
     expect(presentation.usage()).toMatchObject({ clients: 1, faults: 1 });
     expect(() => presentation.close(faulty)).toThrow(`client ${faulty} is not connected`);
     advance();
     expect(healthy.commits.map(({ tick }) => tick)).toEqual([0, 1]);
-    expect(ended).toEqual([failure]);
+    expect(ended).toEqual([{ reason: "fault", cause: failure }]);
     presentation.close(id);
     expect(presentation.usage()).toMatchObject({
       clients: 0,
@@ -692,8 +724,8 @@ describe("faults", () => {
     const ended: unknown[] = [];
     const faulty = presentation.connect({
       send: () => undefined,
-      lagging: () => false,
-      end: (cause) => ended.push(cause),
+      buffered: () => 0,
+      end: (ending) => ended.push(ending),
     });
     presentation.subscribe(faulty, [
       [0, 0],
@@ -703,7 +735,7 @@ describe("faults", () => {
     const id = presentation.connect(healthy);
     presentation.subscribe(id, [[0, 0]]);
     presentation.period();
-    expect(ended).toEqual([failure]);
+    expect(ended).toEqual([{ reason: "fault", cause: failure }]);
     expect(healthy.commits.map(({ tick }) => tick)).toEqual([0]);
     presentation.close(id);
     expect(presentation.usage()).toMatchObject({
@@ -773,6 +805,7 @@ describe("faults", () => {
         tickRateHz: 5,
         batchTicks: 5,
         world: { id: WORLD_ID, durability: "ephemeral" },
+        worldState: () => "running",
       });
     expect(build).toThrow("the world plane gave the presentation no boot record");
     expect(gate.listenerFaults).toBe(1);

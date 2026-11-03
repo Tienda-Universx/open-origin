@@ -23,8 +23,10 @@ import {
   type ServerMessage,
   type TerrainPublic,
 } from "@open-origin/protocol/public";
+import { BUFFER_BYTES } from "../../src/presentation/client.ts";
 import {
   type ClientSink,
+  type Ending,
   Presentation,
   type PresentationOptions,
 } from "../../src/presentation/presentation.ts";
@@ -233,18 +235,30 @@ function groupByChunk(
 
 /**
  * A client of the presentation: each frame it is sent is parsed by the protocol's strict schema
- * and applied by the reference reducer. It records every message, commit, and anomaly, the size of
- * every frame, and may lag or lose its next frame.
+ * and applied by the reference reducer. It records every frame's text and size, every message,
+ * commit, and anomaly, and how the presentation ended it; it may lag, lose its next frame, or
+ * model a socket that buffers what it is sent until the test drains it.
  */
 export class ViewClient implements ClientSink {
   state: ClientState = initialClientState();
   readonly messages: ServerMessage[] = [];
   readonly commits: Committed[] = [];
   readonly anomalies: Anomaly[] = [];
+  /** The text of every frame received, lost ones included. */
+  readonly texts: string[] = [];
   /** The UTF-8 bytes of every frame received, lost ones included, as the runtime counts them. */
   readonly sizes: number[] = [];
-  /** Whether the client says its buffer is full. */
+  /** Whether the client says its buffer is full: it then reports BUFFER_BYTES buffered. */
   lag = false;
+  /** The bytes the client's socket buffers, when it does not lag. */
+  buffer = 0;
+  /** Whether each frame received stays in `buffer` until the test drains it, as in a socket. */
+  buffering = false;
+  /** The most bytes `buffer` held, and the most it held before a frame was added to it. */
+  peak = 0;
+  peakBeforeSend = 0;
+  /** How the presentation ended the connection for strikes or slowness, if it did. */
+  ended: Ending | undefined;
   /** How many of the next frames are lost before the reducer sees them. */
   lose = 0;
   /** Called with each message the client receives, before the reducer applies it. */
@@ -253,7 +267,14 @@ export class ViewClient implements ClientSink {
   onCommit: ((committed: Committed) => void) | undefined;
 
   send(frame: string): void {
-    this.sizes.push(Buffer.byteLength(frame, "utf8"));
+    const bytes = Buffer.byteLength(frame, "utf8");
+    this.texts.push(frame);
+    this.sizes.push(bytes);
+    if (this.buffering) {
+      this.peakBeforeSend = Math.max(this.peakBeforeSend, this.buffer);
+      this.buffer += bytes;
+      this.peak = Math.max(this.peak, this.buffer);
+    }
     const message = this.#parse(frame);
     if (this.lose > 0) {
       this.lose -= 1;
@@ -270,13 +291,18 @@ export class ViewClient implements ClientSink {
     }
   }
 
-  lagging(): boolean {
-    return this.lag;
+  buffered(): number {
+    return this.lag ? BUFFER_BYTES : this.buffer;
   }
 
-  /** A test client never faults: the cause of a fault, such as a rejected frame, fails the test. */
-  end(cause: unknown): never {
-    throw cause;
+  /**
+   * Records a close for strikes or slowness. A test client never faults: the cause of a fault,
+   * such as a rejected frame, fails the test.
+   */
+  end(ending: Ending): void {
+    if (ending.reason === "fault") throw ending.cause;
+    if (this.ended !== undefined) throw new Error("the presentation ended a client twice");
+    this.ended = ending;
   }
 
   /** The largest frame received, which no part may make larger than MAX_PART_BYTES. */
@@ -330,8 +356,8 @@ export class Publisher {
 }
 
 /** The `end` of a test's sink: a fault in serving it fails the test with its cause. */
-export function rethrow(cause: unknown): never {
-  throw cause;
+export function rethrow(ending: Ending): never {
+  throw ending.reason === "fault" ? ending.cause : new Error(`ended for ${ending.reason}`);
 }
 
 /** A presentation over a model world, driven period by period by the test. */
@@ -350,6 +376,7 @@ export function presentationOver(
     tickRateHz: 5,
     batchTicks: 5,
     world: { id: WORLD_ID, durability: "ephemeral" },
+    worldState: () => "running",
     ...options,
   });
   /** Runs one tick of the model, publishes it, and lets one period pass. */
@@ -357,7 +384,7 @@ export function presentationOver(
     publisher.publish(model.step(changes));
     presentation.period();
   };
-  return { presentation, publisher, timer, advance };
+  return { presentation, publisher, clock, timer, advance };
 }
 
 /** What a view shows, in the shape of the model's state: by chunk key, version and beings. */

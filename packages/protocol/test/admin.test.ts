@@ -19,7 +19,36 @@ const STATUS = {
   shortfallTicks: 0,
   rebases: 0,
   connections: 3,
+  laggingClients: 1,
+  retainedBytes: 65_536,
+  terrainQueue: 12,
+  aborts: 2,
+  trims: 4,
+  strikes: 5,
+  strikeCloses: 1,
+  slowCloses: 1,
+  faults: 0,
+  omittedSpeech: 0,
 };
+
+/**
+ * The presentation's and the projection's fields that are counts: non-negative integers. Some are
+ * gauges that go back down (`connections`, `laggingClients`, `retainedBytes`, `terrainQueue`); the
+ * rest are counts since start, which only grow.
+ */
+const COUNTS = [
+  "connections",
+  "laggingClients",
+  "retainedBytes",
+  "terrainQueue",
+  "aborts",
+  "trims",
+  "strikes",
+  "strikeCloses",
+  "slowCloses",
+  "faults",
+  "omittedSpeech",
+] as const;
 
 const accepts = (value: unknown) => ServerStatus.safeParse(value).success;
 
@@ -49,6 +78,15 @@ describe("ServerStatus", () => {
       { ...STATUS, stepMicros: { ...percentiles, p999: 1 } },
     ];
     expect(cases.map(accepts)).toEqual(cases.map(() => false));
+  });
+
+  test("rejects a count of the presentation or the projection that is negative or a fraction", () => {
+    const cases = COUNTS.flatMap((key) => [
+      { ...STATUS, [key]: -1 },
+      { ...STATUS, [key]: 0.5 },
+    ]);
+    expect(cases.map(accepts)).toEqual(cases.map(() => false));
+    expect(COUNTS.map((key) => accepts({ ...STATUS, [key]: 0 }))).toEqual(COUNTS.map(() => true));
   });
 
   test("rejects the loss of any one key", () => {

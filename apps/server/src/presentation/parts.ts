@@ -7,6 +7,12 @@
  * part, `frag{i, n}`, with its terrain in the first, so `n` is known before any fragment goes out.
  * The parts are produced one at a time, and read only pinned versions, so a transaction that spans
  * several periods still sends the content of its tick while the world moves on.
+ *
+ * A chunk that enters is planned with the bytes of its terrain alone; the terrain's text is read
+ * when the chunk's first fragment is written, so a transaction holds no terrain but the part it
+ * fills or has ready, at most one part. Terrain is a pure function of the world's genesis, so the
+ * text read then has the bytes planned; one that does not is a fault. While the terrain cannot be
+ * had in this period, the snapshot parts yield TERRAIN_PENDING, and try again when resumed.
  */
 import {
   type ChunkCoord,
@@ -35,8 +41,15 @@ export type DeltaContent = {
   readonly speechMissed: number;
 };
 
-/** A chunk that enters the view: its pinned version and its terrain. */
-export type Entering = { readonly version: ChunkVersion; readonly terrain: EncodedText };
+/** A chunk that enters the view: its pinned version, and the bytes of its encoded terrain. */
+export type Entering = { readonly version: ChunkVersion; readonly terrainBytes: number };
+
+/** The encoded terrain of a chunk, or undefined while it cannot be had in this period. */
+export type TerrainSource = (at: ChunkCoord) => EncodedText | undefined;
+
+/** What snapshot parts yield while the terrain of their next chunk cannot be had. */
+export const TERRAIN_PENDING: unique symbol = Symbol("terrain pending");
+export type TerrainPending = typeof TERRAIN_PENDING;
 
 /** A chunk coordinate at its widest. */
 const WIDEST_AT = `[${MIN_CHUNK},${MIN_CHUNK}]`;
@@ -218,10 +231,10 @@ export function fragmentCap(limit: number): number {
 }
 
 /** The fragments of `chunk`, each at most `cap` bytes, with the terrain in the first. */
-function fragmentsOf({ version, terrain }: Entering, cap: number): Fragment[] {
+function fragmentsOf({ version, terrainBytes }: Entering, cap: number): Fragment[] {
   const fragments: Fragment[] = [];
   let from = 0;
-  let bytes = terrain.bytes;
+  let bytes = terrainBytes;
   version.records.forEach((record, index) => {
     if (bytes + record.bytes + 1 > cap) {
       fragments.push({ from, to: index, bytes });
@@ -234,9 +247,14 @@ function fragmentsOf({ version, terrain }: Entering, cap: number): Fragment[] {
   return fragments;
 }
 
-/** The text of fragment `i` of `n` of `chunk`. */
-function fragmentText({ version, terrain }: Entering, fragment: Fragment, i: number, n: number) {
-  const withTerrain = i === 0 ? `,"terrain":${terrain.json}` : "";
+/** The text of fragment `i` of `n` of `version`'s chunk, with `terrain` in the first. */
+function fragmentText(
+  version: ChunkVersion,
+  fragment: Fragment,
+  { i, n }: { readonly i: number; readonly n: number },
+  terrain: EncodedText | undefined,
+) {
+  const withTerrain = terrain === undefined ? "" : `,"terrain":${terrain.json}`;
   const records = version.records.slice(fragment.from, fragment.to);
   const beings = records.map(({ json }) => json).join(",");
   const frag = `"frag":{"i":${i},"n":${n}}`;
@@ -249,7 +267,31 @@ export type SnapshotContent = {
   readonly chunks: readonly Entering[];
   /** The followed being's record or `null`, in the first part; undefined to say nothing. */
   readonly followed: string | undefined;
+  /** Where the terrain of the chunks is read, as their first fragments are written. */
+  readonly terrain: TerrainSource;
 };
+
+/**
+ * The terrain of `chunk`, read from `source` with the bytes it was planned with; TERRAIN_PENDING is
+ * yielded while it cannot be had, and the source asked again when resumed.
+ */
+function* terrainOf(
+  { version, terrainBytes }: Entering,
+  source: TerrainSource,
+): Generator<TerrainPending, EncodedText> {
+  for (let terrain = source(version.at); ; terrain = source(version.at)) {
+    if (terrain === undefined) {
+      yield TERRAIN_PENDING;
+      continue;
+    }
+    if (terrain.bytes !== terrainBytes) {
+      throw new Error(
+        `the terrain of chunk ${version.key} has ${terrain.bytes} bytes, not the ${terrainBytes} planned`,
+      );
+    }
+    return terrain;
+  }
+}
 
 /** A snapshot part of `texts`, with `followed` when it is the first. */
 function snapshotFrame(
@@ -266,12 +308,15 @@ function snapshotFrame(
   );
 }
 
-/** The snapshot parts of `content`: at least one, even with no chunk. */
+/**
+ * The snapshot parts of `content`: at least one, even with no chunk. A part that is ready leaves
+ * its texts before it is yielded, so a suspended generator holds one part's text at most.
+ */
 export function* snapshotParts(
   head: PartHead,
   content: SnapshotContent,
   limit: number,
-): Generator<Frame> {
+): Generator<Frame | TerrainPending> {
   const cap = fragmentCap(limit);
   let followed = content.followed;
   let part = new Filling(
@@ -283,15 +328,17 @@ export function* snapshotParts(
     for (const [i, fragment] of fragments.entries()) {
       const bytes = FRAGMENT + fragment.bytes;
       if (!part.fits(bytes, true)) {
-        yield snapshotFrame(head, content.reset, part.texts, followed);
+        const ready = snapshotFrame(head, content.reset, part.texts, followed);
         followed = undefined;
         part = new Filling(SNAPSHOT_FRAME, limit);
+        yield ready;
       }
+      const terrain = i === 0 ? yield* terrainOf(chunk, content.terrain) : undefined;
       part.take(bytes);
-      part.texts.push(fragmentText(chunk, fragment, i, fragments.length));
+      part.texts.push(fragmentText(chunk.version, fragment, { i, n: fragments.length }, terrain));
     }
   }
-  yield snapshotFrame(head, content.reset, part.texts, followed);
+  yield snapshotFrame(head, content.reset, part.texts.splice(0), followed);
 }
 
 /** An events part of `texts`, with `missed` when it is above 0. */
