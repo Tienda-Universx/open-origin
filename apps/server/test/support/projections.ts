@@ -23,5 +23,6 @@ export function emptyProjection(world: World): WorldProjection {
     readTerrain: () => {
       throw new Error("a world without beings has no terrain");
     },
+    omittedSpeech: 0,
   };
 }

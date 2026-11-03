@@ -94,6 +94,9 @@ function constantTerrain(world: World): WorldProjection {
     boot: () => projection.boot(),
     project: (result) => projection.project(result),
     readTerrain: () => TERRAIN,
+    get omittedSpeech() {
+      return projection.omittedSpeech;
+    },
   };
 }
 

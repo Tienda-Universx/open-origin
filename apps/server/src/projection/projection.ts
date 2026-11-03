@@ -43,6 +43,8 @@ export interface WorldProjection extends Projector {
    */
   boot(): PublishedTick;
   readTerrain(chunk: ChunkCoord): TerrainPublic;
+  /** The items of speech left out so far because their text was not plain text (C3). */
+  readonly omittedSpeech: number;
 }
 
 export type ProjectionOptions = {

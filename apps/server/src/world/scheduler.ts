@@ -74,6 +74,8 @@ export interface TickScheduler {
   pause(): void;
   /** Asks the hold again between ticks. */
   wake(): void;
+  /** The state now: cheap, for a reader each period, where `metrics` sorts its samples. */
+  state(): SchedulerState;
   metrics(): SchedulerMetrics;
 }
 
@@ -131,6 +133,10 @@ export class FixedRateScheduler implements TickScheduler {
     const hold = this.#hold();
     if (hold === "halted") this.#stop("halted");
     else if (hold === undefined && this.#state === "journalStall") this.#resume();
+  }
+
+  state(): SchedulerState {
+    return this.#state;
   }
 
   metrics(): SchedulerMetrics {

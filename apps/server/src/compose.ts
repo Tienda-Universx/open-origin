@@ -30,12 +30,6 @@ import {
 import { ScenarioSource, type WorldSource } from "./world/source.ts";
 import type { Clock, Timer } from "./world/time.ts";
 
-/**
- * A projection of the source's world, and, when it keeps one, the count of items of speech it left
- * out because their text was not plain text (C3), which BeingsProjection keeps.
- */
-export type CountingProjection = WorldProjection & { readonly omittedSpeech?: number };
-
 /** What the world plane needs from outside: real time, and replacements for tests. */
 export type WorldPlaneDeps = {
   readonly clock: Clock;
@@ -45,7 +39,7 @@ export type WorldPlaneDeps = {
   /** The default world of T5 unless given. */
   readonly source?: WorldSource;
   /** The projection of the source's world: the C0 projection of a world of beings unless given. */
-  readonly projectionOf?: (world: World) => CountingProjection;
+  readonly projectionOf?: (world: World) => WorldProjection;
   /** K, the ticks between checkpoints: 300 unless given. */
   readonly checkpointTicks?: number;
   /** The scheduler of the world's ticks: a FixedRateScheduler over `options` unless given. */
@@ -116,7 +110,7 @@ type Parts = {
   readonly host: WorldHost;
   readonly scheduler: TickScheduler;
   readonly hold: () => Hold | undefined;
-  readonly projection: CountingProjection;
+  readonly projection: WorldProjection;
   /** How long the projection of each of the last ticks took, in microseconds (C3). */
   readonly projections: SampleWindow;
 };
@@ -197,7 +191,7 @@ function statusOf(config: Config, parts: Parts): ServerStatus {
     projectionMicros: projections.percentiles(),
     shortfallTicks: metrics.shortfallTicks,
     rebases: metrics.rebases,
-    omittedSpeech: projection.omittedSpeech ?? 0,
+    omittedSpeech: projection.omittedSpeech,
   };
 }
 
@@ -213,7 +207,7 @@ export function compose(config: Config, deps: WorldPlaneDeps): WorldPlane {
     },
     subscribeToPublished: (listener: PublishedListener) => gate.subscribe(listener),
     readTerrain: (chunk: ChunkCoord) => projection.readTerrain(chunk),
-    state: () => stateOf(parts.hold, parts.scheduler.metrics().state),
+    state: () => stateOf(parts.hold, parts.scheduler.state()),
     status: () => statusOf(config, parts),
     unhandledRejection: () => {
       host.halt(rejectionPolicy(config.aiMode).code);

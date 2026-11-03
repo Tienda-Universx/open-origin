@@ -355,6 +355,9 @@ describe("compose", () => {
         },
         readTerrain: (chunk) => projection.readTerrain(chunk),
         boot: () => projection.boot(),
+        get omittedSpeech() {
+          return projection.omittedSpeech;
+        },
       };
     };
     const plane = compose(configOf(), { clock, timer, source, projectionOf });
