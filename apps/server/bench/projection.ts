@@ -10,8 +10,8 @@
  *   20,000 ticks are timed, about 67 minutes of the world at 5 Hz.
  * - `dense`: the world of the beings benchmark's "dispersed 1,000"
  *   (packages/agents/bench/scale.ts): 1,000 beings under `utility@1`, one to a chunk, chunks two
- *   apart, spawned at tick 1; the next simulated day, 6,300 ticks, is timed, as the beings
- *   benchmark times it.
+ *   apart, spawned at tick 1; the next 2,000 ticks are timed, a third of a simulated day, so a
+ *   run stays under a minute on one core.
  *
  * In both, ticks 1 to 100 (the spawns, the first decisions, and 98 more) warm up first.
  *
@@ -83,8 +83,9 @@ export function sampleOf({ stepNs, projectNs, changedChunks, published }: TimedT
 /** The ticks each world runs before any is timed: its spawns, its first decisions, and more. */
 const WARM_UP = 100;
 
-/** The ticks of the default world timed unless `--ticks` says otherwise. */
+/** The ticks of each world timed unless `--ticks` says otherwise. */
 const DEFAULT_TICKS = 20_000;
+const DENSE_TICKS = 2_000;
 
 /** The module of the worlds, loaded when a run needs it. */
 type Worlds = typeof import("./worlds.ts");
@@ -101,7 +102,7 @@ function run(worlds: Worlds, source: BenchSource, ticks: number): TickSample[] {
 async function samplesOf(world: WorldName, ticks: number | undefined): Promise<TickSample[]> {
   const worlds = await import("./worlds.ts");
   if (world === "default") return run(worlds, worlds.defaultSource(), ticks ?? DEFAULT_TICKS);
-  return run(worlds, worlds.dispersedSource(), ticks ?? worlds.DAY_TICKS);
+  return run(worlds, worlds.dispersedSource(), ticks ?? DENSE_TICKS);
 }
 
 /** What a run's timed ticks cost and published. */

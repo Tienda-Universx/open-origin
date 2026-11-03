@@ -10,15 +10,12 @@ import {
   benchCenter,
   benchWorld,
   concentratedCells,
-  DAY_TICKS,
   dispersedCells,
   spawnsOf,
 } from "../../../packages/agents/bench/scale.ts";
 import { BeingsProjection } from "../src/projection/projection.ts";
 import type { PublishedTick } from "../src/world/published.ts";
 import { ScenarioSource } from "../src/world/source.ts";
-
-export { DAY_TICKS };
 
 /** A world and the commands of each of its ticks, stamped as the server's host stamps them. */
 export type BenchSource = {

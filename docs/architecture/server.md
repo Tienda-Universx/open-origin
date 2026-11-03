@@ -902,7 +902,8 @@ taskset -c 0 nice -n 19 bun apps/server/bench/projection.ts [default] [dense] [-
 Each tick is stepped with the engine's `step` and projected by `BeingsProjection`, as the host does,
 each timed apart. `default` is the default world of T5, ticks 101 to 20,100; `dense` is the beings
 benchmark's "dispersed 1,000" (1,000 beings under `utility@1`, one to a chunk, two chunks apart),
-ticks 101 to 6,400, one simulated day. It prints the step's and the projection's p50, p95, and
+ticks 101 to 2,100, a third of a simulated day, so a run of both stays under a minute on one core.
+It prints the step's and the projection's p50, p95, and
 p99, the projection's share of the step (the sum of its times over the sum of the step's), the
 chunks the step changed and the records published per tick, and the bytes of each published tick.
 
