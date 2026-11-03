@@ -334,18 +334,26 @@ with the strict schema.
 - `presentation-mirror.test.ts`: versions made only for changed chunks and diffs computed once per
   pair; exact pins and retained bytes; rings bounded by H and 2,048 items with exact `missed`; 64
   feed items a tick; the playout's release.
-- `presentation.test.ts`: hello and a reset first; one commit per period; the playout's skip beyond
-  F with every tick's feed; a being crossing chunks for clients of one chunk, the other, both, and a
-  follower (plan test 9); the same feed for clients of disjoint regions (plan test 10); a lost
-  message detected as a `seq` gap and healed by a resync (plan test 8); speech of `(L, L']` and its
-  `speechMissed`; abort; periods on the timer; connect and close cycles that leave interest, index,
-  followings, pins, and retained bytes at zero; and a presentation whose boot record cannot be
-  applied, which leaves no listener.
+- `presentation.test.ts`: hello and a reset first, and a late connection no feed from before its
+  hello; one commit per period; the playout's skip beyond F with every tick's feed; a being crossing
+  chunks for clients of one chunk, the other, both, and a follower (plan test 9); the same feed for
+  clients of disjoint regions (plan test 10); a period's budget that counts hello and aborts; a lost
+  message detected as a `seq` gap and healed by a resync (plan test 8); speech of `(L, L']` and the
+  feed of `(L, L']` in every transaction, a reset included, and those released while a transaction
+  spans periods in the next one; `speechMissed` and `missed` counted once however many parts the
+  speech and the feed span; abort; periods on the timer; connect and close cycles that leave
+  interest, index, followings, pins, and retained bytes at zero; and a presentation whose boot
+  record cannot be applied, which leaves no listener.
 - `presentation-reconstruction.test.ts` (plan test 7): a seeded model world of beings that walk,
-  cross, arrive, leave, and speak, published in bursts now and then, and clients that change camera
-  and follow at random, resync, lag, lose a message, and reconnect. After every commit each view
-  equals the model at the commit's tick, terrain and followed record included; the run must cover
-  drops, re-entries, returns, fragments, multi-period transactions, crossings, and playout skips.
+  cross, arrive, leave, and speak, published in bursts now and then and with more feed than a tick
+  keeps every 40 ticks, and clients that change camera and follow at random, resync, lag, lose a
+  message, abort, and reconnect. After every commit each view equals the model at the commit's tick,
+  terrain and followed record included; unless a lost message left the client behind, the commit
+  brings exactly the feed of `(L, L']`, the items of a tick beyond 64 counted as `missed`, and the
+  local speech of `(L, L']` of the chunks that stayed in view; and no client gets more than its
+  budget or one commit in a period. The run must cover drops, re-entries, returns, fragments,
+  multi-period transactions, crossings, playout skips, aborts, feed, missed feed, speech, resets
+  after the first, and late connections.
 - `presentation-sizes.test.ts` (plan test 7b): under parts of 64 KiB and 256 KiB a period, a chunk of
   1,024 beings of records near the widest spans parts and two periods, the view never shows a
   partial chunk, and the transaction commits at its tick while beings move, arrive, and leave; one

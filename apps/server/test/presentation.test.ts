@@ -1,16 +1,24 @@
 /**
  * The presentation plane (ADR 0025, "Playout"; ADR 0026, "Interest and transactions"; plan tests 8,
  * 9, and 10 in process), with the protocol's reference reducer as every client: a connection gets
- * hello and then a reset; an up-to-date client gets one commit per period at the playout tick; the
- * playout releases one tick a period and skips to the newest beyond F while the feed keeps every
- * tick; a being that crosses chunks leaves and enters the right views, a follower's window moving
- * with it; the feed reaches every client the same; a lost message is detected and a resync heals
- * the view; an abort is discarded; local speech covers (L, L'] and counts what the ring lost; the
- * timer runs the periods outside any publication; closing clients releases everything; and a
+ * hello and then a reset, a late one no feed from before its hello; an up-to-date client gets one
+ * commit per period at the playout tick; the playout releases one tick a period and skips to the
+ * newest beyond F while the feed keeps every tick; a being that crosses chunks leaves and enters the
+ * right views, a follower's window moving with it; the feed reaches every client the same; a
+ * period's budget counts every message; a lost message is detected and a resync heals the view; a
+ * transaction, a reset or one of several periods included, carries the speech and the feed of
+ * (L, L'] and counts what the rings lost once, however many parts it spans; an abort is discarded;
+ * the timer runs the periods outside any publication; closing clients releases everything; and a
  * presentation that cannot apply its boot record leaves no listener.
  */
 import { describe, expect, test } from "bun:test";
-import type { ChunkCoord, FeedItem, ServerMessage } from "@open-origin/protocol/public";
+import {
+  type ChunkCoord,
+  type FeedItem,
+  type LocalSpeech,
+  MAX_FEED_ITEMS_PER_TICK,
+  type ServerMessage,
+} from "@open-origin/protocol/public";
 import { Presentation } from "../src/presentation/presentation.ts";
 import { EphemeralJournal } from "../src/world/journal.ts";
 import { PublicationGate } from "../src/world/publication.ts";
@@ -18,6 +26,7 @@ import type { PublishedListener } from "../src/world/published.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import {
   being,
+  bytesPerPeriod,
   clockAt,
   expected,
   ModelWorld,
@@ -55,6 +64,23 @@ function tickOf(client: ViewClient): number {
 
 /** The keys of the chunks `client` shows. */
 const keysOf = (client: ViewClient) => [...(client.state.view?.chunks.keys() ?? [])].sort();
+
+/** 200 beings in the chunk (0, 0), about 18 KB of records: two parts of 16 KiB. */
+const CROWD = Array.from({ length: 200 }, (_, index) => being(index + 1, [index % 32, 1]));
+
+/** The speech of `tick` in the chunk (0, 0). */
+function said(tick: number): LocalSpeech {
+  return {
+    at: [0, 0],
+    speech: { tick, speaker: 1, to: 2, act: "tell", text: plain(`news of tick ${tick}`) },
+  };
+}
+
+/** The deltas among `messages`. */
+const deltas = (messages: readonly ServerMessage[]) =>
+  messages.filter(
+    (message): message is Extract<ServerMessage, { type: "delta" }> => message.type === "delta",
+  );
 
 describe("a connection", () => {
   test("gets hello, then a reset even of an empty view, each message one seq after the last", () => {
@@ -97,11 +123,11 @@ describe("a connection", () => {
     expect(client.commits.map(({ tick }) => tick)).toEqual([0, 1, 2]);
   });
 
-  test("starts with a reset at the playout tick when it connects late, its view whole", () => {
+  test("starts with a reset at the playout tick when it connects late, its view whole, and no feed from before its hello", () => {
     const model = new ModelWorld(0, [being(1, [3, 3])]);
     const { presentation, advance } = presentationOver(model);
-    advance({ set: [being(2, [40, 3])] });
-    advance();
+    advance({ set: [being(2, [40, 3])], feed: [arrival(1, 2, [1, 0])] });
+    advance({ feed: [arrival(2, 3)] });
     const client = new ViewClient();
     const id = presentation.connect(client);
     presentation.subscribe(id, [
@@ -112,6 +138,12 @@ describe("a connection", () => {
     expect(headers(client.messages).map(([type]) => type)).toEqual(["hello", "snapshot", "commit"]);
     expect(client.messages[1]).toMatchObject({ reset: true, tick: 2 });
     expect(shown(client.state)).toEqual(expected(model, 2, ["0,0", "1,0"], 0));
+    // The feed of ticks 1 and 2 came before hello, at tick 2: the client hears from tick 3 on.
+    advance({ feed: [arrival(3, 4)] });
+    expect(client.commits.map(({ tick, feed, missed }) => [tick, feed, missed])).toEqual([
+      [2, [], 0],
+      [3, [arrival(3, 4)], 0],
+    ]);
   });
 });
 
@@ -313,6 +345,52 @@ describe("parts", () => {
   });
 });
 
+describe("a period's budget", () => {
+  test("counts every message, hello and abort included", () => {
+    /** A client of the chunk (0, 0) of CROWD, under a budget of `periodBytes`. */
+    const watch = (periodBytes: number) => {
+      const model = new ModelWorld(0, CROWD);
+      const { presentation } = presentationOver(model, { partBytes: 16_384, periodBytes });
+      const client = new ViewClient();
+      const id = presentation.connect(client);
+      presentation.subscribe(id, [[0, 0]]);
+      return { presentation, client, id };
+    };
+    // Under a large budget, the reset is two snapshot parts and a commit, all in one period.
+    const large = watch(1 << 20);
+    large.presentation.period();
+    expect(large.client.messages.map(({ type }) => type)).toEqual([
+      "hello",
+      "snapshot",
+      "snapshot",
+      "commit",
+    ]);
+    // A budget of exactly those parts and that commit: with hello or an abort, they no longer fit.
+    const [, first = 0, second = 0, commit = 0] = large.client.sizes;
+    const budget = first + second + commit;
+    const { presentation, client, id } = watch(budget);
+    const counts: number[] = [];
+    const types: string[][] = [];
+    const period = () => {
+      const from = client.messages.length;
+      presentation.period();
+      counts.push(client.sizes.length);
+      types.push(client.messages.slice(from).map(({ type }) => type));
+    };
+    period();
+    presentation.abort(id);
+    period();
+    period();
+    // The same reset again, at the same tick and with as many digits in each seq: the same sizes.
+    expect(types).toEqual([["hello", "snapshot"], ["abort", "snapshot", "snapshot"], ["commit"]]);
+    expect(Math.max(...bytesPerPeriod(client, counts))).toBeLessThanOrEqual(budget);
+    expect(client.commits.map(({ txn, reset, tick }) => [txn, reset, tick])).toEqual([
+      [1, true, 0],
+    ]);
+    expect(client.anomalies).toEqual([]);
+  });
+});
+
 describe("a lost message", () => {
   test("is detected by the reducer as a seq gap, and a resync restores a correct view", () => {
     const model = new ModelWorld(0, [being(1, [3, 3]), being(2, [5, 5])]);
@@ -368,29 +446,90 @@ describe("a transaction", () => {
     ]);
   });
 
-  test("counts the speech a lagging client can no longer read as missed", () => {
+  test("counts the speech and the feed a lagging client can no longer read as missed, once however many parts they span", () => {
+    const model = new ModelWorld(0, [being(1, [3, 3])]);
+    const { presentation, advance } = presentationOver(model, {
+      partBytes: 16_384,
+      periodBytes: 1 << 20,
+    });
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.subscribe(id, [[0, 0]]);
+    presentation.period();
+    // While the client lags, 302 ticks of speech, and 70 feed items in each of the last four.
+    client.lag = true;
+    const feed: FeedItem[] = [];
+    for (let tick = 1; tick <= 302; tick += 1) {
+      const items =
+        tick > 298
+          ? Array.from({ length: 70 }, (_, index) => arrival(tick, tick * 100 + index))
+          : [];
+      feed.push(...items.slice(0, MAX_FEED_ITEMS_PER_TICK));
+      advance({ speech: [said(tick)], feed: items });
+    }
+    client.lag = false;
+    presentation.period();
+    const committed = client.commits.at(-1);
+    // The ring keeps the last 300 ticks: ticks 3 to 302; ticks 1 and 2 are missed.
+    expect(committed?.speech).toEqual(Array.from({ length: 300 }, (_, index) => said(index + 3)));
+    expect(committed?.speechMissed).toEqual([{ at: [0, 0], count: 2 }]);
+    // The feed ring keeps 64 items of each tick: 6 of each of the last four ticks are missed.
+    expect(committed?.feed).toEqual(feed);
+    expect(committed?.missed).toBe(4 * (70 - MAX_FEED_ITEMS_PER_TICK));
+    // The chunk's entry went on from one delta part to the next, and the feed took several parts.
+    const parts = client.messages.filter(({ tick }) => tick === committed?.tick);
+    const entries = deltas(parts).map(({ chunks }) => chunks.map(({ at }) => at));
+    expect(entries.length).toBeGreaterThan(1);
+    expect(entries).toEqual(entries.map(() => [[0, 0]]));
+    expect(parts.filter(({ type }) => type === "events").length).toBeGreaterThan(1);
+    expect(withinParts(client, 16_384)).toBe(true);
+    expect(client.anomalies).toEqual([]);
+  });
+
+  test("that is a reset carries the feed of (L, L'], as every transaction does", () => {
     const model = new ModelWorld(0, [being(1, [3, 3])]);
     const { presentation, advance } = presentationOver(model);
     const client = new ViewClient();
     const id = presentation.connect(client);
     presentation.subscribe(id, [[0, 0]]);
     presentation.period();
-    client.lag = true;
-    for (let tick = 1; tick <= 302; tick += 1) {
-      advance({
-        speech: [
-          { at: [0, 0], speech: { tick, speaker: 1, to: 1, act: "tell", text: plain("x") } },
-        ],
-      });
-    }
-    client.lag = false;
-    presentation.period();
-    const committed = client.commits.at(-1);
-    // The ring keeps the last 300 ticks: ticks 3 to 302; ticks 1 and 2 are missed.
-    expect(committed?.speech.map(({ speech: { tick } }) => tick)).toEqual(
-      Array.from({ length: 300 }, (_, index) => index + 3),
-    );
-    expect(committed?.speechMissed).toEqual([{ at: [0, 0], count: 2 }]);
+    advance({ feed: [arrival(1, 11)] });
+    presentation.resync(id);
+    advance({ feed: [arrival(2, 12)] });
+    expect(
+      client.commits.map(({ tick, reset, feed, missed }) => [tick, reset, feed, missed]),
+    ).toEqual([
+      [0, true, [], 0],
+      [1, false, [arrival(1, 11)], 0],
+      [2, true, [arrival(2, 12)], 0],
+    ]);
+  });
+
+  test("that spans periods leaves the speech and the feed released meanwhile to the next one", () => {
+    const model = new ModelWorld(0, CROWD);
+    // Parts of 16 KiB in a budget of 16 KiB: at most one full part a period.
+    const { presentation, advance } = presentationOver(model, {
+      partBytes: 16_384,
+      periodBytes: 16_384,
+    });
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.subscribe(id, [[0, 0]]);
+    while (client.commits.length === 0) presentation.period();
+    // Every being moves at tick 1: its delta takes two parts, and only the first goes out.
+    const moved = CROWD.map((record) => being(record.id, [record.cell[0], 2]));
+    advance({ set: moved, speech: [said(1)], feed: [arrival(1, 1001)] });
+    expect([presentation.tick, client.commits.length]).toEqual([1, 1]);
+    // Tick 2 is released while that transaction is in flight, which then commits.
+    advance({ speech: [said(2)], feed: [arrival(2, 1002)] });
+    expect([presentation.tick, client.commits.map(({ tick }) => tick)]).toEqual([2, [0, 1]]);
+    advance();
+    expect(client.commits.map(({ tick, speech, feed }) => [tick, speech, feed])).toEqual([
+      [0, [], []],
+      [1, [said(1)], [arrival(1, 1001)]],
+      [3, [said(2)], [arrival(2, 1002)]],
+    ]);
+    expect(shown(client.state)).toEqual(expected(model, 3, ["0,0"], 0));
     expect(client.anomalies).toEqual([]);
   });
 

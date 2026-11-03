@@ -1,21 +1,28 @@
 /**
  * The reconstruction property (plan test 7, in process; ADR 0026, "Interest and transactions"),
  * seeded: a model world of beings that walk, cross chunks, arrive, leave, and speak is published
- * tick by tick, now and then in bursts past F, to a presentation with parts of 16 KiB, while
- * clients change their cameras and followed beings at random, resync, lag, lose a message, and
- * reconnect. After every commit the protocol's reducer applies, each client's view must equal the
- * model at the commit's tick: the chunks of its camera and follow window as they were when the
- * transaction started, each with its version, its beings, and its terrain, the followed being's
- * record, and the clock. The run must also have covered drops and re-entries, beings that left a
- * view and came back, fragmented chunks, multi-period transactions, crossings, and playout skips.
+ * tick by tick, now and then in bursts past F and with more feed than a tick keeps, to a
+ * presentation with parts of 16 KiB, while clients change their cameras and followed beings at
+ * random, resync, lag, lose a message, abort, and reconnect. After every commit the protocol's
+ * reducer applies, each client's view must equal the model at the commit's tick: the chunks of its
+ * camera and follow window as they were when the transaction started, each with its version, its
+ * beings, and its terrain, the followed being's record, and the clock. Unless a lost message left
+ * the client behind, the commit must also bring exactly the feed of (L, L'], L the tick its view
+ * showed, each tick's items beyond 64 counted as missed, and exactly the local speech of (L, L'] of
+ * the chunks that stayed in view; and no client may get more than its budget or one commit in a
+ * period, hello and aborts counted. The run must also have covered drops and re-entries, beings
+ * that left a view and came back, fragmented chunks, multi-period transactions, crossings, playout
+ * skips, aborts, feed and speech, missed feed, resets after the first, and late connections.
  */
 import { describe, expect, test } from "bun:test";
 import {
   type BeingPublic,
   type ChunkCoord,
+  type Committed,
   chunkKey,
   type FeedItem,
   type LocalSpeech,
+  MAX_FEED_ITEMS_PER_TICK,
   type ServerMessage,
 } from "@open-origin/protocol/public";
 import { Random } from "../../../packages/protocol/test/support/random.ts";
@@ -43,6 +50,10 @@ const TICKS = 120;
 const CLIENTS = 5;
 /** Parts of 16 KiB, in a budget of 18 KiB a period: views of a few chunks span several periods. */
 const PART_BYTES = 16_384;
+const PERIOD_BYTES = 18_432;
+/** Every FLOOD_EVERY ticks, a tick publishes FLOOD arrivals: more feed items than a tick keeps. */
+const FLOOD_EVERY = 40;
+const FLOOD = 70;
 
 /** What a client asked for: its camera and its followed being. */
 type Declared = { readonly camera: readonly ChunkCoord[]; readonly target: number | null };
@@ -58,6 +69,20 @@ type Coverage = {
   crossings: number;
   skips: number;
   lost: number;
+  aborts: number;
+  feed: number;
+  missedFeed: number;
+  speech: number;
+  resets: number;
+  lateJoins: number;
+};
+
+/** What a client's view showed when a commit arrived, and whether it was the server's view. */
+type Before = {
+  /** False when a message was lost since the last reset: the view may be behind the server's. */
+  readonly synced: boolean;
+  readonly tick: number;
+  readonly keys: ReadonlySet<string>;
 };
 
 /** A client of the run, what it asked for, and what it showed. */
@@ -76,6 +101,10 @@ type Tracked = {
   lastTick: number | undefined;
   /** Whether the next period asks for a resync, after a lost message. */
   resyncNext: boolean;
+  /** The view when the last commit arrived, before the reducer applied it. */
+  before: Before | undefined;
+  /** The anomalies when the last reset applied: any later one means a message was lost. */
+  anomaliesAtSync: number;
 };
 
 /** 130 beings crowded in the chunk (2, 2) and 50 spread over the area. */
@@ -123,6 +152,16 @@ function changesOf(random: Random, model: ModelWorld, nextId: () => number): Tic
     const cell: [number, number] = [random.below(SIDE), random.below(SIDE)];
     set.push(being(id, cell));
     feed.push({ kind: "arrival", tick, being: id, species: "s1", chunk: chunkOfCell(cell) });
+  }
+  if (tick % FLOOD_EVERY === 0) {
+    for (let index = 0; index < FLOOD; index += 1)
+      feed.push({
+        kind: "arrival",
+        tick,
+        being: 100_000 + tick * FLOOD + index,
+        species: "s1",
+        chunk: [0, 0],
+      });
   }
   if (random.below(10) < 4 && records.length > 1) {
     const [speaker, hearer] = [random.pick(records), random.pick(records)];
@@ -215,6 +254,90 @@ function noteMessage(tracked: Tracked, message: ServerMessage, coverage: Coverag
   }
 }
 
+/** The feed the model published in (from, to]: the items each tick keeps, and how many in all. */
+function feedBetween(model: ModelWorld, from: number, to: number) {
+  const kept: FeedItem[] = [];
+  let total = 0;
+  for (let tick = from + 1; tick <= to; tick += 1) {
+    const { feed } = model.messagesAt(tick);
+    kept.push(...feed.slice(0, MAX_FEED_ITEMS_PER_TICK));
+    total += feed.length;
+  }
+  return { kept, total };
+}
+
+/** `speech` by the key of its chunk, in order. */
+function byChunk(speech: readonly LocalSpeech[]): Map<string, LocalSpeech[]> {
+  const chunks = new Map<string, LocalSpeech[]>();
+  for (const item of speech) {
+    const key = chunkKey(item.at);
+    chunks.set(key, [...(chunks.get(key) ?? []), item]);
+  }
+  return chunks;
+}
+
+/** The speech the model published in (from, to] in the chunks `keys`, by chunk key. */
+function speechBetween(model: ModelWorld, from: number, to: number, keys: ReadonlySet<string>) {
+  const speech: LocalSpeech[] = [];
+  for (let tick = from + 1; tick <= to; tick += 1) {
+    speech.push(...model.messagesAt(tick).speech.filter(({ at }) => keys.has(chunkKey(at))));
+  }
+  return byChunk(speech);
+}
+
+/**
+ * Checks the feed and the speech of the commit `committed` of `tracked`, unless a lost message
+ * left its view behind the server's: they are exactly those the model published in (L, L'], L the
+ * tick the view showed, the feed whole and the speech of the chunks that stayed in view. In 120
+ * ticks no ring drops an item: only the feed items of a tick beyond 64 are missed.
+ */
+function checkMessages(
+  model: ModelWorld,
+  tracked: Tracked,
+  committed: Committed,
+  coverage: Coverage,
+): void {
+  const before = tracked.before;
+  if (before === undefined || !before.synced) return;
+  const { kept, total } = feedBetween(model, before.tick, committed.tick);
+  expect(committed.feed).toEqual(kept);
+  expect(committed.missed).toBe(total - kept.length);
+  const shownNow = new Set(tracked.client.state.view?.chunks.keys());
+  const stayed = committed.reset ? [] : [...before.keys].filter((key) => shownNow.has(key));
+  const speech = speechBetween(model, before.tick, committed.tick, new Set(stayed));
+  expect(byChunk(committed.speech)).toEqual(speech);
+  expect(committed.speechMissed).toEqual([]);
+  noteMessages(model, tracked, { committed, before, spoken: speech.size }, coverage);
+}
+
+/**
+ * Counts what a checked commit covers: feed, missed feed, speech (`spoken`, the chunks it brought
+ * speech of), resets after the first, and late connections.
+ */
+function noteMessages(
+  model: ModelWorld,
+  tracked: Tracked,
+  checked: { readonly committed: Committed; readonly before: Before; readonly spoken: number },
+  coverage: Coverage,
+): void {
+  const { committed, before } = checked;
+  const first = tracked.client.commits.length === 1;
+  const fed = committed.feed.length > 0;
+  if (fed) coverage.feed += 1;
+  if (committed.missed > 0) coverage.missedFeed += 1;
+  if (checked.spoken > 0) coverage.speech += 1;
+  if (committed.reset && !first && fed) coverage.resets += 1;
+  if (first && feedBetween(model, 0, before.tick).total > 0) coverage.lateJoins += 1;
+}
+
+/** What the view of `tracked` shows as a commit arrives, before the reducer applies it. */
+function beforeCommit({ client, anomaliesAtSync }: Tracked): Before | undefined {
+  const { view } = client.state;
+  if (view === undefined) return undefined;
+  const synced = client.anomalies.length === anomaliesAtSync;
+  return { synced, tick: view.tick, keys: new Set(view.chunks.keys()) };
+}
+
 /** A new client, tracked, with a random request. */
 function connect(
   random: Random,
@@ -235,14 +358,20 @@ function connect(
     lostSight: new Set(),
     lastTick: undefined,
     resyncNext: false,
+    before: undefined,
+    anomaliesAtSync: 0,
   };
   client.onMessage = (message) => {
     if (!("txn" in message)) return;
     if (!tracked.starts.has(message.txn)) tracked.starts.set(message.txn, tracked.declared);
+    if (message.type === "abort") coverage.aborts += 1;
+    if (message.type === "commit") tracked.before = beforeCommit(tracked);
     noteMessage(tracked, message, coverage);
   };
   client.onCommit = (committed) => {
     check(model, tracked, committed, coverage);
+    checkMessages(model, tracked, committed, coverage);
+    if (committed.reset) tracked.anomaliesAtSync = client.anomalies.length;
     noteSight(tracked, coverage);
   };
   request(random, presentation, model, tracked);
@@ -282,6 +411,20 @@ function churn(
   else if (roll < 20 && tracked.client.commits.length > 0) {
     tracked.client.lose = 1;
     tracked.resyncNext = true;
+  } else if (roll < 21) presentation.abort(tracked.id);
+  else if (roll < 22) presentation.abort(tracked.id, { releaseView: true });
+}
+
+/** No client got more than its budget or more than one commit in the period, every message counted. */
+function checkPeriod(
+  live: readonly Tracked[],
+  frames: readonly number[],
+  commits: readonly number[],
+) {
+  for (const [index, { client }] of live.entries()) {
+    const sent = client.sizes.slice(frames[index] ?? 0).reduce((sum, size) => sum + size, 0);
+    expect(sent).toBeLessThanOrEqual(PERIOD_BYTES);
+    expect(client.commits.length - (commits[index] ?? 0)).toBeLessThanOrEqual(1);
   }
 }
 
@@ -300,8 +443,8 @@ function run(seed: number) {
   const random = new Random(seed);
   const model = new ModelWorld(0, initialBeings(random));
   const { presentation, publisher } = presentationOver(model, {
-    partBytes: 16_384,
-    periodBytes: 18_432,
+    partBytes: PART_BYTES,
+    periodBytes: PERIOD_BYTES,
   });
   const coverage: Coverage = {
     checked: 0,
@@ -313,6 +456,12 @@ function run(seed: number) {
     crossings: 0,
     skips: 0,
     lost: 0,
+    aborts: 0,
+    feed: 0,
+    missedFeed: 0,
+    speech: 0,
+    resets: 0,
+    lateJoins: 0,
   };
   let next = 1000;
   const nextId = () => {
@@ -336,7 +485,10 @@ function run(seed: number) {
       all.push(fresh);
     }
     const before = live.map((tracked) => tracked.client.messages.length);
+    const frames = live.map((tracked) => tracked.client.sizes.length);
+    const commits = live.map((tracked) => tracked.client.commits.length);
     presentation.period();
+    checkPeriod(live, frames, commits);
     for (const [index, tracked] of live.entries()) notePeriod(tracked, before[index] ?? 0, period);
   }
   return { all, live, coverage, presentation };
@@ -358,8 +510,9 @@ describe("the reconstruction property", () => {
     for (const [what, count] of Object.entries(coverage)) {
       if (count === 0) throw new Error(`the run covered no ${what}`);
     }
-    // Lagging clients and transactions of several periods commit less often than once a tick.
-    expect(coverage.checked).toBeGreaterThan(150);
+    // Lagging clients, transactions of several periods, and aborted ones commit less often than
+    // once a tick.
+    expect(coverage.checked).toBeGreaterThan(140);
     for (const tracked of live) presentation.close(tracked.id);
     expect(presentation.usage()).toMatchObject({ clients: 0, pins: 0, retainedBytes: 0 });
   });

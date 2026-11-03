@@ -102,6 +102,15 @@ export type TickChanges = {
   readonly feed?: readonly FeedItem[];
 };
 
+/** The local speech and the feed items one tick published. */
+export type TickMessages = {
+  readonly speech: readonly LocalSpeech[];
+  readonly feed: readonly FeedItem[];
+};
+
+/** What the boot tick published: nothing but the world. */
+const SILENT: TickMessages = Object.freeze({ speech: [], feed: [] });
+
 /** The clock of `tick` in the model: 100 ticks a day. */
 export function clockAt(tick: number) {
   return { tick, day: Math.floor(tick / 100), dayPermille: (tick % 100) * 10 };
@@ -109,18 +118,21 @@ export function clockAt(tick: number) {
 
 /**
  * A model of the public world: it publishes each tick as the projection does, a chunk only when
- * its C0 bytes change, with `upsert` and `gone` by id, and keeps its public state at every tick.
+ * its C0 bytes change, with `upsert` and `gone` by id, and keeps its public state, its speech, and
+ * its feed at every tick.
  */
 export class ModelWorld {
   readonly #beings = new Map<number, BeingPublic>();
   readonly #versions = new Map<string, number>();
   readonly #history = new Map<number, WorldAt>();
+  readonly #messages = new Map<number, TickMessages>();
   #tick: number;
 
   constructor(boot: number, beings: readonly BeingPublic[] = []) {
     this.#tick = boot;
     for (const record of beings) this.#beings.set(record.id, record);
     for (const record of beings) this.#versions.set(chunkKey(chunkOfCell(record.cell)), boot);
+    this.#messages.set(boot, SILENT);
     this.#remember();
   }
 
@@ -153,13 +165,9 @@ export class ModelWorld {
     this.#tick = tick;
     const chunks = this.#changes(before, tick);
     this.#remember();
-    return {
-      tick,
-      clock: clockAt(tick),
-      chunks,
-      speech: changes.speech ?? [],
-      feed: changes.feed ?? [],
-    };
+    const messages = { speech: changes.speech ?? [], feed: changes.feed ?? [] };
+    this.#messages.set(tick, messages);
+    return { tick, clock: clockAt(tick), chunks, ...messages };
   }
 
   /** The public world at `tick`. */
@@ -167,6 +175,13 @@ export class ModelWorld {
     const world = this.#history.get(tick);
     if (world === undefined) throw new Error(`the model holds no tick ${tick}`);
     return world;
+  }
+
+  /** The speech and the feed `tick` published: none for the boot tick. */
+  messagesAt(tick: number): TickMessages {
+    const messages = this.#messages.get(tick);
+    if (messages === undefined) throw new Error(`the model holds no tick ${tick}`);
+    return messages;
   }
 
   /** The chunks whose C0 bytes changed since `before`, with new versions at `tick`. */
@@ -271,6 +286,13 @@ export class ViewClient implements ClientSink {
   get largest(): number {
     return Math.max(0, ...this.sizes);
   }
+}
+
+/** The bytes `client` received in each period: `periods` holds its frame count after each. */
+export function bytesPerPeriod(client: ViewClient, periods: readonly number[]): number[] {
+  return periods.map((count, index) =>
+    client.sizes.slice(periods[index - 1] ?? 0, count).reduce((sum, size) => sum + size, 0),
+  );
 }
 
 /** Every frame `client` received was at most `limit` bytes: MAX_PART_BYTES unless given. */
