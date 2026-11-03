@@ -22,7 +22,12 @@ import {
 import type { ClientId } from "../src/presentation/interest.ts";
 import type { Ending, Presentation } from "../src/presentation/presentation.ts";
 import { guardRetention } from "../src/presentation/retention.ts";
-import { TerrainCache, TerrainQueue, WIDEST_TERRAIN_BYTES } from "../src/presentation/terrain.ts";
+import {
+  TERRAIN_PER_PERIOD,
+  TerrainCache,
+  TerrainQueue,
+  WIDEST_TERRAIN_BYTES,
+} from "../src/presentation/terrain.ts";
 import { ChunkVersion } from "../src/presentation/version.ts";
 import {
   being,
@@ -30,6 +35,7 @@ import {
   presentationOver,
   terrainAt,
   ViewClient,
+  windowKeys,
 } from "./support/presentation.ts";
 
 /** The bytes a chunk of `records` adds to a view: its records, their commas, the widest terrain. */
@@ -483,6 +489,12 @@ function countingTerrain() {
   return { calls, read };
 }
 
+/**
+ * The periods of a head's turn at the default budget, from the rule: those that generate twice a
+ * full view's chunks.
+ */
+const TURN = Math.ceil((2 * MAX_VIEW_CHUNKS) / TERRAIN_PER_PERIOD);
+
 /** The chunks `[0, y]` to `[n − 1, y]`. */
 const row = (y: number, n = 3) => Array.from({ length: n }, (_, x): ChunkCoord => [x, y]);
 
@@ -493,6 +505,12 @@ const takenKeys = (taken: ReadonlyMap<string, unknown> | undefined) =>
 /** The fault callback of a queue whose generations never throw: a fault fails the test. */
 const noFault = (client: ClientId, cause: unknown) => {
   throw new Error(`the terrain of client ${client} threw`, { cause });
+};
+
+/** One period of `queue` as the presentation runs it with no client asking: its head, then the rest. */
+const runPeriod = (queue: TerrainQueue) => {
+  queue.period(noFault);
+  queue.prefetch(noFault);
 };
 
 describe("terrain", () => {
@@ -548,17 +566,17 @@ describe("terrain", () => {
     expect(calls).toEqual(["0,0", "1,0"]);
     expect([queue.queued, queue.held]).toEqual([6, 2]);
     // The head needs one more chunk; the rest of the budget goes to the next client.
-    queue.period(noFault);
+    runPeriod(queue);
     expect(calls.slice(2)).toEqual(["2,0", "0,1"]);
     expect([queue.queued, queue.held]).toEqual([4, 3]);
     // Until its transaction starts, the head keeps its place and its terrain; the next is served.
-    queue.period(noFault);
+    runPeriod(queue);
     expect(calls.slice(4)).toEqual(["1,1", "2,1"]);
     expect([queue.queued, queue.held]).toEqual([2, 3]);
     expect(takenKeys(queue.take(1, a))).toEqual(sortedKeys(a));
     // Client 2 is the head now, and holds what the cache has of its chunks: all three.
     expect([queue.queued, queue.held]).toEqual([2, 3]);
-    queue.period(noFault);
+    runPeriod(queue);
     expect(calls.slice(6)).toEqual(["0,2", "1,2"]);
     expect(takenKeys(queue.take(2, b))).toEqual(sortedKeys(b));
     expect(takenKeys(queue.take(3, c))).toEqual(sortedKeys(c));
@@ -574,7 +592,7 @@ describe("terrain", () => {
     expect(queue.take(2, theirs)).toBeUndefined();
     const held: number[] = [];
     for (let period = 0; period < 5; period += 1) {
-      queue.period(noFault);
+      runPeriod(queue);
       held.push(queue.held);
     }
     // Six chunks went through a cache of two: the head's three are held for it, and no more.
@@ -586,35 +604,93 @@ describe("terrain", () => {
     // generated again once client 2 is the head.
     expect([queue.queued, queue.held]).toEqual([1, 2]);
     expect(queue.take(2, theirs)).toBeUndefined();
-    queue.period(noFault);
+    runPeriod(queue);
     expect(takenKeys(queue.take(2, theirs))).toEqual(sortedKeys(theirs));
     expect(calls).toEqual([...mine, ...theirs].map(chunkKey).concat("0,1"));
     expect([queue.queued, queue.held]).toEqual([0, 0]);
   });
 
-  test("a client whose needs change goes to the back, with nothing held; one whose needs stay the same keeps its place", () => {
+  test("a waiting client keeps its place when its needs change, and the head's hold is cut to what it still needs", () => {
     const { calls, read } = countingTerrain();
     const queue = new TerrainQueue(new TerrainCache(read), 1);
     const [a, b] = [row(0), row(1, 2)];
-    const moved: ChunkCoord[] = [[9, 9]];
+    const moved: ChunkCoord[] = [
+      [2, 0],
+      [9, 9],
+    ];
     expect(queue.take(1, a)).toBeUndefined();
     expect(queue.take(2, b)).toBeUndefined();
-    // The same chunks in another order are the same needs: client 1 stays the head.
+    // The same chunks in another order are the same needs.
     expect(queue.take(1, [...a].reverse())).toBeUndefined();
     queue.period(noFault);
     expect(calls).toEqual(["0,0", "2,0"]);
     expect(queue.held).toBe(2);
-    // Its needs change: it goes behind client 2, and nothing is held for it.
+    // Its needs change: client 1 stays the head, and holds only the chunk it still needs.
     expect(queue.take(1, moved)).toBeUndefined();
-    expect([queue.queued, queue.held]).toEqual([3, 0]);
+    expect([queue.queued, queue.held]).toEqual([3, 1]);
+    queue.period(noFault);
+    expect(calls.slice(2)).toEqual(["9,9"]);
+    expect(takenKeys(queue.take(1, moved))).toEqual(sortedKeys(moved));
     queue.period(noFault);
     queue.period(noFault);
-    expect(calls.slice(2)).toEqual(["0,1", "1,1"]);
+    expect(calls.slice(3)).toEqual(["0,1", "1,1"]);
     expect(takenKeys(queue.take(2, b))).toEqual(sortedKeys(b));
-    queue.period(noFault);
-    expect(calls.slice(4)).toEqual(["9,9"]);
-    expect(takenKeys(queue.take(1, moved))).toEqual(["9,9"]);
     expect([queue.queued, queue.held]).toEqual([0, 0]);
+  });
+
+  test("a head whose needs keep changing gives up the head after its turn, and the next client is served", () => {
+    const { calls, read } = countingTerrain();
+    const queue = new TerrainQueue(new TerrainCache(read), TERRAIN_PER_PERIOD);
+    /** Twenty chunks no other step asks for: more than a period generates. */
+    const fresh = (n: number) => row(100 + n, 20);
+    const next = row(1);
+    expect(queue.take(1, fresh(0))).toBeUndefined();
+    expect(queue.take(2, next)).toBeUndefined();
+    const nextKeys = new Set(next.map(chunkKey));
+    /** The period in which client 2's chunks were first generated. */
+    let served: number | undefined;
+    for (let period = 1; period <= TURN + 1; period += 1) {
+      const before = calls.length;
+      queue.period(noFault);
+      if (served === undefined && calls.slice(before).some((key) => nextKeys.has(key)))
+        served = period;
+      // Client 1 asks for other chunks each period: it keeps the head until its turn ends, and
+      // its requests leave nothing of the budget for the client behind it.
+      expect(queue.take(1, fresh(period))).toBeUndefined();
+      queue.prefetch(noFault);
+    }
+    // Its turn is TURN periods: in the next, it is behind client 2, which is served first.
+    expect(served).toBe(TURN + 1);
+    expect(takenKeys(queue.take(2, next))).toEqual(sortedKeys(next));
+    expect(queue.held).toBeLessThanOrEqual(MAX_VIEW_CHUNKS);
+  });
+
+  test("a follower whose window moves every tick keeps its place while 50 clients flood the queue, and starts within its turn", () => {
+    const home: [number, number] = [32 * 400, 32 * 400];
+    const model = new ModelWorld(0, [being(1, home)]);
+    const { presentation, advance } = presentationOver(model);
+    const join = (camera: readonly ChunkCoord[]) => {
+      const client = new ViewClient();
+      presentation.subscribe(presentation.connect(client), camera);
+      return client;
+    };
+    // The first client of the flood spends the budget at once and is the head for four periods;
+    // the follower asks next, then 49 more clients, each for 16 new chunks.
+    join(row(0, 64));
+    const follower = new ViewClient();
+    presentation.follow(presentation.connect(follower), 1);
+    for (let k = 1; k < 50; k += 1) join(row(k, 16));
+    let started: number | undefined;
+    for (let period = 1; started === undefined && period <= 2 * (TURN + 1); period += 1) {
+      // The followed being moves one chunk a tick: its window gains three chunks each period.
+      advance({ set: [being(1, [home[0] + 32 * period, home[1]])] });
+      if (follower.commits.length > 0) started = period;
+    }
+    // One client is ahead of it: the follower is the head within TURN + 1 periods, and starts
+    // within its own turn, while the flood still waits.
+    expect(started).toBe(5);
+    expect(presentation.usage().terrain.queued).toBeGreaterThan(0);
+    expect(keysOf(follower)).toEqual(windowKeys([home[0] + 32 * 5, home[1]]).sort());
   });
 
   test("a queued generation that throws drops the client that waits for it alone, and the queue goes on with the next", () => {

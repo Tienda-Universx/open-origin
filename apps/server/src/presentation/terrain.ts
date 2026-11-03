@@ -5,23 +5,33 @@
  * and encoded once; the most recently used entries are kept, and a cache hit generates nothing.
  *
  * A transaction fixes its content when it starts, terrain included, so it starts only once the
- * terrain of every chunk it brings is at hand; until then the client waits, its view at L. While
- * the period's budget lasts, missing terrain is generated at once. What the budget cannot cover
- * waits in a queue served first come, first served: at the start of each period, before any new
- * request, the budget goes to the clients that wait in the order they arrived, each until it needs
- * nothing more, then to the next. A client that waits asks again at each of its turns in the
- * fan-out; one whose needs changed meanwhile goes to the back, with nothing held for it, so no
- * client keeps its place by asking for other chunks.
+ * terrain of every chunk it brings is at hand; until then the client waits, its view at L. What a
+ * client cannot have from the cache waits in a queue served first come, first served. Each period,
+ * before any request, the period's budget goes first to the head of the queue; in the fan-out,
+ * only the head generates at once, or any client while none waits; and what is left after the
+ * fan-out goes to the clients that wait, in the order they arrived. A waiting client asks again at
+ * each of its turns in the fan-out, and keeps its place whatever it needs then: its needs change by
+ * themselves when the window of a moving being moves or a trim moves with chunk sizes.
  *
- * Terrain is held outside the cache for the head of the queue alone, so the cache cannot evict it
- * before the head's transaction starts. The bound: what is held is some of the head's needs, which
- * `take` caps at MAX_VIEW_CHUNKS, so at most 73 chunks of at most WIDEST_TERRAIN_BYTES, 905,273
- * bytes, whatever the number of clients. The clients behind the head hold nothing: what the queue
- * serves them goes to the cache, and a chunk it evicts before their transaction starts waits for
- * them again, served in their turn. No client whose needs stay the same starves: the head's hold
- * only grows, so it needs nothing more within ⌈73 / 16⌉ = 5 periods, and keeps its place until its
- * transaction starts at its next turn in the fan-out; then the next client in arrival order is the
- * head, and holds what the cache has of its needs.
+ * Terrain is held outside the cache for the head alone, so the cache cannot evict it before the
+ * head's transaction starts. The head's hold keeps only what it still needs, which `take` caps at
+ * MAX_VIEW_CHUNKS: at most 73 chunks of at most WIDEST_TERRAIN_BYTES, 905,273 bytes, whatever the
+ * number of clients. The clients behind the head hold nothing: what the queue serves them goes to
+ * the cache, and a chunk it evicts before they start waits for them again, in their turn.
+ *
+ * The head's turn lasts T = ⌈2 · 73 / B⌉ periods, B being the budget a period, 10 at 16: the periods
+ * in which it is served first. A head that has not started by then goes to the back, with nothing
+ * held; what was generated for it stays in the cache, so its next turn needs only what changed or
+ * was evicted. The bounds:
+ *
+ * - a client with k clients ahead is the head within k · (T + 1) periods: each head keeps the head
+ *   for at most T periods after the one in which it became the head, and the clients that arrive
+ *   later or go to the back wait behind it, so no client, whatever its needs do, holds the others
+ *   for more than a turn;
+ * - a head whose needs gain at most d new chunks a period has all of them within ⌈73 / (B − d)⌉
+ *   periods, 7 for a follow window that moves one chunk a period (d ≤ 5), when its turn in the
+ *   fan-out comes each period: the pass and its take at once generate B a period for it, of which
+ *   d go to what changed. It then starts at its next turn in the fan-out with room in its buffer.
  */
 import {
   type ChunkCoord,
@@ -107,25 +117,26 @@ export class TerrainCache {
   }
 }
 
-/** A client that waits: the chunks it needs, by key, and those the queue has yet to serve it. */
+/** A client that waits: the chunks it needs now, by key, and those the queue has yet to serve it. */
 type Waiting = {
-  readonly needs: ReadonlyMap<string, ChunkCoord>;
+  needs: ReadonlyMap<string, ChunkCoord>;
   /** In the order the queue serves them. */
   pending: ChunkCoord[];
 };
 
 const NOTHING_HELD: ReadonlyMap<string, EncodedText> = new Map();
 
+/** The generations a head's turn is worth: twice the chunks of a full view. */
+export const TURN_GENERATIONS = 2 * MAX_VIEW_CHUNKS;
+
+/** The periods a head's turn lasts at `perPeriod` generations a period: 10 at 16. */
+export function turnPeriods(perPeriod: number): number {
+  return Math.ceil(TURN_GENERATIONS / perPeriod);
+}
+
 /** `chunks` by chunk key, each once. */
 function keyed(chunks: readonly ChunkCoord[]): Map<string, ChunkCoord> {
   return new Map(chunks.map((at) => [chunkKey(at), at]));
-}
-
-/** Whether `a` and `b` hold the same chunk keys. */
-function sameKeys(a: ReadonlyMap<string, ChunkCoord>, b: ReadonlyMap<string, ChunkCoord>): boolean {
-  if (a.size !== b.size) return false;
-  for (const key of a.keys()) if (!b.has(key)) return false;
-  return true;
 }
 
 /** The terrain of `chunks`, from `held` when there, else the cache's, and the chunks missing. */
@@ -147,15 +158,18 @@ function fromCache(
 
 /**
  * The budget of terrain generations per period, and the queue of the clients that wait, served
- * first come, first served, with terrain held for its head alone.
+ * first come, first served, its head for a bounded turn, with terrain held for its head alone.
  */
 export class TerrainQueue {
   readonly #cache: TerrainCache;
   readonly #perPeriod: number;
+  readonly #turn: number;
   /** The clients that wait, in the order they arrived: the first is the head. */
   readonly #waiting = new Map<ClientId, Waiting>();
   /** The terrain held for the head, by chunk key: some of its needs, so at most MAX_VIEW_CHUNKS. */
   #held = new Map<string, EncodedText>();
+  /** The periods of its turn the head has had. */
+  #turnUsed = 0;
   #left: number;
 
   constructor(cache: TerrainCache, perPeriod = TERRAIN_PER_PERIOD) {
@@ -164,6 +178,7 @@ export class TerrainQueue {
     }
     this.#cache = cache;
     this.#perPeriod = perPeriod;
+    this.#turn = turnPeriods(perPeriod);
     this.#left = perPeriod;
   }
 
@@ -180,30 +195,40 @@ export class TerrainQueue {
   }
 
   /**
-   * Starts a period: the budget is whole again, and the clients that wait are served first, in the
-   * order they arrived, each until it needs nothing more, while the budget lasts. A generation that
-   * throws removes its client from the queue and reports it through `fault`; the queue goes on
-   * with the next client.
+   * Starts a period: the budget is whole again; a head whose turn is over goes to the back; and the
+   * head is served first, before any request. A generation that throws removes its client from the
+   * queue and reports it through `fault`, and the next client, the head now, is served instead.
    */
   period(fault: (client: ClientId, cause: unknown) => void): void {
     this.#left = this.#perPeriod;
+    if (this.#turnUsed >= this.#turn) this.#back();
+    let head = this.#first();
+    while (head !== undefined && this.#left > 0 && !this.#served(head, fault)) {
+      head = this.#first();
+    }
+    if (this.#waiting.size > 0) this.#turnUsed += 1;
+  }
+
+  /**
+   * Spends what is left of the period's budget, once the fan-out took its share: the clients that
+   * wait are served in the order they arrived, the head holding what it is served, those behind it
+   * finding theirs in the cache when they ask again. A generation that throws removes its client
+   * from the queue and reports it through `fault`; the queue goes on with the next client.
+   */
+  prefetch(fault: (client: ClientId, cause: unknown) => void): void {
     // A Map's iteration skips the entries deleted during it, so a client a fault removed is skipped.
-    for (const [client, waiting] of this.#waiting) {
+    for (const entry of this.#waiting) {
       if (this.#left === 0) return;
-      try {
-        this.#serve(client, waiting);
-      } catch (cause) {
-        this.remove(client);
-        fault(client, cause);
-      }
+      this.#served(entry, fault);
     }
   }
 
   /**
    * The terrain of every chunk of `chunks` for `client`, generated now while the period's budget
-   * lasts; or undefined while some chunk still waits, and the client then waits in the queue: in
-   * its place when it waited already for the same chunks, in any order, else at the back, with
-   * nothing held for it. Once it returns the terrain, the client leaves the queue.
+   * lasts, by the head of the queue, or by any client while none waits; or undefined while some
+   * chunk still waits, and the client then waits in the queue: in its place when it waited
+   * already, whatever it needs now, else at the back. The head's hold keeps only what it still
+   * needs. Once it returns the terrain, the client leaves the queue.
    */
   take(
     client: ClientId,
@@ -215,13 +240,16 @@ export class TerrainQueue {
       );
     }
     const needs = keyed(chunks);
-    const waiting = this.#waiting.get(client);
-    if (waiting !== undefined && !sameKeys(waiting.needs, needs)) this.remove(client);
-    const held = this.#isHead(client) ? this.#held : NOTHING_HELD;
-    const { found, missing } = fromCache(needs.values(), held, this.#cache);
+    const head = this.#isHead(client);
+    const { found, missing } = fromCache(
+      needs.values(),
+      head ? this.#held : NOTHING_HELD,
+      this.#cache,
+    );
+    const generates = head || this.#waiting.size === 0;
     const pending: ChunkCoord[] = [];
     for (const at of missing) {
-      if (this.#left > 0) found.set(chunkKey(at), this.#generate(at));
+      if (generates && this.#left > 0) found.set(chunkKey(at), this.#generate(at));
       else pending.push(at);
     }
     if (pending.length === 0) {
@@ -246,39 +274,71 @@ export class TerrainQueue {
     found: Map<string, EncodedText>,
   ): void {
     const waiting = this.#waiting.get(client);
-    if (waiting === undefined) this.#waiting.set(client, { needs, pending });
-    else waiting.pending = pending;
+    if (waiting === undefined) {
+      this.#waiting.set(client, { needs, pending });
+      if (this.#waiting.size === 1) this.#turnUsed = 0;
+    } else {
+      waiting.needs = needs;
+      waiting.pending = pending;
+    }
     if (this.#isHead(client)) this.#held = found;
+  }
+
+  /** The head's turn is over: it goes to the back, nothing held for it, and the next is the head. */
+  #back(): void {
+    const head = this.#first();
+    this.#turnUsed = 0;
+    if (head === undefined || this.#waiting.size === 1) return;
+    const [client, waiting] = head;
+    this.#waiting.delete(client);
+    this.#promote();
+    this.#waiting.set(client, waiting);
   }
 
   /** The next client is the head: it holds what the cache has of its needs, and waits for the rest. */
   #promote(): void {
     this.#held = new Map();
-    for (const waiting of this.#waiting.values()) {
-      const { found, missing } = fromCache(waiting.needs.values(), NOTHING_HELD, this.#cache);
-      this.#held = found;
-      waiting.pending = missing;
-      return;
-    }
+    this.#turnUsed = 0;
+    const next = this.#first();
+    if (next === undefined) return;
+    const [, waiting] = next;
+    const { found, missing } = fromCache(waiting.needs.values(), NOTHING_HELD, this.#cache);
+    this.#held = found;
+    waiting.pending = missing;
   }
 
   /**
-   * Serves `client` its pending chunks, from the cache or generated while the budget lasts; the
-   * head holds them, and a client behind it finds them in the cache when it asks again.
+   * Serves a client its pending chunks, from the cache or generated while the budget lasts; the
+   * head holds them. Returns false when a generation threw: the client is then removed and
+   * reported through `fault`.
    */
-  #serve(client: ClientId, waiting: Waiting): void {
+  #served(
+    [client, waiting]: [ClientId, Waiting],
+    fault: (client: ClientId, cause: unknown) => void,
+  ): boolean {
     const held = this.#isHead(client) ? this.#held : undefined;
-    for (let at = waiting.pending[0]; at !== undefined; at = waiting.pending[0]) {
-      const terrain = this.#cache.cached(at) ?? (this.#left > 0 ? this.#generate(at) : undefined);
-      if (terrain === undefined) return;
-      held?.set(chunkKey(at), terrain);
-      waiting.pending.shift();
+    try {
+      for (let at = waiting.pending[0]; at !== undefined; at = waiting.pending[0]) {
+        const terrain = this.#cache.cached(at) ?? (this.#left > 0 ? this.#generate(at) : undefined);
+        if (terrain === undefined) return true;
+        held?.set(chunkKey(at), terrain);
+        waiting.pending.shift();
+      }
+      return true;
+    } catch (cause) {
+      this.remove(client);
+      fault(client, cause);
+      return false;
     }
   }
 
+  #first(): [ClientId, Waiting] | undefined {
+    for (const entry of this.#waiting) return entry;
+    return undefined;
+  }
+
   #isHead(client: ClientId): boolean {
-    for (const head of this.#waiting.keys()) return head === client;
-    return false;
+    return this.#first()?.[0] === client;
   }
 
   #generate(at: ChunkCoord): EncodedText {

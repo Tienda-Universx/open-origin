@@ -8,10 +8,11 @@
  *
  * Each period, in a task of its own and never inside a step's callback, the playout hands the
  * mirror at most one published tick; a change of the world's state is announced to every client;
- * the terrain queue serves the clients that wait for terrain; the fan-out serves the clients in
- * rotating order within its budget of time: each one's pending messages, then the parts of its
- * transaction, within its budget of bytes and while its buffer has room; and the memory guard
- * aborts the clients that pin the oldest retained versions while they pass their limit.
+ * the terrain queue serves its head; the fan-out serves the clients in rotating order within its
+ * budget of time: each one's pending messages, then the parts of its transaction, within its budget
+ * of bytes and while its buffer has room; what is left of the terrain budget goes to the clients
+ * that wait for terrain; and the memory guard aborts the clients that pin the oldest retained
+ * versions while they pass their limit.
  *
  * A client's transaction starts only after its previous one committed, and only once the playout
  * tick passed that commit's, so a client that is up to date gets one commit per period. Every
@@ -368,8 +369,8 @@ export class Presentation {
   }
 
   /**
-   * One period: the playout's release, the world's state, the terrain queue, the fan-out, and the
-   * memory guard. A throw that is not one client's is a fault of the whole plane, whose state may
+   * One period: the playout's release, the world's state, the terrain queue's head, the fan-out,
+   * the rest of the terrain budget for the clients that wait, and the memory guard. A throw that is not one client's is a fault of the whole plane, whose state may
    * be inconsistent: the presentation stops and detaches, `failed` turns true, and the throw goes
    * on.
    */
@@ -378,8 +379,9 @@ export class Presentation {
     try {
       this.#playout.release((published) => this.#mirror.apply(published));
       this.#announce();
-      this.#terrain.period((client, cause) => this.#fault(this.#client(client), cause));
+      this.#terrain.period(this.#terrainFault);
       this.#fanOut();
+      this.#terrain.prefetch(this.#terrainFault);
       this.#guardRetention();
     } catch (cause) {
       this.#failed = true;
@@ -425,6 +427,11 @@ export class Presentation {
     }
     return unsubscribe;
   }
+
+  /** A queued generation of terrain threw: its client is dropped. */
+  readonly #terrainFault = (client: ClientId, cause: unknown): void => {
+    this.#fault(this.#client(client), cause);
+  };
 
   #client(id: ClientId): Client {
     const client = this.#clients.get(id);
