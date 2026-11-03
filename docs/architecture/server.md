@@ -882,6 +882,30 @@ frames the schema refuses; and `stop`. Then a probe connects over a real socket 
 of a model world in the test's process and prints two commits: the clock, the followed being, the
 nine chunks of its window, a greeting in the feed, and speech holding `<script>` shown as text.
 
+
+## Benchmarks
+
+Three manual benchmarks measure the budgets of plan §11 that tests cannot: `bench/projection.ts`,
+`bench/fanout.ts`, and `bench/load.ts`. They measure wall-clock time, so `bun test` and `check`
+never run them; `bench.test.ts` checks their arguments, statistics, budgets, and the core of each run
+with tiny parameters. Each prints the machine class (CPU model, logical cores, memory, and Bun's
+version) and the CPUs and nice value its processes run with, read from `/proc`. Percentiles are by
+nearest rank, as the server's status takes them. Run one at a time, each under a minute, while the
+load average is below 2, pinned to one CPU and at the lowest priority, as AGENTS.md lists them.
+
+### Projection
+
+```sh
+taskset -c 0 nice -n 19 bun apps/server/bench/projection.ts [default] [dense] [--ticks N]
+```
+
+Each tick is stepped with the engine's `step` and projected by `BeingsProjection`, as the host does,
+each timed apart. `default` is the default world of T5, ticks 101 to 20,100; `dense` is the beings
+benchmark's "dispersed 1,000" (1,000 beings under `utility@1`, one to a chunk, two chunks apart),
+ticks 101 to 6,400, one simulated day. It prints the step's and the projection's p50, p95, and
+p99, the projection's share of the step (the sum of its times over the sum of the step's), the
+chunks the step changed and the records published per tick, and the bytes of each published tick.
+
 ## Observer invariance
 
 `observer-invariance.test.ts` checks P9 (ADR 0005, control 1 as ADR 0025 refines it) through
