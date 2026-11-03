@@ -15,6 +15,7 @@ export type Config = {
   readonly durability: "ephemeral";
   /** The address the public listener binds: a loopback address in ephemeral mode. */
   readonly host: string;
+  /** The port it binds: 0 lets the system choose a free one, which the entry point reports. */
   readonly port: number;
   /** The fixed rate of the public universe, in ticks per real second. */
   readonly tickRateHz: number;
@@ -22,8 +23,11 @@ export type Config = {
   readonly publicationBatchTicks: number;
   /** The browser origins the public listener accepts, matched exactly. */
   readonly publicOrigins: readonly string[];
-  /** The values of the `Host` header the public listener accepts. */
-  readonly allowedHosts: readonly string[];
+  /**
+   * The values of the `Host` header the public listener accepts; unset, its own name and address
+   * at the port it bound, which the transport derives once it listens.
+   */
+  readonly allowedHosts: readonly string[] | undefined;
   /** The open public connections allowed in all, and from one IP address. */
   readonly connections: { readonly global: number; readonly perIp: number };
   /** The most bytes of replaced chunk versions that clients may keep pinned, in all (ADR 0026). */
@@ -106,8 +110,8 @@ const HOST: Variable<string> = {
   rule: "must be a loopback address (127.0.0.0/8 or ::1): an ephemeral server listens only on this machine",
 };
 const PORT: Variable<number> = {
-  schema: integerIn(1, MAX_PORT).default(8080),
-  rule: `must be an integer from 1 to ${MAX_PORT}`,
+  schema: integerIn(0, MAX_PORT).default(8080),
+  rule: `must be an integer from 0 to ${MAX_PORT}`,
 };
 const TICK_RATE: Variable<number> = {
   schema: integerIn(1, MAX_TICK_RATE_HZ).default(5),
@@ -164,12 +168,6 @@ class Reader {
   }
 }
 
-/** The `Host` header values a listener at `host:port` answers to when ALLOWED_HOSTS is unset. */
-function defaultAllowedHosts(host: string, port: number): string[] {
-  const address = host.includes(":") ? `[${host}]` : host;
-  return [`localhost:${port}`, `${address}:${port}`];
-}
-
 /**
  * The connection caps, or undefined when one of them is at fault. A cap per IP that was set must
  * not exceed the global cap; they are compared only when both were read, so a cap at fault reports
@@ -204,7 +202,7 @@ export function parseConfig(env: Environment): ConfigResult {
   const tickRateHz = reader.read("TICK_RATE_HZ", TICK_RATE, 1);
   const publicationBatchTicks = reader.read("PUBLICATION_BATCH_TICKS", BATCH_TICKS, 1);
   const publicOrigins = reader.read("PUBLIC_ORIGINS", ORIGINS, []);
-  const allowedHosts = reader.read("ALLOWED_HOSTS", HOSTS, []);
+  const allowedHosts = reader.read("ALLOWED_HOSTS", HOSTS, undefined);
   const global = reader.read("MAX_CONNECTIONS", GLOBAL_CAP, undefined);
   const perIp = reader.read("MAX_CONNECTIONS_PER_IP", PER_IP_CAP, undefined);
   const retainedBytes = reader.read("MAX_RETAINED_BYTES", RETAINED, DEFAULT_RETAINED_BYTES);
@@ -221,7 +219,7 @@ export function parseConfig(env: Environment): ConfigResult {
     tickRateHz,
     publicationBatchTicks,
     publicOrigins: Object.freeze(publicOrigins),
-    allowedHosts: Object.freeze(allowedHosts ?? defaultAllowedHosts(host, port)),
+    allowedHosts: allowedHosts === undefined ? undefined : Object.freeze(allowedHosts),
     connections: Object.freeze(connections),
     retainedBytes,
     aiMode,

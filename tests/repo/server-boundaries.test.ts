@@ -2,7 +2,7 @@
  * The boundary of the server's planes on its transitive import graph (ADR 0025, rules 1 to 4), and
  * the imports Biome cannot check in packages/scenarios/src and packages/protocol/src. The real tree
  * keeps every rule; each rule rejects a planted violation, direct and transitive, in a synthetic
- * tree whose legal version passes, so every rule is proved before transport/ exists.
+ * tree whose legal version passes, so every rule is proved whatever the real tree holds.
  */
 import { describe, expect, test } from "bun:test";
 import { REPO_ROOT, repoFiles } from "./files.ts";
@@ -111,6 +111,7 @@ describe("the server's planes", () => {
         `${SERVER_SRC}/world/host.ts`,
         `${SERVER_SRC}/world/published.ts`,
         `${SERVER_SRC}/adapters/timer.ts`,
+        `${SERVER_SRC}/transport/transport.ts`,
       ]),
     );
     expect(checkServerBoundaries(files)).toEqual([]);

@@ -5,17 +5,17 @@ rate, makes each tick durable before it publishes it, and hands the rest of the 
 published records. Its presentation plane turns those records into each client's view.
 [ADR 0025](../decisions/0025-real-time-world-host.md) and
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
-describes what the code implements as of T6-6b: the configuration, the scheduler, the world host
+describes what the code implements as of T6-7: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
 (playout, mirror, interest, transactions, sessions, the send discipline, the fan-out, and the
-limits of memory and terrain), their composition, and the test of observer invariance. The
-transport and the entry point (T6-7) arrive in a later batch.
+limits of memory and terrain), the transport, their composition, and the test of observer
+invariance.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
 `presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`,
-`presentation-terrain`, `presentation-liveness`, and `observer-invariance`), and
+`presentation-terrain`, `presentation-liveness`, `observer-invariance`, and `transport`), and
 `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
@@ -26,6 +26,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
 | `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
 | `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, `client.ts` (a client and its sink), `session.ts` (input limits), `view.ts` (the view's limit), `retention.ts` (the memory guard), `terrain.ts` (the terrain cache and queue), and `telemetry.ts` |
+| `src/transport/` | Presentation | `transport.ts` (`serveTransport`: the `Bun.serve` adapter), `http.ts` (routing and refusals), and `capacity.ts` (the connection caps) |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane; `composeServer(config, deps)`: both planes |
 
@@ -42,11 +43,11 @@ naming the variable and its rule, never its value.
 |---|---|---|
 | `OPEN_ORIGIN_DURABILITY` | none: required | Only `ephemeral`; anything else, or nothing, is refused with "no durable journal is available until T7" |
 | `OPEN_ORIGIN_HOST` | `127.0.0.1` | A loopback address, IPv4 `127.0.0.0/8` or `::1`. Names, `localhost` included, are refused: they resolve outside the check |
-| `OPEN_ORIGIN_PORT` | `8080` | An integer from 1 to 65535 |
+| `OPEN_ORIGIN_PORT` | `8080` | An integer from 0 to 65535; 0 lets the system choose a free port |
 | `TICK_RATE_HZ` | `5` | An integer from 1 to 1000, the bounds of the admin contract's `tickRateHz` |
 | `PUBLICATION_BATCH_TICKS` | `5` | F, an integer from 1 to 300, so a batch never spans more than one checkpoint interval |
 | `PUBLIC_ORIGINS` | empty | A comma-separated list of exact `http` or `https` origins |
-| `ALLOWED_HOSTS` | `localhost:<port>` and `<host>:<port>`, with an IPv6 host in brackets | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
+| `ALLOWED_HOSTS` | The listener's own: `localhost:<port>` and `<host>:<port>` at the port it bound, with an IPv6 host in brackets; the transport derives it once it listens, so port 0 works | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
 | `MAX_CONNECTIONS` | `1024` | An integer from 1 to 65536 |
 | `MAX_CONNECTIONS_PER_IP` | `16`, or `MAX_CONNECTIONS` when that is lower | An integer from 1 to 65536; when set, at most `MAX_CONNECTIONS`, compared only when both are valid, so a cap at fault is reported alone |
 | `MAX_RETAINED_BYTES` | `134217728` (128 MiB) | The limit of replaced chunk versions clients keep pinned, in all: an integer from 1,048,576 (1 MiB) to 17,179,869,184 (16 GiB) |
@@ -608,6 +609,61 @@ with the strict schema.
   period in silence until it commits; a transaction whose part waits says so with `TERRAIN_PENDING`,
   keeps its pins, and goes on once the terrain comes.
 
+## Transport
+
+`serveTransport(options)` (`src/transport/transport.ts`) is the public listener, a `Bun.serve`
+adapter. It reaches Bun through the global `Bun`, never an import of `bun`, so rule 2 of the
+boundary holds, and it drives the presentation through `connect`, `receive`, `drained`, and `close`
+only. Its options are the presentation, the address and port to bind (0 lets the system choose),
+`PUBLIC_ORIGINS`, `ALLOWED_HOSTS` or nothing, the connection caps, and the log.
+
+- **HTTP.** `http.ts` routes each request with a pure function, `route(facts, policy)`: the order
+  of its checks and its answers are the protocol's [HTTP surface](protocol.md#http-surface).
+  `capacity.ts` holds the caps: an upgrade takes a slot, in all and for its address, which
+  `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes.
+  Bun runs the open handler within `upgrade`, so two upgrades never pass a cap together.
+- **Socket limits.** `maxPayloadLength` is 4,096 bytes: Bun closes a larger frame with 1009 before
+  any of it reaches the presentation. A binary frame is closed with 1003. `backpressureLimit` is
+  1 MiB with `closeOnBackpressureLimit`, a backstop: the presentation keeps a buffer under about
+  320 KiB. `idleTimeout` is 120 s, with `sendPings`. Nothing is compressed.
+- **The sink.** `send` is `sendText`; `buffered()` is `getBufferedAmount()`; `end(ending)` marks the
+  socket ended and closes it with the ending's code (`closeCodeOf`): 1008 for strikes, 1013 for
+  slowness, and 1011 for a fault. The protocol fixes no code for a fault of the server, and 1011
+  is the WebSocket code for an internal error (ADR 0026).
+- **Lifecycle.** `drain` calls `drained`. A close gives the slot back and calls `close`, unless the
+  presentation ended the client itself. That call runs in a microtask: Bun runs a close handler
+  synchronously, even within a `sendText` the presentation makes, and the presentation must not
+  lose a client in the middle of serving it. A socket the presentation ended has its frames
+  ignored. A handler that throws is logged and its socket closed with 1011. `stop()` closes every
+  socket with 1001, then stops listening.
+- **Logs.** `refused` with the status and reason, `open` and `close` with the code and the count of
+  connections, `binary_frame` with its size, and `handler_error` with the error's name. Never an
+  address, a header, a payload, or an error's message, which could quote what a client sent.
+
+**Codespaces, unverified.** A Codespace forwards a port that listens on localhost. The plan relies
+on GitHub's documentation for two expectations: a forwarded port is private by default, and
+forwarded connections arrive from 127.0.0.1, so `MAX_CONNECTIONS_PER_IP` counts them together. T6-7
+measured neither, nor how the proxy sets `Host` on a forwarded request: that needs the forwarded URL
+from outside the machine, which T6-7 did not use. If the proxy keeps the browser's `Host`
+(`<name>-<port>.app.github.dev`), the default allowlist refuses it with 403, and a developer who
+wants it through adds that name to `ALLOWED_HOSTS`. Either way the port must stay private, which
+the server's warning at start says.
+
+`transport.test.ts` runs the listener on a free loopback port over a presentation of a model
+world, driven period by period. It checks `route` on a table of cases and `Capacity` on its own;
+the health check, 404 with no CORS header, and 426 before the upgrade; an `Origin` matched exactly
+and its absence accepted; a `Host` refused on every path; 503 with `Retry-After` at the cap of one
+address, with a second address, 127.0.0.2, still admitted, and at the global cap, until a socket
+closes; the close codes 1003, 1009 (a frame of 4,096 bytes passes), 1008, 1011 (a planted terrain
+fault), and 1001; a close that releases the client unless the presentation ended it; and logs that
+hold no address and nothing a client sent. Plan test 13 runs on real sockets: over one chunk of
+65,536 beings, about 6 MB, a client that stops reading (`pause()`) lags alone once loopback's
+buffers are full, while a client that reads does not; when it reads again, Bun's `drain` makes the
+presentation send it more before any other period runs; and no buffer passes 512 KiB. A second
+test pins the Bun behavior that relies on, with no code of the server: a paused client makes
+`send` return −1 past what loopback absorbs, and 16 MiB pushed arrive whole once it reads, after a
+`drain`.
+
 ## Composition
 
 `compose(config, deps)` wires a source (the default scenario unless given), the projection of its
@@ -709,8 +765,8 @@ that leaves `src/`, the server's own package name, an absolute path, a URL other
 rejected: a path or a URL would join the graph as a package, out of every rule's reach. The scan is
 lexical, so a string that reads like an import or names a WebSocket counts, and a `require` reached
 through another name (`const load = require`) is left to review. The real tree, `presentation/`
-included, keeps every rule, and each rule is also proved on planted trees whose legal version
-passes; `transport/` arrives in T6-7. The same
+and `transport/` included, keeps every rule, and each rule is also proved on planted trees whose
+legal version passes. The same
 reader rejects, in `packages/scenarios/src` and `packages/protocol/src`, a relative path that leaves
 `src`, a type-level `import()`, a `require()` or `import.meta.require()`, a computed specifier, and a
 triple-slash reference directive, which their Biome rules cannot see.

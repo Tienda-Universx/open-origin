@@ -94,6 +94,7 @@ Every message carries `type`, `seq`, and `tick`, defined under Ordering and live
 | 1008 | Strikes |
 | 1009 | Size |
 | 1013 | Too slow for its interest |
+| 1011 | The server failed in serving the client: the WebSocket code for an internal error, chosen in T6-7 |
 | 1001 | Shutdown |
 
 Capacity is refused at the upgrade, with HTTP 503 and `Retry-After`.
@@ -236,7 +237,7 @@ per tick and shared by all clients.
 | Connections | 1,024 in all and 16 per IP, both configurable, refused at the upgrade |
 | Idle | `idleTimeout` 120 s, with `sendPings` |
 | Origin | Exact match against `PUBLIC_ORIGINS`. A request without `Origin` is accepted, for non-browser tools |
-| Host | Must be on an allowlist |
+| Host | Must be on an allowlist; any request with another, or none, gets 403 on every path |
 | Send per client and period | At most 256 KB, counting every message to that client (parts, commits, `pong`, `status`, `error`, `notice`, `abort`, and sends that `drain` triggers), and only while `getBufferedAmount()` is under 256 KB, so a client's buffer never passes 512 KB |
 | Fan-out | At most 40 ms per period across all clients. Clients that do not fit wait for the next period, in rotating order |
 | Bun's own limit | `backpressureLimit` 1 MB, with `closeOnBackpressureLimit` |
