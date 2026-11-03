@@ -15,7 +15,8 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
 `presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`,
-`presentation-terrain`, `presentation-liveness`, `observer-invariance`, `transport`, and `main`),
+`presentation-terrain`, `presentation-liveness`, `observer-invariance`, `transport`, `ws-world`,
+and `main`),
 `tests/e2e/server.test.ts`, and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
@@ -787,6 +788,31 @@ chunk it enters, of both, and its follower. After every commit each view equals 
 published at the commit's tick, and the crossing falls between two of each client's commits: the
 being leaves one chunk and enters the other in one transaction, and the follower's window moves
 with it.
+
+The run and the comparison live in `test/support/invariance.ts`. `ws-world.test.ts` shares them for
+the variant over real sockets: the subject world runs 40 ticks behind the real transport on a free
+loopback port, and ten clients of Bun's WebSocket act between periods, the test waiting after each
+until every frame, each way, arrived. Every tick and the final snapshot equal a run with no client.
+The clients are:
+
+- two calm clients of the subject's chunks, which see the same ticks and the same views, each the
+  published world at its commit's tick (plan tests 1 and 2);
+- a client of a distant region, which floods the bucket of new chunks once, with one strike, and
+  then hears the same feed as the calm ones (plan test 10);
+- a follower that follows a being the world does not hold (`unknown_being`, no strike), then
+  churns camera and followed being at random, pings, and resyncs;
+- a client that stops reading for ten periods and catches up, consistent at every commit, and one
+  that leaves and comes back to a new `hello` and a reset;
+- the hostile battery (plan test 12): a binary frame closed with 1003, a frame over 4 KiB closed with
+  1009, bad JSON, `__proto__`, and a type that would pause the world, closed with 1008 on the third
+  strike, and 25 pings at once, 20 answered and the rest refused until 1008.
+
+The same file scans the bytes real sockets carried (plan test 11): every frame of every client
+parses with the strict schemas, the calm clients heard greetings and tells, and no frame holds a
+taint, a seal, a checksum, or the state root of the subject, after its research injection; a run of
+the canary world through the same transport, watched and its sitter followed, holds none of its
+canaries, seeds, seals, or state root either. The helpers of the scan live in
+`test/support/leak.ts`, which `leak.test.ts` shares.
 
 Three permanent negative controls are test doubles injected through `compose`'s dependencies, never
 production code:
