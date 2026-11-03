@@ -9,14 +9,15 @@ describes what the code implements as of T6-8: the configuration, the scheduler,
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
 (playout, mirror, interest, transactions, sessions, the send discipline, the fan-out, and the
 limits of memory and terrain), the transport, their composition, the entry point, the tests of
-observer invariance, and the terminal probe.
+observer invariance, the terminal probe, and the benchmarks with the budgets they measured.
 
-Code: `apps/server/src/` (`@open-origin/server`) and `apps/server/tools/` (the probe). Tests:
-`apps/server/test/` (`config`, `scheduler`, `fault`, `adapters`, `publication`, `host`,
-`rejection`, `compose`, `projection`, `leak`, `presentation-mirror`, `presentation`,
-`presentation-reconstruction`, `presentation-sizes`, `presentation-input`,
-`presentation-backpressure`, `presentation-limits`, `presentation-terrain`,
-`presentation-liveness`, `observer-invariance`, `transport`, `ws-world`, `main`, and `probe`),
+Code: `apps/server/src/` (`@open-origin/server`), `apps/server/tools/` (the probe), and
+`apps/server/bench/` (the benchmarks). Tests: `apps/server/test/` (`config`, `scheduler`, `fault`,
+`adapters`, `publication`, `host`, `rejection`, `compose`, `projection`, `leak`,
+`presentation-mirror`, `presentation`, `presentation-reconstruction`, `presentation-sizes`,
+`presentation-input`, `presentation-backpressure`, `presentation-limits`, `presentation-terrain`,
+`presentation-liveness`, `observer-invariance`, `transport`, `ws-world`, `main`, `probe`, and
+`bench`),
 `tests/e2e/server.test.ts`, and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
@@ -982,6 +983,77 @@ the spawn area: the milliseconds and bytes from that `subscribe` to the commit t
 
 The driver refuses to start while the load average is 2 or more, stops a run when it stays above 2
 for 15 s, and stops its children, killing any that does not exit within 5 s.
+
+
+### Measured budgets
+
+Measured on 2026-11-03 with the code of `48c5973`, on a GitHub Codespace: an AMD EPYC 7763, 2 logical
+cores, 7.8 GiB of memory, and Bun 1.4.4. **Every process of every run, the benchmark, the server,
+and the clients alike, ran on CPU 0 alone at nice 19** (`taskset -c 0 nice -n 19`): half the
+machine, shared with the editor's own processes, and in `load.ts` the server and up to 1,000 clients
+share that one core. The numbers are pessimistic for this machine and promise nothing of another;
+compare runs on one machine only. The load average stayed under 1 in every run of `load.ts`.
+
+| Budget (plan §11) | Measured | Verdict |
+|---|---|---|
+| Server tick (step, projection, journal), default world: p99 ≤ 20 ms | Over each run's window of 20 s: p99 0.68, 2.53, 3.04, and 1.71 ms with 1, 10, 100, and 1,000 clients (p50 0.25 to 0.29 ms). The status's `stepMicros`: p99 35.9 to 38.9 ms, the second-slowest tick of the about 115 to 170 a run held, before its window: the boot, the ramp, or the sync (`load.ts`) | Met over the window; the status's own p99 misses while its 1,024 ticks hold the boot, which leaves them after 3.4 minutes at 5 Hz |
+| Fan-out per period: p99 ≤ 5 ms with 100 clients; a target of 40 ms with 1,000 | 100 clients, 100 periods: 4.71 on one chunk, 25.49 following one being, 40.57 panning, and 4.85 ms on the dense chunk; a second run 7.99, 21.09, and 7.83 ms (panning not run again); over 500 periods 5.10, 21.69, 40.07, and 8.54 ms. 1,000 clients: 26.63, 44.79, 46.95, and 30.17 ms (`fanout.ts`). The real server's status with 100 clients on 9 chunks each, since boot: 40.8 and 70.6 ms (`load.ts`) | Missed with 100 clients: on one chunk and on the dense chunk the p99 straddles the budget (4.71 to 8.54 ms over three runs), and following a being or panning exceeds it four to eight times. With 1,000, met on one chunk and on the dense chunk; following and panning reach the fan-out's own budget of 40 ms, which defers up to 883 and 956 clients to the next period |
+| Projection of changed chunks: p99 ≤ 2 ms on the default world; ≤ 10 % of the step in dispersed 1,000 | 0.69 ms over 20,000 ticks; 8.33 % over 2,000 ticks (its p99 4.40 ms, the step's p50 13.4 ms) (`projection.ts`) | Met; met |
+| Playout to receipt, localhost: p99 ≤ 50 ms with 100 clients | 15.10 and 27.15 ms in two runs; 1.98 with 1 client, 5.03 with 10, and 40.02 with 1,000 (`load.ts`) | Met |
+| Publication delay, E to playout: ≤ 2F ticks and an acknowledgement (≈2 s in ephemeral mode) | E ran 4 ticks ahead of the played-out tick at p50 and p99, 5 at most, with 1 to 1,000 clients: 0.8 to 1.0 s (`load.ts`) | Met; the estimate of 2 s is a bound, and the delay is half of it |
+| Rate per client: at most 1 commit a period, no bursts; exactly 1 in the steady state | No client got a commit within half a period of its last in any run, nor two in one period (`fanout.ts`). Commits per client and period: 1.000 with 1 and 10 clients, 1.000 and 0.962 with 100, 0.485 and 0.511 with 1,000 (`load.ts`) | At most 1: met. Exactly 1: met to 10 clients; with 1,000 on one core shared with them, the fan-out's 40 ms serves about half the clients a period |
+| Memory per client: ≤ 64 KB at rest; its queue ≤ 1 MB | Resident memory per client at rest, after a full collection: 59.6 and 51.0 KiB with 100 clients, 29.2 and 31.2 KiB with 1,000; heap 17.0 and 8.1 KiB. With 1 and 10 clients the difference is the process's own growth (3.3 to 6.5 MiB, 0.7 MiB) and says nothing per client (`load.ts`) | At rest: met with 100 and 1,000. The queue: not measured, since no run makes a client lag; the outbox of at most 13 messages and the buffer under 320 KiB are held by tests |
+| Terrain: ≤ 16 chunks generated a period (≈8 ms), a fair queue, an LRU of 2,048 | The 64 uncached chunks of the sync entered in 4 commits, one a period (`load.ts --sync`) | Not measured as a cost; the cap, the queue, and the LRU are held by tests (`presentation-terrain`) |
+| Sync of 64 chunks, default world (≈450 KB estimated): ≤ 1 s with uncached terrain | 822.7 and 828.2 ms in two runs; 799,966 bytes from the `subscribe` to the commit (`load.ts --sync`) | Met. The estimate is corrected: 781 KiB, not 450 KB |
+| Delta per client, default world: median ≤ 1 KB, p99 ≤ 8 KB | Every client on one chunk: 92 B and 312 B over 100 periods, 95 B and 330 B over 500. Following one being: 92 to 93 B and 315 to 464 B, 95 B and 527 B over 500 (`fanout.ts`) | Met |
+| Resynchronization: as the sync, the previous view consistent meanwhile | Not measured apart: the sync of 64 uncached chunks bounds a resync whose terrain the LRU evicted, and a resync of cached terrain waits for none | Not measured |
+| Scenarios of 1, 10, 100, and 1,000 spectators, the cap per address raised by configuration | All four ran, in `load.ts` and `fanout.ts`, with no client refused, closed for slowness or strikes, aborted, or faulted | Measured |
+| Being record ≤ 256 B; part ≤ 64 KB; ≤ 256 KB a client and period, buffer ≤ 512 KB; view ≤ 32 MB; retained versions ≤ 128 MB; the largest chunks and view of `beings@2` and `beings@1`; input limits | Held by the tests the plan names for them, not by a benchmark. The most a client got in a period in `fanout.ts`: 110 KiB (p99, panning, 1,000 clients) | Not measured by a benchmark |
+| CI: T6 adds ≤ 3 s to the parallel step, each step ≤ 70 s | Measured by the CI of each pull request | Not measured here |
+
+Not measured either, and why:
+
+- **The terrain a lagging client holds** (tracker L73: at most 64 KiB of terrain text, down from
+  905,273 B): no benchmark makes a client stop reading while its transaction's terrain is evicted,
+  and a process's resident memory cannot single one client out. Tests hold the bound.
+- **Clients beyond 1,000, and several machines.** Nothing was run past 1,000 clients, nor with the
+  server and its clients on cores of their own.
+
+What the runs show besides the budgets:
+
+- The world plane keeps its time under every load measured: its tick stays under 3.1 ms at p99
+  whatever the clients do, and the fan-out delays it within a period (lateness p50 39.5 ms and p99
+  45.2 ms with 1,000 clients). Plan §12's trigger for a Worker, a tick p99 above half a period, is
+  far off.
+- Following a being costs about seven times as much per client as watching one chunk (fan-out p50
+  4.85 against 0.66 ms with 100 clients).
+- Past 40 ms the fan-out defers clients rather than delay the world: with 1,000 clients each one
+  commits about every other period, and none is closed.
+
+The tables the runs printed, condensed (times in ms):
+
+| `projection.ts` | Ticks | Step p50 / p95 / p99 | Projection p50 / p95 / p99 | Share | Records a tick, p50 / max | Bytes a tick, p50 / p99 |
+|---|---|---|---|---|---|---|
+| default | 20,000 | 0.025 / 1.468 / 4.527 | 0.004 / 0.244 / 0.689 | 17.07 % | 0 / 8 | 97 / 388 |
+| dense (dispersed 1,000) | 2,000 | 13.429 / 31.114 / 46.079 | 1.117 / 2.898 / 4.398 | 8.33 % | 32 / 78 | 4,951 / 10,741 |
+
+| `fanout.ts`, 100 periods | Clients | Sync periods | Fan-out p50 / p99 | Bytes a client and period, p50 / p99 | Client-periods with a commit | Most deferred |
+|---|---|---|---|---|---|---|
+| same-chunk | 1 / 10 / 100 / 1,000 | 1 / 1 / 1 / 4 | 0.047 / 1.085; 0.179 / 2.959; 0.662 / 4.706; 7.439 / 26.628 | 92 / 312 | 100 % to 100; 99.7 % | 0; 271 with 1,000 |
+| same-followed | 1 / 10 / 100 / 1,000 | 1 / 1 / 2 / 12 | 0.077 / 3.669; 0.360 / 4.660; 4.851 / 25.492; 40.025 / 44.786 | 92 / 315 to 464 | 100 % to 10; 99.7 %; 80.2 % | 30; 883 |
+| churn | 1 / 10 / 100 / 1,000 | 1 / 1 / 1 / 4 | 0.265 / 8.756; 2.457 / 14.808; 14.265 / 40.565; 40.198 / 46.945 | 37,656 / 37,662 to 112,576; p50 0 with 1,000, most deferred | 100 % to 10; 99.2 %; 11.5 % | 44; 956 |
+| dense-chunk | 1 / 10 / 100 / 1,000 | 1 / 1 / 2 / 12 | 0.063 / 2.068; 0.165 / 3.249; 1.289 / 4.852; 8.833 / 30.165 | 91 / 418 | 100 % | 0 |
+
+| `load.ts` | Ramp and sync s | Tick, window p50 / p99 | Tick, status p99 | Fan-out (status) p50 / p99 | Playout to receipt p50 / p95 / p99 | Commits a client and period | RSS / heap a client KiB |
+|---|---|---|---|---|---|---|---|
+| 1 client | 0.2 | 0.282 / 0.680 | 37.908 | 0.275 / 2.430 | 0.509 / 1.718 / 1.982 | 1.000 | (3,364 / 267: no per-client meaning) |
+| 10 clients | 0.4 | 0.267 / 2.529 | 35.888 | 0.951 / 13.931 | 1.194 / 3.237 / 5.028 | 1.000 | (699 / 55: no per-client meaning) |
+| 100 clients | 1.2 | 0.293 / 3.035 | 36.907 | 8.375 / 70.598 | 5.055 / 12.131 / 27.148 | 0.962 | 51.0 / 17.0 |
+| 1,000 clients | 10.4 | 0.250 / 1.705 | 38.936 | 40.112 / 42.855 | 21.120 / 38.514 / 40.020 | 0.511 | 31.2 / 8.1 |
+
+The `load.ts` rows are the second run of each; the first, before the delay of publication was
+measured, gave with 100 clients a latency p99 of 15.10 ms, commits 1.000 a period, and 59.6 KiB a
+client, and with 1,000 clients 40.04 ms, 0.485, and 29.2 KiB. The sync took 822.7 and 828.2 ms.
 
 ## Observer invariance
 
