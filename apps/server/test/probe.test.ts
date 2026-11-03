@@ -13,7 +13,7 @@ import {
   initialClientState,
   reconnectDelayMs,
 } from "@open-origin/protocol/public";
-import { frameText, helloFrame, statusFrame } from "../src/presentation/frames.ts";
+import { errorFrame, frameText, helloFrame, statusFrame } from "../src/presentation/frames.ts";
 import { serveTransport, type Transport } from "../src/transport/transport.ts";
 import {
   DEFAULT_URL,
@@ -84,7 +84,8 @@ describe("the sanitizer", () => {
         { at: [0, 0], speech: { tick: 2, speaker: 2, to: 1, act: "tell", text: "a\u202Eb" } },
       ],
       feed: [],
-      counts: { commits: 0, anomalies: 0, badFrames: 0, resyncs: 0, reconnects: 0 },
+      counts: { commits: 0, anomalies: 0, errors: 0, badFrames: 0, resyncs: 0, reconnects: 0 },
+      lastError: undefined,
     });
     const lines = screen.split("\n");
     expect(lines).toContain('  t1  #1 to #2  greet  in 0,0  "\\u{1B}[2J<script>"');
@@ -305,6 +306,19 @@ describe("the probe's connection", () => {
     expect(probe.counts).toMatchObject({ anomalies: 2, resyncs: 2 });
   });
 
+  test("shows at once the code of the last error the server sent", () => {
+    const link = new FakeLink();
+    const probe = new Probe(OPTIONS, link.deps);
+    probe.start();
+    link.socket.events.open();
+    link.socket.events.message(helloText(3));
+    link.socket.events.message(frameText(errorFrame(3, "unknown_being"), 1));
+    expect(probe.counts.errors).toBe(1);
+    expect(link.screens.at(-1)?.split("\n")).toContain(
+      "errors from the server: 1, the last unknown_being",
+    );
+  });
+
   test("counts a frame the schema refuses and applies nothing of it", () => {
     const link = new FakeLink();
     const probe = new Probe(OPTIONS, link.deps);
@@ -394,6 +408,9 @@ describe("the probe against a server in this process", () => {
     expect(lines).toContain("  0,0  v0  1 beings");
     expect(lines).toContain('  t2  #1 to #1  greet  in 0,0  "<script>hi</script>"');
     expect(lines).toContain("  t1  greeting  #1 to #1 in 0,0");
-    expect(lines.at(-1)).toBe("commits 2  anomalies 0  bad frames 0  resyncs 0  reconnects 0");
+    expect(lines.slice(-2)).toEqual([
+      "errors from the server: 0",
+      "commits 2  anomalies 0  bad frames 0  resyncs 0  reconnects 0",
+    ]);
   });
 });

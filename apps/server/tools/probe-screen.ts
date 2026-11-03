@@ -72,10 +72,13 @@ export type ScreenInput = {
   readonly counts: {
     readonly commits: number;
     readonly anomalies: number;
+    readonly errors: number;
     readonly badFrames: number;
     readonly resyncs: number;
     readonly reconnects: number;
   };
+  /** The code of the last `error` the server sent, if any. */
+  readonly lastError: string | undefined;
 };
 
 /** The most rows each list of the screen shows; the rest are counted. */
@@ -158,6 +161,7 @@ export function screenLines(input: ScreenInput): string[] {
     ...capped("speech", input.speech.map(speechLine), true),
     ...capped("feed", input.feed.map(feedLine), true),
     `left out by the view's limit: ${trimmed}`,
+    `errors from the server: ${counts.errors}${input.lastError === undefined ? "" : `, the last ${input.lastError}`}`,
     `commits ${counts.commits}  anomalies ${counts.anomalies}  bad frames ${counts.badFrames}  resyncs ${counts.resyncs}  reconnects ${counts.reconnects}`,
   ];
 }

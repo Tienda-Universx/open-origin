@@ -31,6 +31,7 @@ import {
   parseServerMessage,
   RESYNC_INTERVAL_MS,
   reconnectDelayMs,
+  type ServerMessage,
   STALE_AFTER_MS,
   SubscribeMessage,
 } from "@open-origin/protocol/public";
@@ -201,6 +202,9 @@ export type ProbeDeps = {
   readonly show: (screen: string) => void;
 };
 
+/** The messages besides a commit that change the screen at once. */
+const SHOWN_AT_ONCE: ReadonlySet<ServerMessage["type"]> = new Set(["hello", "notice", "error"]);
+
 /** How many items of speech and of the feed the probe keeps: what one screen shows. */
 const KEPT = ROWS;
 
@@ -223,7 +227,16 @@ export class Probe {
   #lastResync = Number.NEGATIVE_INFINITY;
   #speech: ShownSpeech[] = [];
   #feed: FeedItem[] = [];
-  readonly counts = { commits: 0, anomalies: 0, badFrames: 0, resyncs: 0, reconnects: 0 };
+  readonly counts = {
+    commits: 0,
+    anomalies: 0,
+    errors: 0,
+    badFrames: 0,
+    resyncs: 0,
+    reconnects: 0,
+  };
+  /** The code of the last `error` the server sent, such as `unknown_being`. */
+  #lastError: string | undefined;
   readonly done: Promise<void>;
   #resolveDone: () => void = () => undefined;
 
@@ -320,17 +333,28 @@ export class Probe {
     const { message } = parsed;
     const applied = applyMessage(this.#state, message);
     this.#state = applied.state;
+    this.#note(message, applied.anomaly !== undefined);
+    this.#resyncWhenAllowed();
+    if (applied.committed !== undefined) this.#committed(applied.committed);
+    else if (SHOWN_AT_ONCE.has(message.type)) this.#show();
+  }
+
+  /**
+   * What `message` changes besides the view: a hello starts the backoff over and forgets a resync
+   * asked on the connection before; an anomaly asks for a resync; an error is counted and kept.
+   */
+  #note(message: ServerMessage, anomaly: boolean): void {
     if (message.type === "hello") {
       this.#attempt = 0;
       this.#wantResync = false;
     }
-    if (applied.anomaly !== undefined) {
-      this.counts.anomalies += 1;
-      this.#wantResync = true;
+    if (message.type === "error") {
+      this.counts.errors += 1;
+      this.#lastError = message.code;
     }
-    this.#resyncWhenAllowed();
-    if (applied.committed !== undefined) this.#committed(applied.committed);
-    else if (message.type === "hello" || message.type === "notice") this.#show();
+    if (!anomaly) return;
+    this.counts.anomalies += 1;
+    this.#wantResync = true;
   }
 
   /** Sends `resync` once an anomaly asked for one and RESYNC_INTERVAL_MS passed since the last. */
@@ -360,6 +384,7 @@ export class Probe {
         speech: this.#speech,
         feed: this.#feed,
         counts: this.counts,
+        lastError: this.#lastError,
       }),
     );
   }

@@ -850,9 +850,12 @@ does not know, or gives twice (but `--chunk`), exits with 2 and the usage.
 A screen shows the link, the world's id, durability, and state, the clock of the last commit (its
 tick, day, and thousandths of the day), the followed being, the visible chunks with their version
 and count of beings, the beings, the last 16 items of speech and of the feed, the chunks the view's
-limit left out (the last `notice`), and its counts of commits, anomalies, frames the strict schema
-refused, resyncs, and reconnects. On a terminal it redraws in place; otherwise it prints each
-screen after a blank line.
+limit left out (the last `notice`), the count of `error` messages and the last one's code, and its
+counts of commits, anomalies, frames the strict schema refused, resyncs, and reconnects. On a
+terminal it redraws in place; otherwise it prints each screen after a blank line. A `follow` of a
+being the world does not hold yet, as right after a start, before the spawns of tick 1 are played
+out, gets `unknown_being`, which the screen shows; the probe asks again only on its next
+connection.
 
 It behaves as ADR 0026 asks of a client:
 
@@ -879,7 +882,7 @@ text is not the probe's only defense.
 line feed, U+202E, U+2028, U+200D, a lone surrogate, a tag, and a backslash), at both ends of
 every range of `FORBIDDEN_CODE_POINTS` and of the surrogates, and just outside them; the arguments; the backoff, 7.5 s after a 503 at the test's draw of 0.5, and
 its reset at `hello`; a socket given up that cannot act; the silence of 3 s; one `resync` per 2 s;
-frames the schema refuses; and `stop`. Then a probe connects over a real socket to a presentation
+frames the schema refuses; an `error`, shown at once; and `stop`. Then a probe connects over a real socket to a presentation
 of a model world in the test's process and prints two commits: the clock, the followed being, the
 nine chunks of its window, a greeting in the feed, and speech holding `<script>` shown as text.
 
