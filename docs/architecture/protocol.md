@@ -114,10 +114,18 @@ What the server sends besides transactions:
   anything else; `hello` carries the state at connection. While the world is not running, a client
   that gets nothing else in a period, and is not lagging, gets `status` again, so a client of a
   stopped world that keeps up does not take the silence for a lost connection.
+- **`notice`** lists the chunks the view's limit left out when a transaction starts, when they
+  changed and are some. The server measures a view, at the transaction's tick, as the bytes of each
+  chunk's being records, a comma between two of them, and the widest terrain, 12,401 bytes, and
+  keeps the longest prefix of the interest within `maxViewBytes`: the follow window first, the
+  followed being's chunk first in it, then the camera in the order the client sent it.
+- **`abort`** cancels a transaction the server's memory guard took back; the next transaction is a
+  reset when the client's view went with it. A client aborted three times within 60 s is closed
+  with 1013.
 - **Answers that wait.** A message goes out only while the client's socket buffers less than
-  256 KiB and within the period's budget of 256 KiB. While a client does not read, a newer `pong`
-  or `status` replaces the one that waits, and an `error` waits once per code: a client that pings
-  faster than it reads gets the newest nonce.
+  256 KiB and within the period's budget of 256 KiB. While a client does not read, a newer `pong`,
+  `status`, or `notice` replaces the one that waits, and an `error` waits once per code: a client
+  that pings faster than it reads gets the newest nonce.
 
 ### Field classes
 

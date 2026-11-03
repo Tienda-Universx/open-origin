@@ -8,19 +8,23 @@
  * buffer stays under BUFFER_BYTES plus one message: always within 512 KiB.
  *
  * Messages that are not parts of a transaction wait in an outbox, which goes before any part. The
- * outbox stays small whatever the client sends while it does not read: a pending `pong` or
- * `status` is replaced by a newer one, and an `error` is queued once per code, so it holds at most
- * hello, one abort, and one message of each other kind.
+ * outbox stays small whatever the client sends while it does not read: a pending `pong`, `status`,
+ * or `notice` is replaced by a newer one, and an `error` is queued once per code, so it holds at
+ * most hello, one abort, and one message of each other kind.
  */
 import { CLOSE_CODES, type ErrorCode } from "@open-origin/protocol/public";
 import { type Frame, frameBytes, frameText } from "./frames.ts";
 import type { ClientId } from "./interest.ts";
 import type { Mirror } from "./mirror.ts";
-import { Session } from "./session.ts";
+import { RecentEvents, Session } from "./session.ts";
 import type { Transaction, ViewState } from "./txn.ts";
 
 /** The buffered bytes at or above which a client gets nothing: 256 KiB. */
 export const BUFFER_BYTES = 256 * 1024;
+
+/** How long a memory-guard abort counts, and how many close the client with 1013. */
+export const ABORT_WINDOW_MICROS = 60_000_000;
+export const ABORTS_TO_CLOSE = 3;
 
 /**
  * Why the presentation ended a connection. `strikes` and `too_slow` carry the close code the
@@ -35,6 +39,10 @@ export type Ending =
 export const STRIKES_ENDING: Ending = Object.freeze({
   reason: "strikes",
   code: CLOSE_CODES.strikes,
+});
+export const TOO_SLOW_ENDING: Ending = Object.freeze({
+  reason: "too_slow",
+  code: CLOSE_CODES.tooSlow,
 });
 
 /** Where a client's messages go: the transport's socket, or a test's double. */
@@ -51,7 +59,7 @@ export interface ClientSink {
 }
 
 /** The outbox slot of a message that coalesces with the pending one of its kind. */
-export type Slot = "pong" | "status" | `error:${ErrorCode}`;
+export type Slot = "pong" | "status" | "notice" | `error:${ErrorCode}`;
 
 /** A message that waits in the outbox, and its slot, if it coalesces. */
 type Queued = { readonly frame: Frame; readonly slot: Slot | undefined };
@@ -65,12 +73,18 @@ export class Client {
   readonly sink: ClientSink;
   readonly view: ViewState;
   readonly session: Session;
+  /** The aborts of the memory guard that still count toward closing it. */
+  readonly aborts = new RecentEvents(ABORT_WINDOW_MICROS);
   /** The `seq` of its next message. */
   seq = 0;
   /** The id of its next transaction. */
   nextTxn = 0;
   /** The period of its last commit: no transaction starts in it, so none commits twice in one. */
   committedIn = -1;
+  /** The last period in which a transaction tried to start and waited. */
+  triedIn = -1;
+  /** The keys of the chunks the last `notice` listed, joined; empty when nothing is trimmed. */
+  trimmed = "";
   txn: Transaction | undefined = undefined;
   readonly #outbox: Queued[] = [];
   /** The period whose budget `#left` holds, and how many bytes of it are left. */

@@ -7,15 +7,15 @@ published records. Its presentation plane turns those records into each client's
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
 describes what the code implements as of T6-6b: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
-(playout, mirror, interest, transactions, sessions, the send discipline, and the fan-out), their
-composition, and the test of observer invariance. The limits of memory and terrain, the transport,
-and the entry point (T6-7) arrive later.
+(playout, mirror, interest, transactions, sessions, the send discipline, the fan-out, and the
+limits of memory and terrain), their composition, and the test of observer invariance. The
+transport and the entry point (T6-7) arrive in a later batch.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
-`presentation-sizes`, `presentation-input`, `presentation-backpressure`, and `observer-invariance`),
-and `tests/repo/server-boundaries.test.ts`.
+`presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`, and
+`observer-invariance`), and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -24,7 +24,7 @@ and `tests/repo/server-boundaries.test.ts`.
 | `src/config/` | — | `parseConfig`: the environment, parsed and deep-frozen |
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
 | `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
-| `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, `client.ts` (a client and its sink), `session.ts` (input limits), `terrain.ts`, and `telemetry.ts` |
+| `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, `client.ts` (a client and its sink), `session.ts` (input limits), `view.ts` (the view's limit), `retention.ts` (the memory guard), `terrain.ts` (the terrain cache and queue), and `telemetry.ts` |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane; `composeServer(config, deps)`: both planes |
 
@@ -48,6 +48,7 @@ naming the variable and its rule, never its value.
 | `ALLOWED_HOSTS` | `localhost:<port>` and `<host>:<port>`, with an IPv6 host in brackets | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
 | `MAX_CONNECTIONS` | `1024` | An integer from 1 to 65536 |
 | `MAX_CONNECTIONS_PER_IP` | `16`, or `MAX_CONNECTIONS` when that is lower | An integer from 1 to 65536; when set, at most `MAX_CONNECTIONS`, compared only when both are valid, so a cap at fault is reported alone |
+| `MAX_RETAINED_BYTES` | `134217728` (128 MiB) | The limit of replaced chunk versions clients keep pinned, in all: an integer from 1,048,576 (1 MiB) to 17,179,869,184 (16 GiB) |
 | `AI_MODE` | `off` | Only `off`: any other value refuses to start until T9 |
 
 Integers are plain decimal text: no sign, fraction, exponent, or leading zero. With `CODESPACES=true`
@@ -247,8 +248,8 @@ chooses one).
 
 A throw while serving one client, from its sink's `send`, the terrain, the start of its
 transaction, or the reading of one of its messages, drops that client alone: its interest, pins,
-and transaction go, the drop is counted as `faults` (C3), and its sink's `end` gets the fault. The
-period goes on with the next client. Any other throw of a period, from the playout, the
+transaction, and terrain go, the drop is counted as `faults` (C3), and its sink's `end` gets the
+fault. The period goes on with the next client. Any other throw of a period, from the playout, the
 mirror, or a drop, is a fault of the whole plane, whose state may be inconsistent: the presentation
 stops, `usage().failed` turns true, and the throw goes on to the runtime. `stop()` stops the
 periods and unsubscribes from the world plane for good, so a stopped presentation receives no
@@ -263,7 +264,8 @@ its own, never inside a step's callback: the playout hands the mirror the oldest
 when more than F wait, every waiting tick in order, and the period releases the newest; the rings
 still receive every tick. `start()` runs a period every `1/TICK_RATE_HZ` seconds on the injected
 timer, and a period that ran late resets the schedule rather than catching up. Then a period
-announces a change of the world's state and runs the fan-out.
+announces a change of the world's state, serves the terrain queue, runs the fan-out, and checks the
+retained versions, in that order.
 
 ### Mirror
 
@@ -277,8 +279,8 @@ The mirror applies the boot record, then each released tick, in order.
   and shared.
 - **Pins.** Clients pin the versions they show and those their transaction reads. Pins are counted
   per version; a version replaced while pinned is retained until its last pin goes, and the bytes
-  of retained versions are counted exactly. A version replaced with no pin is freed at once. The
-  limit of retained bytes that acts on that count comes with the limits of memory.
+  of retained versions are counted exactly, in the order the versions were replaced. A version
+  replaced with no pin is freed at once.
 - **Index.** The chunk of every being, so the follow window and the followed record are found at
   once.
 - **Rings.** Local speech, one stream per chunk, and the feed, one stream, are kept for the last
@@ -290,8 +292,8 @@ The mirror applies the boot record, then each released tick, in order.
 ### Interest
 
 A client's effective interest is its follow window, the followed being's chunk ± 1 clipped to the
-world (at most 9 chunks), then its camera (at most 64 chunks), which each `subscribe` replaces,
-each chunk once. The window moves to the followed being's chunk when a
+world (at most 9 chunks, the being's own chunk first), then its camera (at most 64 chunks), which
+each `subscribe` replaces, each chunk once. The window moves to the followed being's chunk when a
 transaction starts. An inverted index maps each chunk to the clients whose effective interest holds
 it, and `followers(being)` counts the clients that follow a being: observation telemetry (C3) that
 lives in this plane, where the world cannot import it.
@@ -320,9 +322,9 @@ while it is younger than 10 s, and a resync waits 2 s from the last one allowed.
 ### Send budget and backpressure
 
 A client gets at most 256 KiB a period, every message counted: hello, parts, commits, `pong`,
-`status`, `error`, `abort`, and what a drain sends. The period's budget runs from one period to the
-next, so answers sent at once by `receive` and parts sent by `drained` between two periods take
-from the budget of the period before them; a drain never renews it. A message goes out
+`status`, `error`, `notice`, `abort`, and what a drain sends. The period's budget runs from one
+period to the next, so answers sent at once by `receive` and parts sent by `drained` between two
+periods take from the budget of the period before them; a drain never renews it. A message goes out
 only while the client's socket buffers less than 256 KiB, checked before each message, and a message
 is at most 64 KiB, so the buffer stays under 320 KiB, within the 512 KiB the ADR bounds and far from
 Bun's limit of 1 MiB. A client whose buffer is full at its turn in the fan-out gets nothing and
@@ -330,22 +332,23 @@ starts no transaction; `drained` sends what waits of its messages and of its tra
 and never starts a transaction.
 
 Messages that are not parts of a transaction wait in the client's outbox and go before any part. The
-outbox stays small whatever a client sends while it does not read: a pending `pong` or `status` is
-replaced by a newer one, and an `error` waits once per code, so it holds at most hello, one abort,
-and one message of each other kind. A transaction starts only when the outbox is empty.
+outbox stays small whatever a client sends while it does not read: a pending `pong`, `status`, or
+`notice` is replaced by a newer one, and an `error` waits once per code, so it holds at most hello,
+one abort, and one message of each other kind. A transaction starts only when the outbox is empty.
 
 A period that leaves part of a transaction unsent sent more than the budget less a part, since the
 fan-out stops only when the next message does not fit. A transaction of B bytes, every message of
 its periods counted, therefore commits within ⌊B / (256 KiB − 64 KiB)⌋ + 1 periods while its client
-drains and while its turn comes each period. ⌈B / 256 KiB⌉ periods is the floor; the ceiling cannot
-reach it with whole messages.
+drains, once its terrain is at hand and while its turn comes each period. ⌈B / 256 KiB⌉ periods is
+the floor; the ceiling cannot reach it with whole messages.
 
 ### Transactions
 
 Each client has a visible tick `L` and the versions it shows, pinned. A transaction starts only
 after the previous one committed, never in the period of that commit, once the playout tick `L'`
-passed the last commit's (for a connection's first, reached hello's), and while the client's buffer
-has room. It pins the versions of `L'` for the effective interest and fixes its whole content:
+passed the last commit's (for a connection's first, reached hello's), while the client's buffer has
+room, and once the terrain of every chunk it brings is at hand. It pins the versions of `L'` for the
+effective interest, trimmed to the view's limit, and fixes its whole content:
 
 1. `drop` of the chunks that leave the view;
 2. for each chunk that stays, the difference by id between its versions at `L` and at `L'`, sent when
@@ -364,10 +367,7 @@ one per message, written when the message is sent; the messages of a transaction
 every other message the client's visible tick. At the commit the view takes the pins of `L'` and
 releases those of `L`. `abort` cancels the transaction in flight, whose pins go and which the client
 is told about first; with `releaseView`, the view's pins go too and the next transaction is a reset.
-`close` releases the client's interest, index entries, following, pins, and transaction.
-
-The terrain of a chunk that enters is generated by `readTerrain` and kept, encoded, in an LRU of
-2,048 entries.
+`close` releases the client's interest, index entries, following, pins, transaction, and terrain.
 
 ### Fan-out
 
@@ -390,13 +390,52 @@ commit, so a client that got nothing else in a period, and whose buffer has room
 the state again: the heartbeat that keeps a client of a stopped world from taking the silence for a
 dead connection. T6 sends no `reason`; T8's operator pause brings one.
 
+### Memory limits
+
+- **View.** At most 32 MiB, measured at `L'` when a transaction starts. A chunk counts the bytes of
+  its being records at the playout tick, one comma between two of them, and the widest terrain,
+  12,401 bytes: an upper bound of what its content adds to the view that needs no terrain
+  generated. An interest that passes the limit keeps the longest prefix that fits, in its order,
+  the follow window first, then the camera in the order the client sent it; that chunk and every one
+  after it are left out. The client gets `notice{code: "interest_trimmed", chunks}` with them when
+  the chunks left out change and are some. Each transaction started with a trimmed interest counts
+  one trim (C3).
+- **Retained versions.** After each period's fan-out, while the replaced versions clients pin pass
+  `MAX_RETAINED_BYTES` (128 MiB unless set), the version replaced first is taken, and every client
+  that pins it is aborted: its transaction's pins go, and `abort` goes before its next message; when
+  it pins that version in its view at `L`, its view's pins go too, and its next transaction is a
+  reset. The version replaced first is pinned by the clients furthest behind, never by a client
+  whose view and transaction are newer than its replacement. Each client aborted counts one abort a
+  check; the third within 60 s on the injected clock ends it with 1013. A version that passes the
+  limit and that no client pins is a fault of the plane.
+- **Per client**, outside what is shared: references to its pinned versions, its interest, its
+  outbox of at most 13 small messages, its transaction's cursor, its terrain while it waits,
+  and counters.
+
+### Terrain
+
+At most 16 chunks of terrain are generated a period, across all clients, and kept, encoded, in an
+LRU of 2,048 entries; a cache hit generates nothing and costs no budget. A transaction fixes its
+content when it starts, terrain included, so it starts only once the terrain of every chunk it
+brings is at hand; until then its client waits, its view at `L`, and gets no transaction, as a
+client deferred by the fan-out does. While the period's budget lasts, missing terrain is generated
+at once. What the budget cannot cover waits in a fair queue: at the start of each period, the
+clients that wait are served one chunk each in turn, the first served moving to the back, before any
+new request. Terrain generated for a waiting client is kept for it, apart from the LRU, until its
+transaction starts, so a cache that evicts it meanwhile cannot make it wait again: a client waiting
+for n chunks behind w other waiting clients is served within about ⌈n·(w + 1) / 16⌉ periods. A
+client that changes its interest while it waits waits for its new chunks, and what was kept for it
+and no longer needed is let go.
+
 ### Telemetry
 
 `telemetry()` reports, as C3: `connections`; `laggingClients`, the clients the last fan-out found
-with a full buffer; and the counts since start of `strikes`, `strikeCloses`, and `faults`. No public
-message carries any of them: every public frame is built from the protocol's strict schemas.
+with a full buffer; `retainedBytes`; `terrainQueue`, the chunks waiting clients wait for; and the
+counts since start of `aborts`, `trims`, `strikes`, `strikeCloses`, `slowCloses`, and `faults`. No
+public message carries any of them: every public frame is built from the protocol's strict schemas.
 `usage()` reports, for tests, what the presentation holds: clients, interest, index entries,
-followings, pins, and retained bytes, every count zero once every client is gone.
+followings, pins, retained bytes and versions, and the terrain waited for and kept, every count
+zero once every client is gone.
 
 ### Tests
 
@@ -433,7 +472,7 @@ with the strict schema.
   16 KiB, the smallest, each assemble in one transaction with no part past its limit and no period
   past its budget, within the reducer's 1,024 parts and the periods their bytes need, the view
   unchanged until the commit, every frame read with the strict schema. One chunk of 65,536 narrow
-  records also assembles.
+  records also assembles. These views have their terrain generated at once.
 - `presentation-input.test.ts` (plan test 12 in process): `pong` with its nonce; 21 hostile messages
   (text that is no JSON or looks binary, values that are not records, the types `pause`, `speed`,
   `step`, `seek`, `rewind`, `tick`, and `rate`, extra keys, `__proto__`, a nonce past 2³¹ − 1, a
@@ -450,6 +489,17 @@ with the strict schema.
   10 ms on the injected clock, in the rotation 1–4, 5–8, 9, 10, 1, 2, and so on, and records each
   period's 40 ms. The world's state reaches hello, every client's `status` on each change, and a
   client of a stopped world each period.
+- `presentation-limits.test.ts` (plan tests 7b and 14 in process): a view trimmed to its limit keeps
+  the follow window, then the camera's prefix that fits, and a later chunk that would fit is left
+  out with the rest; the notice goes once while the chunks left out stay the same; hello announces
+  the limit. The memory guard aborts a client that pins the oldest version in its transaction,
+  keeping its view, and one that pins it at `L` with its view, whose next transaction is a reset;
+  of two clients behind, only the one furthest behind; and closes a client with 1013 at a third
+  abort within 60 s, at 60.999999 s, and not at a third when the first is 60 s old. A flood of ten
+  clients, each entering 64 new chunks, generates 16 chunks a period, each chunk once, and serves
+  every client within 42 periods, the last nine within two periods of each other; terrain kept for
+  a waiting client survives a cache that evicts it. Six cycles of clients closed by a fault, by
+  strikes, and by slowness, aborted, and waiting for terrain leave every count at zero.
 
 ## Composition
 
@@ -483,8 +533,8 @@ channel. T6-7's entry point installs the process handler that calls `unhandledRe
 
 `composeServer(config, deps)` wires both planes: it calls `compose`, then builds the `Presentation`
 from the world plane's `subscribeToPublished`, `readTerrain`, and `state` alone, with the same clock
-and timer, the configured rate and F, and hello's world: a random id of 16 bytes, fresh at every
-boot unless a test gives `worldId`, and the configured durability. Its
+and timer, the configured rate, F, and `MAX_RETAINED_BYTES`, and hello's world: a random id of 16
+bytes, fresh at every boot unless a test gives `worldId`, and the configured durability. Its
 `start()` starts the presentation's periods, then the world's clock, so a presentation that cannot
 start leaves no world running; `stop()` stops the periods and detaches the presentation, then stops
 the world, resolving once every executed tick is published. T6-7's entry point calls it.

@@ -8,7 +8,9 @@
  * chunks, and one chunk of 65,536 such beings, beings@1's bound, in parts of 16 KiB, the smallest,
  * each assemble whole in one transaction: no part passes its limit, no period its budget, the
  * transaction stays within the reducer's 1,024 parts and within the periods its bytes need, and the
- * view does not change until the commit. One chunk of 65,536 narrow records also assembles.
+ * view does not change until the commit. One chunk of 65,536 narrow records also assembles. These
+ * views have their terrain generated at once, all 73 chunks in a period: the budget of terrain per
+ * period is the terrain queue's test.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -19,6 +21,7 @@ import {
   MAX_CHUNK_BEINGS,
   MAX_PART_BYTES,
   MAX_TRANSACTION_PARTS,
+  MAX_VIEW_CHUNKS,
   MIN_CHUNK,
 } from "@open-origin/protocol/public";
 import {
@@ -98,6 +101,7 @@ function still(
     batchTicks: 5,
     world: { id: WORLD_ID, durability: "ephemeral" },
     worldState: () => "running",
+    terrainPerPeriod: MAX_VIEW_CHUNKS,
     ...options,
   });
 }

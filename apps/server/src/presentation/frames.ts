@@ -6,7 +6,8 @@
  */
 import {
   AUDIENCE,
-  CLIENT_LIMITS,
+  type ChunkCoord,
+  type CLIENT_LIMITS,
   type Clock,
   type DURABILITIES,
   type ErrorCode,
@@ -72,8 +73,19 @@ export type WorldInfo = {
 /** The state of the world, the same for every client. */
 export type WorldState = (typeof WORLD_STATES)[number];
 
-/** The first message of a connection, with the visible tick `clock.tick` and the world's state. */
-export function helloFrame(world: WorldInfo, clock: Clock, state: WorldState): Frame {
+/** The limits on one client that hello announces. */
+export type Limits = { readonly [Name in keyof typeof CLIENT_LIMITS]: number };
+
+/**
+ * The first message of a connection, with the visible tick `clock.tick`, the world's state, and
+ * the client's limits.
+ */
+export function helloFrame(
+  world: WorldInfo,
+  clock: Clock,
+  state: WorldState,
+  limits: Limits,
+): Frame {
   return frameFrom("hello", {
     tick: clock.tick,
     protocol: PROTOCOL_ID,
@@ -82,7 +94,7 @@ export function helloFrame(world: WorldInfo, clock: Clock, state: WorldState): F
     durability: world.durability,
     state,
     clock,
-    limits: { ...CLIENT_LIMITS },
+    limits: { ...limits },
   });
 }
 
@@ -109,4 +121,9 @@ export function errorFrame(tick: number, code: ErrorCode): Frame {
 /** The world's state, at the client's visible tick. */
 export function statusFrame(tick: number, state: WorldState): Frame {
   return frameFrom("status", { tick, state });
+}
+
+/** The chunks of the interest that the view limit left out, at the client's visible tick. */
+export function noticeFrame(tick: number, chunks: readonly ChunkCoord[]): Frame {
+  return frameFrom("notice", { tick, code: "interest_trimmed", chunks });
 }

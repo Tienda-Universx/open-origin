@@ -17,14 +17,28 @@ import {
 /** A client of the presentation plane, by the number it was given when it connected. */
 export type ClientId = number;
 
-/** The follow window around `center`: the chunks at ± 1 on each axis that lie in the world. */
+/** The offsets of the follow window: the center first, then its neighbors row by row. */
+const WINDOW: readonly (readonly [number, number])[] = Object.freeze([
+  [0, 0],
+  [-1, -1],
+  [0, -1],
+  [1, -1],
+  [-1, 0],
+  [1, 0],
+  [-1, 1],
+  [0, 1],
+  [1, 1],
+]);
+
+/**
+ * The follow window around `center`: the chunks at ± 1 on each axis that lie in the world, the
+ * center first, so a view that must be trimmed keeps the followed being's own chunk first.
+ */
 export function followWindow([x, y]: ChunkCoord): ChunkCoord[] {
   const window: ChunkCoord[] = [];
-  for (let dy = -1; dy <= 1; dy += 1) {
-    for (let dx = -1; dx <= 1; dx += 1) {
-      const at: ChunkCoord = [x + dx, y + dy];
-      if (at.every((axis) => axis >= MIN_CHUNK && axis <= MAX_CHUNK)) window.push(at);
-    }
+  for (const [dx, dy] of WINDOW) {
+    const at: ChunkCoord = [x + dx, y + dy];
+    if (at.every((axis) => axis >= MIN_CHUNK && axis <= MAX_CHUNK)) window.push(at);
   }
   return window;
 }

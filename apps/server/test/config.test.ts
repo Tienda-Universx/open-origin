@@ -43,6 +43,7 @@ describe("parseConfig", () => {
         publicOrigins: [],
         allowedHosts: ["localhost:8080", "127.0.0.1:8080"],
         connections: { global: 1024, perIp: 16 },
+        retainedBytes: 134_217_728,
         aiMode: "off",
       },
       warnings: [],
@@ -94,6 +95,7 @@ describe("parseConfig", () => {
       ["PUBLICATION_BATCH_TICKS", 1, 300],
       ["MAX_CONNECTIONS", 1, 65_536],
       ["MAX_CONNECTIONS_PER_IP", 1, 65_536],
+      ["MAX_RETAINED_BYTES", 1_048_576, 17_179_869_184],
     ];
     for (const [name, low, high] of bounds) {
       // Each variable is read alone, with its neighbors at their defaults, except that the cap per
@@ -112,6 +114,7 @@ describe("parseConfig", () => {
     }
     expect(configOf({ ...EPHEMERAL, TICK_RATE_HZ: "20" }).tickRateHz).toBe(20);
     expect(configOf({ ...EPHEMERAL, PUBLICATION_BATCH_TICKS: "7" }).publicationBatchTicks).toBe(7);
+    expect(configOf({ ...EPHEMERAL, MAX_RETAINED_BYTES: "2097152" }).retainedBytes).toBe(2_097_152);
   });
 
   test("reads both connection caps and keeps the cap per IP within the global one", () => {
@@ -199,6 +202,7 @@ describe("parseConfig", () => {
       ALLOWED_HOSTS: `${secret}/`,
       MAX_CONNECTIONS: secret,
       MAX_CONNECTIONS_PER_IP: secret,
+      MAX_RETAINED_BYTES: secret,
       AI_MODE: secret,
     });
     expect(errors.map((error) => error.split(" ")[0])).toEqual([
@@ -211,6 +215,7 @@ describe("parseConfig", () => {
       "ALLOWED_HOSTS",
       "MAX_CONNECTIONS",
       "MAX_CONNECTIONS_PER_IP",
+      "MAX_RETAINED_BYTES",
       "AI_MODE",
     ]);
     expect(errors.filter((error) => error.includes("sk-live"))).toEqual([]);

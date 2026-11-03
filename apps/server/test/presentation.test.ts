@@ -619,6 +619,8 @@ describe("closing", () => {
       interest: { clients: 0, indexEntries: 0, following: 0 },
       pins: 0,
       retainedBytes: 0,
+      retained: 0,
+      terrain: { queued: 0, held: 0 },
       faults: 0,
       failed: false,
     });

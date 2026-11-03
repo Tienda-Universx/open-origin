@@ -149,7 +149,8 @@ describe("a client's message", () => {
     send(presentation, id, { type: "subscribe", chunks: row(1, 64) });
     expect(codes(since(client, before))).toEqual(["rate_limited", "rate_limited"]);
     expect(presentation.telemetry().strikes).toBe(2);
-    // The camera is the last one passed, chunks 1 to 64, once their content, about 270 KB, went out.
+    // The camera is the last one passed, chunks 1 to 64: their terrain is generated in four
+    // periods, 16 a period, and their content, 270 KB, takes two.
     for (let period = 0; period < 5; period += 1) advance();
     const view = [...(client.state.view?.chunks.keys() ?? [])].sort();
     expect(view).toEqual(

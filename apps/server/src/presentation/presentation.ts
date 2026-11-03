@@ -8,9 +8,10 @@
  *
  * Each period, in a task of its own and never inside a step's callback, the playout hands the
  * mirror at most one published tick; a change of the world's state is announced to every client;
- * and the fan-out serves the clients in rotating order within its budget of time: each one's
- * pending messages, then the parts of its transaction, within its budget of bytes and while its
- * buffer has room.
+ * the terrain queue serves the clients that wait for terrain; the fan-out serves the clients in
+ * rotating order within its budget of time: each one's pending messages, then the parts of its
+ * transaction, within its budget of bytes and while its buffer has room; and the memory guard
+ * aborts the clients that pin the oldest retained versions while they pass their limit.
  *
  * A client's transaction starts only after its previous one committed, and only once the playout
  * tick passed that commit's, so a client that is up to date gets one commit per period. Every
@@ -20,7 +21,9 @@
  */
 import {
   type ChunkCoord,
+  CLIENT_LIMITS,
   type ClientMessage,
+  chunkKey,
   type ErrorCode,
   MAX_PART_BYTES,
   parseClientMessage,
@@ -28,17 +31,21 @@ import {
 } from "@open-origin/protocol/public";
 import type { PublishedListener } from "../world/published.ts";
 import {
+  ABORTS_TO_CLOSE,
   type Blocked,
   BUFFER_BYTES,
   Client,
   type ClientSink,
   type Ending,
   STRIKES_ENDING,
+  TOO_SLOW_ENDING,
 } from "./client.ts";
 import {
   abortFrame,
   errorFrame,
   helloFrame,
+  type Limits,
+  noticeFrame,
   pongFrame,
   statusFrame,
   type WorldInfo,
@@ -46,10 +53,14 @@ import {
 } from "./frames.ts";
 import { type ClientId, Interest } from "./interest.ts";
 import { FEED, Mirror } from "./mirror.ts";
+import type { EncodedText } from "./parts.ts";
 import { Playout } from "./playout.ts";
+import { holdersOf, RETAINED_BYTES } from "./retention.ts";
 import { noCounts, type PresentationTelemetry } from "./telemetry.ts";
-import { TerrainCache } from "./terrain.ts";
+import { TERRAIN_PER_PERIOD, TerrainCache, TerrainQueue } from "./terrain.ts";
 import { Transaction, ViewState } from "./txn.ts";
+import type { ChunkVersion } from "./version.ts";
+import { trimView, VIEW_BYTES } from "./view.ts";
 
 export type { ClientSink, Ending } from "./client.ts";
 
@@ -87,12 +98,18 @@ export type PresentationOptions = {
   readonly batchTicks: number;
   /** What hello says of the world. */
   readonly world: WorldInfo;
+  /** The most bytes of replaced versions pinned in all: RETAINED_BYTES unless given. */
+  readonly retainedBytes?: number;
   /** Receives how long each period's fan-out took, in microseconds (C3). */
   readonly recordFanOut?: (micros: number) => void;
   /** The most bytes a client gets per period, every message counted: PERIOD_BYTES unless given. */
   readonly periodBytes?: number;
   /** The most bytes of a part: MAX_PART_BYTES unless given. */
   readonly partBytes?: number;
+  /** The most bytes of a view: VIEW_BYTES unless given, which hello then announces. */
+  readonly viewBytes?: number;
+  /** The most chunks of terrain generated per period: TERRAIN_PER_PERIOD unless given. */
+  readonly terrainPerPeriod?: number;
 };
 
 /** What the presentation holds, for tests: each count is zero once every client is gone. */
@@ -106,6 +123,10 @@ export type PresentationUsage = {
   };
   readonly pins: number;
   readonly retainedBytes: number;
+  /** Replaced versions still pinned. */
+  readonly retained: number;
+  /** Chunks of terrain waited for, and kept for waiting clients. */
+  readonly terrain: { readonly queued: number; readonly held: number };
   /** Clients dropped because serving them threw (C3). */
   readonly faults: number;
   /** Whether a fault of the whole plane stopped the presentation (C3). */
@@ -113,12 +134,25 @@ export type PresentationUsage = {
 };
 
 /** The sizes the presentation works with, checked. */
-type Sizes = { readonly part: number; readonly period: number };
+type Sizes = {
+  readonly part: number;
+  readonly period: number;
+  readonly view: number;
+  readonly retained: number;
+};
 
 const MICROS_PER_SECOND = 1_000_000;
 
 /** Rejections a correct client may still meet, by a race with the world or its own timing. */
 const NO_STRIKE: ReadonlySet<ErrorCode> = new Set(["unknown_being", "resync_too_soon"]);
+
+/** `value` when it is a safe integer of at least `min`, else a RangeError naming `what`. */
+function atLeast(what: string, value: number, min: number): number {
+  if (!Number.isSafeInteger(value) || value < min) {
+    throw new RangeError(`${what} is an integer of at least ${min}, not ${value}`);
+  }
+  return value;
+}
 
 /** Checks the sizes of `options`: a part holds the widest terrain, and a period holds a part. */
 function sizesOf(options: PresentationOptions): Sizes {
@@ -132,7 +166,12 @@ function sizesOf(options: PresentationOptions): Sizes {
   if (!Number.isSafeInteger(period) || period < part) {
     throw new RangeError(`a period's budget of ${period} bytes cannot hold a part of ${part}`);
   }
-  return { part, period };
+  return {
+    part,
+    period,
+    view: atLeast("a view's limit", options.viewBytes ?? VIEW_BYTES, 1),
+    retained: atLeast("the limit of retained bytes", options.retainedBytes ?? RETAINED_BYTES, 1),
+  };
 }
 
 /** The index in `clients`, in the order they connected, of the first whose id is at least `id`. */
@@ -144,14 +183,22 @@ function startOf(clients: readonly Client[], id: ClientId | undefined): number {
   );
 }
 
+/** The terrain `taken` holds for the chunk `at`. */
+function terrainIn(taken: ReadonlyMap<string, EncodedText>, at: ChunkCoord): EncodedText {
+  const terrain = taken.get(chunkKey(at));
+  if (terrain === undefined) throw new Error(`no terrain was taken for chunk ${chunkKey(at)}`);
+  return terrain;
+}
+
 /** The presentation plane: playout, mirror, interest, sessions, and each client's transactions. */
 export class Presentation {
   readonly #mirror = new Mirror();
   readonly #interest = new Interest();
   readonly #clients = new Map<ClientId, Client>();
   readonly #playout: Playout;
-  readonly #terrain: TerrainCache;
+  readonly #terrain: TerrainQueue;
   readonly #world: WorldInfo;
+  readonly #limits: Limits;
   readonly #sizes: Sizes;
   readonly #clock: PeriodClock;
   readonly #timer: PeriodTimer;
@@ -188,8 +235,12 @@ export class Presentation {
       throw new RangeError(`the tick rate is an integer from 1 to 1000 Hz, not ${hz}`);
     }
     this.#playout = new Playout(options.batchTicks);
-    this.#terrain = new TerrainCache(options.readTerrain);
+    this.#terrain = new TerrainQueue(
+      new TerrainCache(options.readTerrain),
+      options.terrainPerPeriod ?? TERRAIN_PER_PERIOD,
+    );
     this.#world = options.world;
+    this.#limits = Object.freeze({ ...CLIENT_LIMITS, maxViewBytes: this.#sizes.view });
     this.#clock = options.clock;
     this.#timer = options.timer;
     this.#hz = hz;
@@ -211,7 +262,7 @@ export class Presentation {
     const mirror = this.#mirror;
     const view = new ViewState(mirror.tick, mirror.feed.count(FEED));
     const client = new Client(id, sink, view, this.#clock.now());
-    client.queue(helloFrame(this.#world, mirror.clock, this.#state));
+    client.queue(helloFrame(this.#world, mirror.clock, this.#state, this.#limits));
     this.#clients.set(id, client);
     this.#interest.add(id);
     return id;
@@ -263,13 +314,13 @@ export class Presentation {
   /**
    * Cancels the transaction in flight of `client`, if any, which gets `abort` before anything else
    * and whose pins are released. With `releaseView`, the view's own pins go too, and its next
-   * transaction is a reset.
+   * transaction is a reset: what the memory guard does to the clients it aborts.
    */
   abort(client: ClientId, options: { readonly releaseView?: boolean } = {}): void {
     this.#abort(this.#client(client), options.releaseView === true);
   }
 
-  /** Disconnects `client`: its interest, index entries, pins, and transaction go. */
+  /** Disconnects `client`: its interest, index entries, pins, transaction, and terrain go. */
   close(client: ClientId): void {
     this.#remove(this.#client(client));
   }
@@ -286,6 +337,8 @@ export class Presentation {
       interest: this.#interest.usage(),
       pins: mirror.pins,
       retainedBytes: mirror.retainedBytes,
+      retained: mirror.retained,
+      terrain: { queued: this.#terrain.queued, held: this.#terrain.held },
       faults: this.#counts.faults,
       failed: this.#failed,
     };
@@ -297,20 +350,25 @@ export class Presentation {
       ...this.#counts,
       connections: this.#clients.size,
       laggingClients: this.#laggingClients,
+      retainedBytes: this.#mirror.retainedBytes,
+      terrainQueue: this.#terrain.queued,
     };
   }
 
   /**
-   * One period: the playout's release, the world's state, and the fan-out. A throw that is not
-   * one client's is a fault of the whole plane, whose state may be inconsistent: the presentation
-   * stops and detaches, `failed` turns true, and the throw goes on.
+   * One period: the playout's release, the world's state, the terrain queue, the fan-out, and the
+   * memory guard. A throw that is not one client's is a fault of the whole plane, whose state may
+   * be inconsistent: the presentation stops and detaches, `failed` turns true, and the throw goes
+   * on.
    */
   period(): void {
     this.#period += 1;
     try {
       this.#playout.release((published) => this.#mirror.apply(published));
       this.#announce();
+      this.#terrain.period((client, cause) => this.#fault(this.#client(client), cause));
       this.#fanOut();
+      this.#guardRetention();
     } catch (cause) {
       this.#failed = true;
       this.stop();
@@ -362,12 +420,13 @@ export class Presentation {
     return client;
   }
 
-  /** Removes `client` and all it holds: interest, index entries, pins, and transaction. */
+  /** Removes `client` and all it holds: interest, index entries, pins, transaction, terrain. */
   #remove(client: Client): void {
     client.txn?.release(this.#mirror);
     client.txn = undefined;
     this.#releaseView(client.view);
     this.#interest.remove(client.id);
+    this.#terrain.remove(client.id);
     this.#clients.delete(client.id);
   }
 
@@ -375,6 +434,7 @@ export class Presentation {
   #end(client: Client, ending: Ending): void {
     this.#remove(client);
     if (ending.reason === "strikes") this.#counts.strikeCloses += 1;
+    else if (ending.reason === "too_slow") this.#counts.slowCloses += 1;
     else this.#counts.faults += 1;
     client.sink.end(ending);
   }
@@ -538,34 +598,85 @@ export class Presentation {
 
   /**
    * Whether a transaction of `client` may start: none is in flight and no message waits; it did
-   * not commit in this period; its buffer has room; and the playout tick passed its last commit's,
-   * or, for its first, reached hello's.
+   * not commit or wait for terrain in this period; its buffer has room; and the playout tick passed
+   * its last commit's, or, for its first, reached hello's.
    */
   #mayStart(client: Client): boolean {
     if (client.txn !== undefined || client.waiting > 0) return false;
-    if (client.committedIn === this.#period) return false;
+    if (client.committedIn === this.#period || client.triedIn === this.#period) return false;
     if (client.sink.buffered() >= BUFFER_BYTES) return false;
     const { view } = client;
     const tick = this.#mirror.tick;
     return view.committed === undefined ? tick >= view.tick : tick > view.committed;
   }
 
-  /** Starts the next transaction of `client`, at the playout tick, over its effective interest. */
+  /**
+   * Starts the next transaction of `client`, at the playout tick, over its effective interest
+   * trimmed to the view's limit, once the terrain of every chunk it brings is at hand. Otherwise
+   * the client waits in the terrain queue, its view at L.
+   */
   #begin(client: Client): void {
+    client.triedIn = this.#period;
     const target = this.#interest.target(client.id);
     // The follow window moves with the followed being, to its chunk at the playout tick.
     const center = target === null ? undefined : this.#mirror.locate(target);
     this.#interest.moveWindow(client.id, center);
+    const interest = this.#interest.effective(client.id);
+    const { kept, trimmed } = trimView(this.#mirror, interest, this.#sizes.view);
+    this.#notice(client, trimmed);
+    const { view } = client;
+    const entering = kept.filter((at) => view.needsReset || !view.pinned.has(chunkKey(at)));
+    const taken = this.#terrain.take(client.id, entering);
+    if (taken === undefined) return;
+    if (trimmed.length > 0) this.#counts.trims += 1;
     client.txn = Transaction.start({
       txn: client.nextTxn,
-      view: client.view,
+      view,
       mirror: this.#mirror,
-      interest: this.#interest.effective(client.id),
+      interest: kept,
       target,
-      terrain: (at) => this.#terrain.of(at),
+      terrain: (at) => terrainIn(taken, at),
       partBytes: this.#sizes.part,
     });
     client.nextTxn += 1;
+  }
+
+  /** Tells `client` which chunks the view's limit left out, when they changed and are some. */
+  #notice(client: Client, trimmed: readonly ChunkCoord[]): void {
+    const keys = trimmed.map(chunkKey).join(";");
+    if (keys === client.trimmed) return;
+    client.trimmed = keys;
+    if (trimmed.length > 0) client.queue(noticeFrame(client.view.tick, trimmed), "notice");
+  }
+
+  /**
+   * While the retained versions pass their limit, aborts every client that pins the oldest one,
+   * with its view when it pins that version at L. Each client aborted counts one abort; the third
+   * within 60 s closes it with 1013.
+   */
+  #guardRetention(): void {
+    const aborted = new Set<Client>();
+    for (let oldest = this.#overLimit(); oldest !== undefined; oldest = this.#overLimit()) {
+      const holders = holdersOf(this.#clients.values(), oldest);
+      if (holders.length === 0) {
+        throw new Error(`no client pins the retained version ${oldest.v} of chunk ${oldest.key}`);
+      }
+      for (const { client, atL } of holders) {
+        this.#abort(client, atL);
+        aborted.add(client);
+      }
+    }
+    const now = this.#clock.now();
+    for (const client of aborted) {
+      this.#counts.aborts += 1;
+      if (client.aborts.add(now) >= ABORTS_TO_CLOSE) this.#end(client, TOO_SLOW_ENDING);
+    }
+  }
+
+  /** The oldest retained version while the retained bytes pass their limit. */
+  #overLimit(): ChunkVersion | undefined {
+    const mirror = this.#mirror;
+    return mirror.retainedBytes > this.#sizes.retained ? mirror.oldestRetained() : undefined;
   }
 
   /** The deadline of the period `n` after the anchor. */

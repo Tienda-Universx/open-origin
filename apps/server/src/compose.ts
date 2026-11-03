@@ -245,6 +245,7 @@ export function composeServer(config: Config, deps: ServerDeps): Server {
     tickRateHz: config.tickRateHz,
     batchTicks: config.publicationBatchTicks,
     world: { id: deps.worldId ?? randomWorldId(), durability: config.durability },
+    retainedBytes: config.retainedBytes,
   });
   return Object.freeze({
     world,
