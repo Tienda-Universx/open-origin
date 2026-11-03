@@ -124,7 +124,7 @@ export type PresentationUsage = {
   readonly retainedBytes: number;
   /** Replaced versions still pinned. */
   readonly retained: number;
-  /** Chunks of terrain waited for, and kept for waiting clients. */
+  /** Chunks of terrain the queue has yet to serve, and those held for its head. */
   readonly terrain: { readonly queued: number; readonly held: number };
   /** Clients dropped because serving them threw (C3). */
   readonly faults: number;
