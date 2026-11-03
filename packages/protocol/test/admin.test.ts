@@ -31,7 +31,11 @@ const STATUS = {
   omittedSpeech: 0,
 };
 
-/** The counts of the presentation and the projection, which only ever grow from zero. */
+/**
+ * The presentation's and the projection's fields that are counts: non-negative integers. Some are
+ * gauges that go back down (`connections`, `laggingClients`, `retainedBytes`, `terrainQueue`); the
+ * rest are counts since start, which only grow.
+ */
 const COUNTS = [
   "connections",
   "laggingClients",
