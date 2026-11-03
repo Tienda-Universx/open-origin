@@ -47,13 +47,14 @@ request in this order, and the first refusal wins:
 
 | Request | Answer |
 |---|---|
-| A `Host` header off the allowlist, or none, on any path | 403 |
+| A `Host` header off the allowlist, or none, on any path and with any method | 403 |
 | `GET /healthz` | 200, `{"ok":true}` |
 | Any other method or path but `GET /ws` | 404 |
 | `GET /ws` that is not a WebSocket upgrade asking for `open-origin.public.v1` among its subprotocols | 426, with `Upgrade: websocket`, before the upgrade |
+| A `Sec-WebSocket-Version` other than `13`, or none | 426, with `Upgrade: websocket` and `Sec-WebSocket-Version: 13` (RFC 6455, 4.4), before the upgrade |
 | An `Origin` that is not exactly one of `PUBLIC_ORIGINS` (`scheme://host:port`, so `null` too) | 403. A request without `Origin`, from a tool that is not a browser, passes |
 | The connections are at `MAX_CONNECTIONS`, or the request's address is at `MAX_CONNECTIONS_PER_IP` | 503, with `Retry-After: 5`, the least a client waits after a 503 |
-| An upgrade Bun cannot complete, such as one without `Sec-WebSocket-Key` | 400 |
+| An upgrade Bun cannot complete: a `Sec-WebSocket-Key` missing or malformed | 400. Its slot goes back at once |
 | Otherwise | 101: the upgrade, which names the subprotocol it agreed to |
 
 No answer carries a CORS header, and none repeats what the request sent: each refusal has a fixed

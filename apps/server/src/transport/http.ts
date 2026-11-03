@@ -4,11 +4,13 @@
  * `route` is a pure function of a request's method, path, and headers and of the listener's
  * allowlists, so every refusal is tested without a socket. In order:
  *
- * 1. a `Host` header off the allowlist, or none, is refused with 403 on every path, so a page that
- *    rebinds a name it controls to this machine reaches nothing;
+ * 1. a `Host` header off the allowlist, or none, is refused with 403 on every path and method, so a
+ *    page that rebinds a name it controls to this machine reaches nothing;
  * 2. `GET /healthz` answers `{"ok":true}`; every other method or path but `GET /ws` is 404;
  * 3. a request to `/ws` that is not a WebSocket upgrade asking for the subprotocol
- *    `open-origin.public.v1` gets 426, before the upgrade;
+ *    `open-origin.public.v1` gets 426, before the upgrade, and so does one whose
+ *    `Sec-WebSocket-Version` is not 13, with `Sec-WebSocket-Version: 13`, as Bun itself would
+ *    answer it (RFC 6455, 4.4);
  * 4. an `Origin`, when the request has one, must equal one of the public origins exactly, or gets
  *    403; a request without one, from a tool that is not a browser, passes.
  *
@@ -21,7 +23,7 @@ import { PROTOCOL_ID, RECONNECT_BACKOFF } from "@open-origin/protocol/public";
 export const HEALTH_PATH = "/healthz";
 export const SOCKET_PATH = "/ws";
 
-/** What `route` reads of a request: its method, its path, and four headers, null when absent. */
+/** What `route` reads of a request: its method, its path, and five headers, null when absent. */
 export type RequestFacts = {
   readonly method: string;
   readonly path: string;
@@ -29,7 +31,11 @@ export type RequestFacts = {
   readonly origin: string | null;
   readonly upgrade: string | null;
   readonly protocols: string | null;
+  readonly version: string | null;
 };
+
+/** The only WebSocket version there is (RFC 6455). */
+const WEBSOCKET_VERSION = "13";
 
 /** The allowlists of a listener: `Host` values, lower-cased, and exact origins. */
 export type Policy = {
@@ -43,6 +49,7 @@ export type RefusalReason =
   | "origin"
   | "not_found"
   | "upgrade_required"
+  | "version"
   | "capacity"
   | "capacity_per_ip"
   | "handshake";
@@ -74,6 +81,11 @@ const REFUSALS: Readonly<
     text: `connect with the WebSocket subprotocol ${PROTOCOL_ID}`,
     headers: { Upgrade: "websocket" },
   },
+  version: {
+    status: 426,
+    text: `connect with WebSocket version ${WEBSOCKET_VERSION}`,
+    headers: { Upgrade: "websocket", "Sec-WebSocket-Version": WEBSOCKET_VERSION },
+  },
   capacity: {
     status: 503,
     text: "the server is full",
@@ -84,6 +96,7 @@ const REFUSALS: Readonly<
     text: "the server is full",
     headers: { "Retry-After": String(RETRY_AFTER_SECONDS) },
   },
+  // Bun refuses what is left, a missing or malformed Sec-WebSocket-Key, with no answer of its own.
   handshake: { status: 400, text: "not a valid WebSocket handshake" },
 });
 
@@ -97,6 +110,7 @@ export function factsOf(request: Request): RequestFacts {
     origin: headers.get("origin"),
     upgrade: headers.get("upgrade"),
     protocols: headers.get("sec-websocket-protocol"),
+    version: headers.get("sec-websocket-version"),
   };
 }
 
@@ -122,15 +136,22 @@ function lists(header: string | null, token: string, normalize = (text: string) 
 
 const lowerCase = (text: string) => text.toLowerCase();
 
+const refuse = (reason: RefusalReason): Route => ({ kind: "refuse", reason });
+
 /** What the listener does with a request of `facts` under `policy`. */
 export function route(facts: RequestFacts, policy: Policy): Route {
-  const refuse = (reason: RefusalReason): Route => ({ kind: "refuse", reason });
   if (facts.host === null || !policy.hosts.has(facts.host.toLowerCase())) return refuse("host");
   if (facts.method !== "GET") return refuse("not_found");
   if (facts.path === HEALTH_PATH) return HEALTH;
   if (facts.path !== SOCKET_PATH) return refuse("not_found");
+  return socketRoute(facts, policy);
+}
+
+/** What the listener does with a GET of `/ws`: the upgrade, unless its handshake or Origin fail. */
+function socketRoute(facts: RequestFacts, policy: Policy): Route {
   const upgrade = lists(facts.upgrade, "websocket", lowerCase);
   if (!upgrade || !lists(facts.protocols, PROTOCOL_ID)) return refuse("upgrade_required");
+  if (facts.version?.trim() !== WEBSOCKET_VERSION) return refuse("version");
   if (facts.origin !== null && !policy.origins.has(facts.origin)) return refuse("origin");
   return SOCKET;
 }

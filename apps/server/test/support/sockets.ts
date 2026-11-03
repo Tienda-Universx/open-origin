@@ -125,6 +125,8 @@ export class CountingPort implements PresentationPort {
   readonly ended = new Map<ClientId, Ending>();
   readonly closes: ClientId[] = [];
   readonly drains: ClientId[] = [];
+  /** The transport's own sink of each client, for a test that sends through it directly. */
+  readonly sinks = new Map<ClientId, ClientSink>();
   /** The client connected last. */
   last: ClientId | undefined;
   peakBuffered = 0;
@@ -143,6 +145,7 @@ export class CountingPort implements PresentationPort {
 
   connect(sink: ClientSink): ClientId {
     const id = this.#inner.connect(this.#counted(sink, () => id));
+    this.sinks.set(id, sink);
     this.last = id;
     return id;
   }
@@ -204,20 +207,36 @@ export type RawAnswer = { readonly status: number; readonly head: string; close(
 
 /**
  * Sends `request`, raw, to `port` from the local address `from`, and resolves with the status and
- * the head of the answer once it arrived; the socket stays open until `close`.
+ * the head of the answer once it arrived; the socket stays open until `close`. It settles in every
+ * case: it rejects when the connection fails, when it closes before a whole head arrived, or after
+ * `deadlineMs`. A local address other than 127.0.0.1 needs Linux, whose loopback is all of
+ * 127.0.0.0/8; where it cannot be bound, the rejection says so.
  */
-export function rawRequest(port: number, request: string, from = LOOPBACK): Promise<RawAnswer> {
+export function rawRequest(
+  port: number,
+  request: string,
+  from = LOOPBACK,
+  deadlineMs = 2000,
+): Promise<RawAnswer> {
   return new Promise((resolve, reject) => {
     const socket = connect({ host: LOOPBACK, port, localAddress: from });
+    const fail = (why: string) => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(new Error(`a raw request from ${from} to port ${port} ${why}`));
+    };
+    const timer = setTimeout(() => fail(`got no answer in ${deadlineMs} ms`), deadlineMs);
     let text = "";
-    socket.on("error", reject);
+    socket.on("error", (error) => fail(`failed: ${String(error)}`));
+    socket.on("close", () => fail("closed before a whole answer"));
     socket.on("data", (data) => {
       text += String(data);
       const end = text.indexOf("\r\n\r\n");
       if (end < 0) return;
+      clearTimeout(timer);
+      socket.removeAllListeners("close");
       const head = text.slice(0, end).toLowerCase();
-      const status = Number(head.split(" ")[1]);
-      resolve({ status, head, close: () => socket.destroy() });
+      resolve({ status: Number(head.split(" ")[1]), head, close: () => socket.destroy() });
     });
     socket.write(request);
   });

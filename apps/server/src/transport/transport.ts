@@ -40,11 +40,17 @@ import {
 /** The close code of a fault of the presentation in serving a client: 1011, internal error. */
 export const FAULT_CLOSE = 1011;
 
-/** Bun's limits on a socket (ADR 0026, "Limits and backpressure"). */
-export const SOCKET_LIMITS = Object.freeze({
+/**
+ * Bun's options for every socket (ADR 0026, "Limits and backpressure"): frames up to 4 KiB (Bun
+ * closes a larger one with 1009), a buffer of 1 MiB at which Bun closes the socket, an idle timeout
+ * of 120 s, and pings before it, so a client that answers them stays.
+ */
+export const SOCKET_OPTIONS = Object.freeze({
   maxPayloadLength: 4096,
   backpressureLimit: 1024 * 1024,
-  idleTimeoutSeconds: 120,
+  closeOnBackpressureLimit: true,
+  idleTimeout: 120,
+  sendPings: true,
 });
 
 /** What the transport needs of the presentation plane. */
@@ -129,11 +135,7 @@ class Listener {
   };
 
   readonly handlers: Bun.WebSocketHandler<Connection> = {
-    maxPayloadLength: SOCKET_LIMITS.maxPayloadLength,
-    backpressureLimit: SOCKET_LIMITS.backpressureLimit,
-    closeOnBackpressureLimit: true,
-    idleTimeout: SOCKET_LIMITS.idleTimeoutSeconds,
-    sendPings: true,
+    ...SOCKET_OPTIONS,
     open: (socket) => this.#open(socket),
     message: (socket, message) => this.#message(socket, message),
     drain: (socket) => this.#drain(socket),
@@ -178,8 +180,18 @@ class Listener {
     return this.#refuse("handshake");
   }
 
+  /**
+   * Connects the socket's client. A throw of the presentation closes the socket with 1011 at once:
+   * Bun would end it with no close frame. Its slot comes back through the close handler.
+   */
   #open(socket: Socket): void {
-    socket.data.client = this.#presentation.connect(this.#sinkOf(socket));
+    try {
+      socket.data.client = this.#presentation.connect(this.#sinkOf(socket));
+    } catch (error) {
+      this.#log({ event: "handler_error", error: nameOf(error) });
+      socket.close(FAULT_CLOSE);
+      return;
+    }
     this.#log({ event: "open", connections: this.#capacity.open });
   }
 

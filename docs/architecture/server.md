@@ -624,21 +624,27 @@ only. Its options are the presentation, the address and port to bind (0 lets the
   `capacity.ts` holds the caps: an upgrade takes a slot, in all and for its address, which
   `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes.
   Bun runs the open handler within `upgrade`, so two upgrades never pass a cap together.
-- **Socket limits.** `maxPayloadLength` is 4,096 bytes: Bun closes a larger frame with 1009 before
-  any of it reaches the presentation. A binary frame is closed with 1003. `backpressureLimit` is
-  1 MiB with `closeOnBackpressureLimit`, a backstop: the presentation keeps a buffer under about
-  320 KiB. `idleTimeout` is 120 s, with `sendPings`. Nothing is compressed.
+- **Socket limits.** `SOCKET_OPTIONS`, one constant that `Bun.serve` takes whole: `maxPayloadLength`
+  is 4,096 bytes, so Bun closes a larger frame with 1009 before any of it reaches the presentation;
+  `backpressureLimit` is 1 MiB with `closeOnBackpressureLimit`, a backstop, since the presentation
+  keeps a buffer under about 320 KiB: Bun closes a socket that reaches it (its close handler sees
+  1006); `idleTimeout` is 120 s, with `sendPings`. A binary frame is closed with 1003. Nothing is
+  compressed.
 - **The sink.** `send` is `sendText`; `buffered()` is `getBufferedAmount()`; `end(ending)` marks the
   socket ended and closes it with the ending's code (`closeCodeOf`): 1008 for strikes, 1013 for
   slowness, and 1011 for a fault. The protocol fixes no code for a fault of the server, and 1011
   is the WebSocket code for an internal error (ADR 0026).
-- **Lifecycle.** `drain` calls `drained`. A close gives the slot back and calls `close`, unless the
+- **Lifecycle.** `open` connects the client; when `connect` throws, the socket is closed with 1011
+  at once, where Bun would end it with no close frame, and its slot comes back through the close
+  handler. `drain` calls `drained`. A close gives the slot back and calls `close`, unless the
   presentation ended the client itself. That call runs in a microtask: Bun runs a close handler
   synchronously within the call that closes the socket, and no call the presentation makes to a
   sink may take a client away from it while it serves that client. (Bun's own close at its
   backpressure limit was measured to run after the `send` that reached it returned.) A socket the
-  presentation ended has its frames ignored. A handler that throws is logged and its socket closed with 1011. `stop()` is Bun's
-  `stop(true)`: it stops listening and closes every socket with 1001, running each close handler.
+  presentation ended has its frames ignored. Another handler that throws is logged, and Bun's
+  `error` handler closes its socket with 1011; a fetch that throws is answered with 500. `stop()`
+  is Bun's `stop(true)`: it stops listening and closes every socket with 1001, running each close
+  handler.
 - **Logs.** `refused` with the status and reason, `open` and `close` with the code and the count of
   connections, `binary_frame` with its size, and `handler_error` with the error's name. Never an
   address, a header, a payload, or an error's message, which could quote what a client sent.
@@ -653,19 +659,33 @@ wants it through adds that name to `ALLOWED_HOSTS`. Either way the port must sta
 the server's warning at start says.
 
 `transport.test.ts` runs the listener on a free loopback port over a presentation of a model
-world, driven period by period. It checks `route` on a table of cases and `Capacity` on its own;
-the health check, 404 with no CORS header, and 426 before the upgrade; an `Origin` matched exactly
-and its absence accepted; a `Host` refused on every path; 503 with `Retry-After` at the cap of one
-address, with a second address, 127.0.0.2, still admitted, and at the global cap, until a socket
-closes; the close codes 1003, 1009 (a frame of 4,096 bytes passes), 1008, 1011 (a planted terrain
-fault), and 1001; a close that releases the client unless the presentation ended it; and logs that
-hold no address and nothing a client sent. Plan test 13 runs on real sockets: over one chunk of
-65,536 beings, about 6 MB, a client that stops reading (`pause()`) lags alone once loopback's
-buffers are full, while a client that reads does not; when it reads again, Bun's `drain` makes the
-presentation send it more before any other period runs; and no buffer passes 512 KiB. A second
-test pins the Bun behavior that relies on, with no code of the server: a paused client makes
-`send` return −1 past what loopback absorbs, and 16 MiB pushed arrive whole once it reads, after a
-`drain`.
+world, driven period by period:
+
+- `route` on a table of cases, the `Host` before the method among them, and `Capacity` on its own;
+- the health check, 404 with no CORS header, 426 before the upgrade, and the listener's own 426
+  for a WebSocket version other than 13; a handshake Bun cannot complete, answered with the
+  listener's 400, its slot back for the next client; 500 when answering a request throws;
+- an `Origin` matched exactly and its absence accepted; a `Host` refused on every path and method;
+- 503 with `Retry-After` at the cap of one address, with a second address, 127.0.0.2, still
+  admitted, and at the global cap, until a socket closes; a client that leaves in the middle of
+  its handshake gives its slot back;
+- the close codes 1003, 1009 (a frame of 4,096 bytes passes), 1008, 1011 (a planted terrain fault,
+  a `connect` that throws, and a `receive` that throws), and 1001; a close that releases the client
+  unless the presentation ended it; and logs that hold no address and nothing a client sent;
+- Bun's limits: `SOCKET_OPTIONS` equals ADR 0026's numbers, since an idle timeout of 120 s and its
+  pings cannot be observed in a test's time, and a client that does not read is closed by Bun once
+  1 MiB waits for it, released once; and Bun 1.4.4 runs the open handler within `upgrade`, which the
+  slots rely on.
+
+Plan test 13 runs on real sockets: over one chunk of 65,536 beings, about 6 MB, a client that
+stops reading (`pause()`) lags alone once loopback's buffers are full, while a client that reads
+does not; when it reads again, Bun's `drain` makes the presentation send it more before any other
+period runs. The test asserts only what the code guarantees: the buffer stays under 512 KiB, and
+the lag comes within a generous bound of periods, since how much loopback absorbs is the kernel's
+(at most `tcp_wmem`'s maximum, 4 MiB by default, and a window that does not grow while nothing
+reads). A second test pins the Bun behavior that relies on, with no code of the server: a paused
+client makes `send` return −1 past what loopback absorbs, and 16 MiB pushed arrive whole once it
+reads, after a `drain`.
 
 ## Composition
 

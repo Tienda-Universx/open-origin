@@ -10,6 +10,7 @@
  * and no payload.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { connect } from "node:net";
 import {
   type ChunkCoord,
   CLOSE_CODES,
@@ -22,6 +23,8 @@ import { listenerHosts, policyOf, type RequestFacts, route } from "../src/transp
 import {
   closeCodeOf,
   FAULT_CLOSE,
+  type PresentationPort,
+  SOCKET_OPTIONS,
   serveTransport,
   type Transport,
   type TransportEvent,
@@ -59,20 +62,27 @@ function modelPresentation(options: Parameters<typeof presentationOver>[1] = {})
   return presentationOver(new ModelWorld(0, [being(1, [3, 3])]), options);
 }
 
-/** A listener on a free loopback port over `presentation`, its port counting what passes. */
-function listen(presentation: Presentation, options: Partial<TransportOptions> = {}) {
-  const logs: TransportEvent[] = [];
-  const counting = new CountingPort(presentation);
-  const transport = serveTransport({
-    presentation: counting,
+/** The options of a listener on a free loopback port over `presentation`, logging to `logs`. */
+function transportOptions(
+  presentation: PresentationPort,
+  logs: TransportEvent[],
+): TransportOptions {
+  return {
+    presentation,
     hostname: LOOPBACK,
     port: 0,
     publicOrigins: [],
     allowedHosts: undefined,
     connections: { global: 64, perIp: 16 },
     log: (event) => logs.push(event),
-    ...options,
-  });
+  };
+}
+
+/** A listener on a free loopback port over `presentation`, its port counting what passes. */
+function listen(presentation: Presentation, options: Partial<TransportOptions> = {}) {
+  const logs: TransportEvent[] = [];
+  const counting = new CountingPort(presentation);
+  const transport = serveTransport({ ...transportOptions(counting, logs), ...options });
   running.push(transport);
   return { transport, logs, counting, port: transport.port };
 }
@@ -97,13 +107,14 @@ describe("route", () => {
     origin: null,
     upgrade: "websocket",
     protocols: PROTOCOL_ID,
+    version: "13",
   };
   const routeOf = (facts: Partial<RequestFacts>): string => {
     const routed = route({ ...socket, ...facts }, policy);
     return routed.kind === "refuse" ? routed.reason : routed.kind;
   };
 
-  test("checks the Host first, then the path, the upgrade and its subprotocol, then the Origin", () => {
+  test("checks the Host first, then the method and path, the upgrade, its subprotocol and version, then the Origin", () => {
     const cases: [Partial<RequestFacts>, string][] = [
       [{}, "socket"],
       [{ host: "LOCALHOST:8080" }, "socket"],
@@ -114,6 +125,7 @@ describe("route", () => {
       [{ host: "evil.example:8080" }, "host"],
       [{ host: "localhost:8081" }, "host"],
       [{ host: "evil.example", path: "/nowhere", origin: "http://evil.example" }, "host"],
+      [{ host: "evil.example", path: "/healthz", method: "POST" }, "host"],
       [{ path: "/healthz" }, "health"],
       [{ path: "/healthz", method: "POST" }, "not_found"],
       [{ method: "POST" }, "not_found"],
@@ -126,6 +138,10 @@ describe("route", () => {
       [{ upgrade: null }, "upgrade_required"],
       [{ upgrade: "h2c" }, "upgrade_required"],
       [{ upgrade: null, origin: "http://evil.example" }, "upgrade_required"],
+      [{ version: "8" }, "version"],
+      [{ version: null }, "version"],
+      [{ version: "13, 8" }, "version"],
+      [{ version: "8", origin: "http://evil.example" }, "version"],
       [{ origin: "http://localhost:5174" }, "origin"],
       [{ origin: "http://LOCALHOST:5173" }, "origin"],
       [{ origin: "null" }, "origin"],
@@ -201,6 +217,64 @@ describe("the HTTP surface", () => {
     expect(counting.last).toBeUndefined();
   });
 
+  test("refuses a WebSocket version other than 13 with its own 426, which names 13", async () => {
+    const { port, logs, counting, transport } = listen(modelPresentation().presentation);
+    for (const version of ["8", ""]) {
+      const answer = await rawRequest(
+        port,
+        upgradeHead(port, { "Sec-WebSocket-Version": version }),
+      );
+      answer.close();
+      expect([version, answer.status]).toEqual([version, 426]);
+      expect(answer.head).toContain("\r\nsec-websocket-version: 13");
+    }
+    expect(logs).toEqual([
+      { event: "refused", status: 426, reason: "version" },
+      { event: "refused", status: 426, reason: "version" },
+    ]);
+    expect([counting.last, transport.connections()]).toEqual([undefined, 0]);
+  });
+
+  test("refuses a handshake Bun cannot complete with 400, and gives its slot back", async () => {
+    const { port, logs, transport } = listen(modelPresentation().presentation, {
+      connections: { global: 1, perIp: 1 },
+    });
+    for (const key of ["", "abc"]) {
+      const answer = await rawRequest(port, upgradeHead(port, { "Sec-WebSocket-Key": key }));
+      answer.close();
+      // The answer is the listener's own: its fixed text is 31 bytes.
+      expect([key, answer.status, answer.head.includes("content-length: 31")]).toEqual([
+        key,
+        400,
+        true,
+      ]);
+    }
+    expect(logs.filter(({ event }) => event === "refused")).toEqual([
+      { event: "refused", status: 400, reason: "handshake" },
+      { event: "refused", status: 400, reason: "handshake" },
+    ]);
+    // The only slot is free: a client connects.
+    expect(transport.connections()).toBe(0);
+    await client(port);
+  });
+
+  test("answers 500 when answering a request throws, and logs the error's name only", async () => {
+    const logs: TransportEvent[] = [];
+    const { port } = listen(modelPresentation().presentation, {
+      log: (event) => {
+        if (event.event === "refused") throw new Error("a planted fault zq-canary");
+        logs.push(event);
+      },
+    });
+    const response = await fetch(`http://${LOOPBACK}:${port}/nowhere`);
+    expect([response.status, await response.text(), corsOf(response)]).toEqual([
+      500,
+      "internal error",
+      [],
+    ]);
+    expect(logs).toEqual([{ event: "handler_error", error: "Error" }]);
+  });
+
   test("accepts an Origin only when it matches exactly, and a request without one", async () => {
     const origins = ["http://localhost:5173"];
     const { port, counting } = listen(modelPresentation().presentation, { publicOrigins: origins });
@@ -220,11 +294,19 @@ describe("the HTTP surface", () => {
 
   test("refuses a Host off its list on every path, and allows the list it is given", async () => {
     const { port } = listen(modelPresentation().presentation);
-    for (const path of ["/ws", "/healthz", "/nowhere"]) {
+    const requests: readonly (readonly [string, string])[] = [
+      ["GET", "/ws"],
+      ["GET", "/healthz"],
+      ["GET", "/nowhere"],
+      // The Host is checked before the method: this is 403, not 404.
+      ["POST", "/healthz"],
+    ];
+    for (const [method, path] of requests) {
       const response = await fetch(`http://${LOOPBACK}:${port}${path}`, {
+        method,
         headers: { Host: "evil.example" },
       });
-      expect([path, response.status, corsOf(response)]).toEqual([path, 403, []]);
+      expect([method, path, response.status, corsOf(response)]).toEqual([method, path, 403, []]);
     }
     const refused = await rawRequest(port, upgradeHead(port, { Host: `evil.example:${port}` }));
     refused.close();
@@ -341,6 +423,70 @@ describe("sockets", () => {
     expect([counting.closes, presentation.usage().clients]).toEqual([[], 0]);
   });
 
+  test("close with 1011 when connecting the client throws, and give the slot back", async () => {
+    const { presentation } = modelPresentation();
+    const failing: PresentationPort = {
+      connect: () => {
+        throw new Error("a planted connect fault");
+      },
+      receive: (id, text) => presentation.receive(id, text),
+      drained: (id) => presentation.drained(id),
+      close: (id) => presentation.close(id),
+    };
+    const logs: TransportEvent[] = [];
+    const transport = serveTransport({ ...transportOptions(failing, logs) });
+    running.push(transport);
+    // The upgrade completed: the client opens, then hears 1011 at once.
+    const victim = await client(transport.port);
+    expect(await victim.closing()).toBe(FAULT_CLOSE);
+    await until(() => transport.connections() === 0, "the slot");
+    expect(logs).toContainEqual({ event: "handler_error", error: "Error" });
+    expect(logs).toContainEqual({ event: "close", code: 1011, connections: 0 });
+  });
+
+  test("close with 1011 when the presentation throws in a handler, and release the client", async () => {
+    const { presentation } = modelPresentation();
+    const counting = new CountingPort(presentation);
+    const throwing: PresentationPort = {
+      connect: (sink) => counting.connect(sink),
+      receive: (id, text) => {
+        if (text === "boom") throw new Error("a planted receive fault zq-canary");
+        counting.receive(id, text);
+      },
+      drained: (id) => counting.drained(id),
+      close: (id) => counting.close(id),
+    };
+    const logs: TransportEvent[] = [];
+    const transport = serveTransport(transportOptions(throwing, logs));
+    running.push(transport);
+    const victim = await client(transport.port);
+    const id = counting.last ?? -1;
+    victim.send("boom");
+    expect(await victim.closing()).toBe(FAULT_CLOSE);
+    await until(() => presentation.usage().clients === 0, "the client to go");
+    expect([counting.closes, transport.connections()]).toEqual([[id], 0]);
+    expect(logs).toContainEqual({ event: "handler_error", error: "Error" });
+    expect(JSON.stringify(logs)).not.toContain("zq-canary");
+  });
+
+  test("give the slot back when a client goes in the middle of its handshake", async () => {
+    const { presentation } = modelPresentation();
+    const { port, counting, transport } = listen(presentation);
+    // One sends half a request and leaves; one sends a whole upgrade and leaves before the answer.
+    for (const request of [upgradeHead(port).slice(0, 40), upgradeHead(port)]) {
+      const socket = connect({ host: LOOPBACK, port });
+      socket.on("error", () => undefined);
+      socket.end(request);
+    }
+    await until(() => counting.last !== undefined, "the whole upgrade");
+    const id = counting.last ?? -1;
+    await until(
+      () => transport.connections() === 0 && presentation.usage().clients === 0,
+      "the slots and the client to go",
+    );
+    expect(counting.closes).toEqual([id]);
+  });
+
   test("close every socket with 1001 when the listener stops", async () => {
     const { presentation } = modelPresentation();
     const { port, transport } = listen(presentation);
@@ -388,6 +534,76 @@ function densePresentation(): Presentation {
   });
 }
 
+describe("Bun's limits", () => {
+  test("are ADR 0026's numbers", () => {
+    // This pins the spec's numbers: an idle timeout of 120 s and its pings cannot be observed in a
+    // test's time, so these options are checked as data; the buffer's limit is checked below too.
+    expect(SOCKET_OPTIONS).toEqual({
+      maxPayloadLength: 4096,
+      backpressureLimit: 1024 * 1024,
+      closeOnBackpressureLimit: true,
+      idleTimeout: 120,
+      sendPings: true,
+    });
+  });
+
+  test("close a client that does not read once 1 MiB waits for it, and release it once", async () => {
+    const { presentation } = modelPresentation();
+    const { port, counting, transport, logs } = listen(presentation);
+    const stalled = await client(port, { countOnly: true });
+    const id = counting.last ?? -1;
+    stalled.socket.pause();
+    const sink = counting.sinks.get(id);
+    if (sink === undefined) throw new Error("no sink");
+    // 8 MiB, sent straight through the sink: loopback takes a few megabytes, and Bun the rest
+    // until 1 MiB waits, when it closes the socket.
+    const frame = "z".repeat(64 * 1024);
+    let peak = 0;
+    for (let sent = 0; sent < 128 && transport.connections() > 0; sent += 1) {
+      sink.send(frame);
+      peak = Math.max(peak, sink.buffered());
+      if (sent % 4 === 3) await Bun.sleep(1);
+    }
+    await until(() => transport.connections() === 0, "Bun to close the socket");
+    expect(peak).toBeLessThanOrEqual(1024 * 1024 + frame.length);
+    await until(() => counting.closes.length === 1, "the client to go");
+    expect([counting.closes, presentation.usage().clients]).toEqual([[id], 0]);
+    expect(logs.at(-1)).toMatchObject({ event: "close", connections: 0 });
+  });
+});
+
+describe("Bun's order", () => {
+  test("runs the open handler within upgrade, which the slots of the caps rely on", async () => {
+    // The transport takes a slot before `upgrade` and gives it back in the close handler: that is
+    // exact only while Bun opens the socket inside `upgrade`, as Bun 1.4.4 does.
+    let opened = 0;
+    const seen: number[] = [];
+    const server = Bun.serve({
+      hostname: LOOPBACK,
+      port: 0,
+      fetch: (request, bun) => {
+        const upgraded = bun.upgrade(request);
+        seen.push(opened);
+        return upgraded ? undefined : new Response("no", { status: 400 });
+      },
+      websocket: {
+        open: () => {
+          opened += 1;
+        },
+        message: () => undefined,
+      },
+    });
+    try {
+      const socket = new WebSocket(`ws://${LOOPBACK}:${server.port}/`);
+      await until(() => socket.readyState === WebSocket.OPEN, "the socket");
+      expect(seen).toEqual([1]);
+      socket.close();
+    } finally {
+      await server.stop(true);
+    }
+  });
+});
+
 describe("backpressure (plan test 13)", () => {
   test("a client that stops reading lags alone, and its drain resumes its transaction at once", async () => {
     const presentation = densePresentation();
@@ -400,10 +616,14 @@ describe("backpressure (plan test 13)", () => {
     for (const one of [reader, paused])
       one.send(JSON.stringify({ type: "subscribe", chunks: [[0, 0]] }));
     await until(() => counting.received(pausedId) === 1, "the subscribes");
-    // Periods run until the paused client's buffer holds 256 KiB: past what loopback's buffers
-    // absorb, Bun keeps the rest, and the fan-out sends that client nothing.
+    // Periods run until the paused client's buffer holds 256 KiB: past what loopback absorbs, Bun
+    // keeps the rest, and the fan-out sends that client nothing. How much loopback absorbs is the
+    // kernel's: a send buffer of at most tcp_wmem's maximum, 4 MiB by default, and a receive window
+    // that does not grow while the client does not read. The chunk's 6 MB pass it, so the lag must
+    // come within the 24 periods of its transaction; the bound of 64 is generous, and only a kernel
+    // that absorbs all 6 MB would reach it.
     let periods = 0;
-    while (presentation.telemetry().laggingClients === 0 && periods < 40) {
+    while (presentation.telemetry().laggingClients === 0 && periods < 64) {
       presentation.period();
       periods += 1;
       await until(() => reader.frames === counting.sent(readerId), "the reader to read");
@@ -416,8 +636,8 @@ describe("backpressure (plan test 13)", () => {
     paused.socket.resume();
     await until(() => counting.sent(pausedId) > before, "a send after the drain");
     expect(counting.drains).toContain(pausedId);
-    // The buffer never passed what the presentation's budget allows, far below Bun's close at 1 MiB.
-    expect(counting.peakBuffered).toBeGreaterThanOrEqual(256 * 1024);
+    // The presentation guarantees an upper bound on the buffer: under 256 KiB before each message,
+    // and a message of at most 64 KiB, within ADR 0026's 512 KiB and far below Bun's close at 1 MiB.
     expect(counting.peakBuffered).toBeLessThan(512 * 1024);
     expect([reader.closed, paused.closed]).toEqual([false, false]);
   });
@@ -455,7 +675,9 @@ describe("backpressure (plan test 13)", () => {
         statuses.add(Math.sign(peer?.send(frame) ?? 0));
         if (sent % 8 === 7) await Bun.sleep(1);
       }
-      // 16 MiB went out: loopback took the first megabytes, then Bun buffered and said so.
+      // 16 MiB went out: loopback took the first megabytes, at most tcp_wmem's maximum (4 MiB by
+      // default) and a receive window that stays small while nothing reads; Bun buffered the rest
+      // and said so.
       expect([...statuses].sort()).toEqual([-1, 1]);
       expect(peer?.getBufferedAmount()).toBeGreaterThan(1024 * 1024);
       socket.resume();
