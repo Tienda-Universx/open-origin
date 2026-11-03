@@ -7,12 +7,18 @@
  * every executed tick is published. Started without ephemeral mode, on a host that is not
  * loopback, and with AI_MODE on, it names each problem and exits with 1.
  *
+ * No frame either client received holds a seed of that world, its terrain seed, the seed of its
+ * spawns, or the key `terrainSeed`, while its frames carry real terrain (plan test 11). A server
+ * signalled the moment it reports its port still stops and exits with 0.
+ *
  * The rejection comes from tests/e2e/fixtures/reject-on-input.ts, which `bun --preload` runs in the
  * server's own process: the server's code has no switch for tests. Each test kills its process if
  * it is still running.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { found, seedTexts } from "../../apps/server/test/support/leak.ts";
 import { SocketClient, until } from "../../apps/server/test/support/sockets.ts";
+import { LABELS2, labelSeeds } from "../../packages/scenarios/src/index.ts";
 
 const MAIN = `${import.meta.dir}/../../apps/server/src/main.ts`;
 const REJECT_ON_INPUT = `${import.meta.dir}/fixtures/reject-on-input.ts`;
@@ -33,10 +39,16 @@ function environment(variables: Readonly<Record<string, string>>): Record<string
   return { ...Object.fromEntries(inherited), ...variables };
 }
 
-/** A spawned server and the JSON lines of its stdout, read as they come. */
+/**
+ * A spawned server and the JSON lines of its stdout, read as they come. A line that is not JSON is
+ * kept in `unparsed`, which each test expects empty, so a failure shows what the server wrote.
+ */
 class ServerProcess {
   readonly child: Bun.Subprocess<"pipe", "pipe", "pipe">;
   readonly entries: LogEntry[] = [];
+  readonly unparsed: string[] = [];
+  /** Called with each line as soon as it is read, before any wait sees it. */
+  onEntry: ((entry: LogEntry) => void) | undefined;
   /** Resolves once stdout ended. */
   readonly read: Promise<void>;
 
@@ -52,12 +64,16 @@ class ServerProcess {
     this.read = this.#readLines();
   }
 
-  /** The first line of `event`, once the server wrote it. */
+  /** The first line of `event`, once the server wrote it; a timeout names what else it wrote. */
   async entry(event: string): Promise<LogEntry> {
-    await until(() => this.entries.some((entry) => entry.event === event), `"${event}"`, STEP_MS);
-    const found = this.entries.find((entry) => entry.event === event);
-    if (found === undefined) throw new Error(`no "${event}" line`);
-    return found;
+    const found = () => this.entries.find((entry) => entry.event === event);
+    await until(() => found() !== undefined, `"${event}"`, STEP_MS).catch((error: unknown) => {
+      const lines = JSON.stringify({ entries: this.entries, unparsed: this.unparsed });
+      throw new Error(`${String(error)}; the server wrote ${lines}`);
+    });
+    const entry = found();
+    if (entry === undefined) throw new Error(`no "${event}" line`);
+    return entry;
   }
 
   async #readLines(): Promise<void> {
@@ -66,10 +82,22 @@ class ServerProcess {
     for await (const chunk of this.child.stdout) {
       rest += decoder.decode(chunk, { stream: true });
       for (let end = rest.indexOf("\n"); end >= 0; end = rest.indexOf("\n")) {
-        this.entries.push(JSON.parse(rest.slice(0, end)));
+        this.#line(rest.slice(0, end));
         rest = rest.slice(end + 1);
       }
     }
+  }
+
+  #line(line: string): void {
+    let entry: LogEntry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      this.unparsed.push(line);
+      return;
+    }
+    this.entries.push(entry);
+    this.onEntry?.(entry);
   }
 }
 
@@ -156,6 +184,19 @@ function expectSameViews(views: readonly ReadonlyMap<number, string>[]): void {
   expect(common.some((tick) => one.get(tick)?.includes('"followed":{"id":1'))).toBe(true);
 }
 
+/**
+ * No frame of `pair` holds a seed of the default world, its terrain, or its spawns, each a word
+ * wide enough not to occur by chance, nor the key `terrainSeed`; and real terrain reached them.
+ */
+function expectNoSeeds(pair: readonly SocketClient[]): void {
+  const seeds = labelSeeds(LABELS2.default);
+  const words = [...seeds.world, ...seeds.terrain, seeds.spawn];
+  expect(words.every((word) => word > 0xff_ffff)).toBe(true);
+  const text = pair.flatMap(({ view }) => view.texts).join("\n");
+  expect(text).toContain('"terrain":{');
+  expect(found(text, [...seedTexts(words), '"terrainSeed"'])).toEqual([]);
+}
+
 /** The server's last line says it stopped, halted, with every executed tick published. */
 function expectStopped(server: ServerProcess): void {
   const stopped = server.entries.at(-1);
@@ -191,13 +232,28 @@ describe("the server process", () => {
     expect(await Promise.all(pair.map((client) => client.closing()))).toEqual([1001, 1001]);
     expectStopped(server);
     expectSameViews(views);
+    expectNoSeeds(pair);
+    expect(server.unparsed).toEqual([]);
     for (const client of pair) expect([client.errors, client.view.anomalies]).toEqual([[], []]);
+  }, 30_000);
+
+  test("stops and exits with 0 when signalled the moment it reports its port", async () => {
+    const server = spawnServer({ OPEN_ORIGIN_DURABILITY: "ephemeral", OPEN_ORIGIN_PORT: "0" });
+    // The signal goes out in the very task that reads the line: the handlers must exist by then.
+    server.onEntry = ({ event }) => {
+      if (event === "listening") server.child.kill("SIGINT");
+    };
+    expect(await server.child.exited).toBe(0);
+    await server.read;
+    expect(server.entries.map(({ event }) => event)).toEqual(["listening", "signal", "stopped"]);
+    expect(server.unparsed).toEqual([]);
   }, 30_000);
 
   test("refuses to start without ephemeral mode, on a host that is not loopback, or with AI_MODE on, naming each", async () => {
     const server = spawnServer({ OPEN_ORIGIN_HOST: "0.0.0.0", AI_MODE: "on" });
     expect(await server.child.exited).toBe(1);
     await server.read;
+    expect(server.unparsed).toEqual([]);
     expect(server.entries).toEqual([
       {
         event: "config_error",

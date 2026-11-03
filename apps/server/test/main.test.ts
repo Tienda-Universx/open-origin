@@ -1,103 +1,290 @@
 /**
- * The entry point in process (ADR 0025, "Faults", "Ephemeral mode", and "Configuration"; plan tests
- * 18 and the shutdown's RPO): `start` refuses with every problem of the configuration at once and
- * starts nothing; it logs the warnings, listens on the port it reports, and its `stop`, which
- * SIGTERM and SIGINT call, closes every socket with 1001 and flushes every executed tick before it
- * logs `stopped`; and an unhandled rejection halts the world. The world is the counting world on a
- * fake clock, so the ticks are exact; tests/e2e/server.test.ts runs the real process.
+ * The entry point in process (ADR 0025, "Faults", "Ephemeral mode", and "Configuration"; plan test
+ * 18 and the shutdown's RPO), over the counting world on a fake clock, so the ticks are exact, and
+ * a double of the process, which records the handlers, the lines, and the exits:
+ *
+ * - `start` refuses with every problem of the configuration at once and starts nothing; a port in
+ *   use is `listen_failed` with its code; a server that cannot start once bound is `start_failed`,
+ *   its port free again; and its `stop` closes the transport before the world flushes;
+ * - `main` binds every handler before it reports `listening`; SIGTERM and SIGINT each stop the
+ *   server, closing a client with 1001 and publishing every executed tick, and exit with 0 only
+ *   once the `stopped` line was written; a second signal while stopping forces exit 1; an unhandled
+ *   rejection halts the world; a refused start exits with 1.
+ *
+ * tests/e2e/server.test.ts runs the real process.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Running } from "../src/main.ts";
-import { type LogEntry, start } from "../src/main.ts";
+import { type Host, type LogEntry, main, type Running, type Signal, start } from "../src/main.ts";
+import { EphemeralJournal, type JournalBatch, type TickJournal } from "../src/world/journal.ts";
 import { ScriptedSource } from "../src/world/source.ts";
+import type { Timer } from "../src/world/time.ts";
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import { emptyProjection } from "./support/projections.ts";
-import { LOOPBACK, SocketClient } from "./support/sockets.ts";
+import { LOOPBACK, SocketClient, until } from "./support/sockets.ts";
 
 /** One period at 5 Hz, in microseconds. */
 const P = 200_000;
 
 const EPHEMERAL = { OPEN_ORIGIN_DURABILITY: "ephemeral", OPEN_ORIGIN_PORT: "0" } as const;
 
-const runs: Running[] = [];
+const CODESPACES_WARNING =
+  "CODESPACES=true: keep the forwarded port private; an ephemeral server is a local development server, not a public universe";
+
+const sockets: SocketClient[] = [];
+const blockers: Bun.Server<undefined>[] = [];
+/** What stops each server a test started. */
+const stops: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
-  for (const running of runs.splice(0)) await running.stop();
+  for (const client of sockets.splice(0)) client.socket.close();
+  for (const stop of stops.splice(0)) await stop();
+  for (const blocker of blockers.splice(0)) await blocker.stop(true);
 });
 
-/** Starts the counting world under `env` on a fake clock; returns what started, and the log. */
-function started(env: Record<string, string>) {
-  const logs: LogEntry[] = [];
+/** The counting world on a fake clock, whose timer tests may replace. */
+function worldDeps(timer?: Timer) {
   const clock = new FakeClock();
-  const timer = new FakeTimer(clock);
-  const result = start(env, {
-    log: (entry) => logs.push(entry),
+  const fake = new FakeTimer(clock);
+  const deps = {
     clock,
-    timer,
+    timer: timer ?? fake,
     source: new ScriptedSource(countingWorld(Number.MAX_SAFE_INTEGER), []),
     projectionOf: emptyProjection,
-  });
-  if (!result.ok) throw new Error(`the server did not start: ${result.errors.join("; ")}`);
-  runs.push(result.running);
-  return { running: result.running, logs, timer };
+  };
+  return { deps, fake };
+}
+
+/** A listener on a free loopback port, stopped after the test. */
+function blocker(): Bun.Server<undefined> {
+  const server = Bun.serve({ hostname: LOOPBACK, port: 0, fetch: () => new Response("") });
+  blockers.push(server);
+  return server;
+}
+
+/** A double of the process: what was bound, written, and exited, in order. */
+class FakeHost implements Host {
+  readonly env: Record<string, string>;
+  readonly lines: LogEntry[] = [];
+  /** The handlers bound and the lines written, in order: `on:<event>` and `write:<event>`. */
+  readonly calls: string[] = [];
+  readonly exits: number[] = [];
+  readonly signals = new Map<Signal, () => void>();
+  rejection: ((reason: unknown) => void) | undefined;
+  /** Callbacks of writes, which run only when the test says the pipe took them. */
+  readonly #written: (() => void)[] = [];
+
+  constructor(env: Record<string, string>) {
+    this.env = env;
+  }
+
+  write(text: string, written?: () => void): void {
+    for (const line of text.split("\n").filter((part) => part !== "")) {
+      const entry: LogEntry = JSON.parse(line);
+      this.lines.push(entry);
+      this.calls.push(`write:${entry.event}`);
+    }
+    if (written !== undefined) this.#written.push(written);
+  }
+
+  onSignal(signal: Signal, handler: () => void): void {
+    this.calls.push(`on:${signal}`);
+    this.signals.set(signal, handler);
+  }
+
+  onRejection(handler: (reason: unknown) => void): void {
+    this.calls.push("on:unhandledRejection");
+    this.rejection = handler;
+  }
+
+  exit(code: number): void {
+    this.exits.push(code);
+  }
+
+  /** Sends `signal`, which must have a handler. */
+  signal(signal: Signal): void {
+    const handler = this.signals.get(signal);
+    if (handler === undefined) throw new Error(`no handler for ${signal}`);
+    handler();
+  }
+
+  /** The pipe took every write so far: their callbacks run. */
+  flush(): void {
+    for (const written of this.#written.splice(0)) written();
+  }
+
+  /** The line of `event`, once written. */
+  async line(event: string): Promise<LogEntry> {
+    await until(() => this.lines.some((line) => line.event === event), `the "${event}" line`);
+    const found = this.lines.find((line) => line.event === event);
+    if (found === undefined) throw new Error(`no "${event}" line`);
+    return found;
+  }
+}
+
+/**
+ * Runs `main` over a FakeHost of `env` and the counting world; a server it started is stopped
+ * after the test, through SIGTERM when nothing sent a signal yet.
+ */
+async function mainOf(env: Record<string, string>) {
+  const host = new FakeHost(env);
+  const { deps, fake } = worldDeps();
+  await main(host, deps);
+  if (host.signals.size > 0) {
+    stops.push(async () => {
+      if (!host.lines.some(({ event }) => event === "signal")) host.signal("SIGTERM");
+      await host.line("stopped");
+    });
+  }
+  return { host, fake };
+}
+
+/** A client of the port that `host`'s `listening` line reports, closed after the test. */
+async function clientOf(host: FakeHost): Promise<SocketClient> {
+  const listening = await host.line("listening");
+  const client = await SocketClient.open(Number(listening.port));
+  sockets.push(client);
+  return client;
 }
 
 describe("start", () => {
-  test("refuses with every problem of the configuration at once, and starts nothing", () => {
+  test("refuses with every problem of the configuration at once, and starts nothing", async () => {
     const logs: LogEntry[] = [];
-    const result = start(
-      { OPEN_ORIGIN_HOST: "0.0.0.0", AI_MODE: "on" },
-      { log: (entry) => logs.push(entry) },
-    );
+    const result = await start({ OPEN_ORIGIN_HOST: "0.0.0.0", AI_MODE: "on" }, (entry) => {
+      logs.push(entry);
+    });
     const errors = [
       'OPEN_ORIGIN_DURABILITY must be "ephemeral": no durable journal is available until T7',
       "OPEN_ORIGIN_HOST must be a loopback address (127.0.0.0/8 or ::1): an ephemeral server listens only on this machine",
       'AI_MODE must be "off": other modes refuse to start until T9',
     ];
-    expect(result).toEqual({ ok: false, errors });
+    expect(result).toEqual({ ok: false, reason: "config", errors });
     expect(logs).toEqual(errors.map((message) => ({ event: "config_error", message })));
   });
 
-  test("warns, listens on the port it reports, and stops with 1001 after flushing every executed tick", async () => {
-    const { running, logs, timer } = started({ ...EPHEMERAL, CODESPACES: "true" });
-    expect(logs).toEqual([
-      {
-        event: "config_warning",
-        message:
-          "CODESPACES=true: keep the forwarded port private; an ephemeral server is a local development server, not a public universe",
+  test("reports a port in use as listen_failed with its code, and no message", async () => {
+    const logs: LogEntry[] = [];
+    const env = { ...EPHEMERAL, OPEN_ORIGIN_PORT: String(blocker().port) };
+    const result = await start(env, (entry) => logs.push(entry), worldDeps().deps);
+    expect(result).toEqual({ ok: false, reason: "listen", code: "EADDRINUSE" });
+    expect(logs).toEqual([{ event: "listen_failed", code: "EADDRINUSE" }]);
+  });
+
+  test("stops the listener when the server cannot start once bound, and the throw goes on", async () => {
+    const probe = blocker();
+    const port = probe.port ?? 0;
+    await probe.stop(true);
+    const logs: LogEntry[] = [];
+    const failing: Timer = {
+      schedule: () => {
+        throw new Error("a planted timer fault");
       },
-      { event: "listening", host: LOOPBACK, port: running.port },
-    ]);
-    const health = await fetch(`http://${LOOPBACK}:${running.port}/healthz`);
-    expect(await health.json()).toEqual({ ok: true });
+    };
+    const env = { ...EPHEMERAL, OPEN_ORIGIN_PORT: String(port) };
+    const started = start(env, (entry) => logs.push(entry), worldDeps(failing).deps);
+    await expect(started).rejects.toThrow("a planted timer fault");
+    expect(logs).toEqual([{ event: "start_failed", error: "Error" }]);
+    // The port is free again: another listener binds it.
+    const again = Bun.serve({ hostname: LOOPBACK, port, fetch: () => new Response("") });
+    expect(again.port).toBe(port);
+    await again.stop(true);
+  });
+
+  test("stops the transport, closing its sockets, before the world flushes", async () => {
+    // A journal that records how many sockets the transport holds at each append.
+    let running: Running | undefined;
+    const held: number[] = [];
+    const inner = new EphemeralJournal();
+    const journal: TickJournal = {
+      level: "none",
+      append: (batch: JournalBatch) => {
+        held.push(running?.transport.connections() ?? -1);
+        return inner.append(batch);
+      },
+    };
+    const { deps, fake } = worldDeps();
+    const result = await start(EPHEMERAL, () => undefined, { ...deps, journal });
+    if (!result.ok) throw new Error("the server did not start");
+    running = result.running;
+    stops.push(result.running.stop);
     const client = await SocketClient.open(running.port);
-    // Seven ticks, F = 5: the journal committed the first batch, and two ticks wait in the next.
-    await timer.runUntilSettled(6 * P);
-    const { executedTick, committedTick, publishedTick } = running.server.status();
-    expect([executedTick, committedTick, publishedTick]).toEqual([7, 5, 5]);
-    const stopping = running.stop();
-    expect(running.stop()).toBe(stopping);
-    await stopping;
+    sockets.push(client);
+    // Seven ticks, F = 5: the first batch went with the socket open; two ticks wait.
+    await fake.runUntilSettled(6 * P);
+    await running.stop();
+    expect(held).toEqual([1, 0]);
     expect(await client.closing()).toBe(1001);
-    expect(logs.at(-1)).toEqual({
-      event: "stopped",
-      executedTick: 7,
-      committedTick: 7,
-      publishedTick: 7,
-      state: "paused",
-    });
-    expect(running.server.presentation.usage().clients).toBe(0);
+  });
+});
+
+describe("main", () => {
+  test("binds every handler before it reports listening", async () => {
+    const { host } = await mainOf({ ...EPHEMERAL, CODESPACES: "true" });
+    expect(host.calls).toEqual([
+      "write:config_warning",
+      "on:unhandledRejection",
+      "on:SIGTERM",
+      "on:SIGINT",
+      "write:listening",
+    ]);
+    const listening = await host.line("listening");
+    expect(listening).toEqual({ event: "listening", host: LOOPBACK, port: listening.port });
+    expect(host.lines[0]).toEqual({ event: "config_warning", message: CODESPACES_WARNING });
+    const health = await fetch(`http://${LOOPBACK}:${listening.port}/healthz`);
+    expect(await health.json()).toEqual({ ok: true });
+  });
+
+  test.each(["SIGTERM", "SIGINT"] as const)(
+    "%s stops the server, closing its clients with 1001 and publishing every executed tick, and exits with 0 once that is written",
+    async (signal) => {
+      const { host, fake } = await mainOf(EPHEMERAL);
+      const client = await clientOf(host);
+      await fake.runUntilSettled(6 * P);
+      host.signal(signal);
+      expect(await client.closing()).toBe(1001);
+      expect(await host.line("stopped")).toEqual({
+        event: "stopped",
+        executedTick: 7,
+        committedTick: 7,
+        publishedTick: 7,
+        state: "paused",
+      });
+      // The transport's close of the client comes before the world's `stopped`.
+      expect(host.lines.map(({ event }) => event)).toEqual([
+        "listening",
+        "open",
+        "signal",
+        "close",
+        "stopped",
+      ]);
+      expect(host.lines[2]).toEqual({ event: "signal", signal });
+      expect(host.lines[3]).toEqual({ event: "close", code: 1001, connections: 0 });
+      // The exit waits until the pipe took the last line.
+      await Bun.sleep(1);
+      expect(host.exits).toEqual([]);
+      host.flush();
+      expect(host.exits).toEqual([0]);
+    },
+  );
+
+  test("forces exit 1 at a second signal while it stops", async () => {
+    const { host } = await mainOf(EPHEMERAL);
+    host.signal("SIGTERM");
+    host.signal("SIGINT");
+    host.flush();
+    expect(host.lines.map(({ event }) => event)).toEqual(["listening", "signal", "forced_exit"]);
+    expect(host.lines[2]).toEqual({ event: "forced_exit", signal: "SIGINT" });
+    expect(host.exits).toEqual([1]);
+    await host.line("stopped");
   });
 
   test("halts the world on an unhandled rejection, under AI_MODE=off", async () => {
-    const { running, logs, timer } = started(EPHEMERAL);
-    await timer.runUntilSettled(2 * P);
-    running.unhandledRejection(new Error("a planted rejection"));
-    expect(running.server.world.state()).toBe("halted");
+    const { host, fake } = await mainOf(EPHEMERAL);
+    await fake.runUntilSettled(2 * P);
+    host.rejection?.(new Error("a planted rejection"));
     const halt = { code: "unhandled_rejection", tick: 4 };
     // Three ticks ran, in a batch the halt flushes after the line is written.
-    expect(logs.at(-1)).toEqual({
+    expect(host.lines.at(-1)).toEqual({
       event: "unhandled_rejection",
       cause: { message: "a planted rejection" },
       executedTick: 3,
@@ -107,9 +294,9 @@ describe("start", () => {
       halt,
     });
     // The world runs no more ticks, and what it ran is published.
-    await timer.runUntilSettled(10 * P);
-    await running.stop();
-    expect(logs.at(-1)).toEqual({
+    await fake.runUntilSettled(10 * P);
+    host.signal("SIGTERM");
+    expect(await host.line("stopped")).toEqual({
       event: "stopped",
       executedTick: 3,
       committedTick: 3,
@@ -117,5 +304,19 @@ describe("start", () => {
       state: "halted",
       halt,
     });
+  });
+
+  test("exits with 1 once written when the configuration is refused or the port is in use", async () => {
+    const refused = await mainOf({ AI_MODE: "on" });
+    expect(refused.host.calls).toEqual(["write:config_error", "write:config_error"]);
+    expect(refused.host.exits).toEqual([]);
+    refused.host.flush();
+    expect(refused.host.exits).toEqual([1]);
+    const taken = await mainOf({ ...EPHEMERAL, OPEN_ORIGIN_PORT: String(blocker().port) });
+    taken.host.flush();
+    expect([taken.host.lines, taken.host.exits]).toEqual([
+      [{ event: "listen_failed", code: "EADDRINUSE" }],
+      [1],
+    ]);
   });
 });

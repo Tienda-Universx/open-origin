@@ -744,7 +744,7 @@ OPEN_ORIGIN_DURABILITY=ephemeral bun run --bun apps/server/src/main.ts
 world is the default world of T5, a new one with a new id at every start; a client connects to
 `ws://127.0.0.1:<port>/ws` with the subprotocol `open-origin.public.v1`.
 
-`start(env, deps)` does what the process does, for tests too:
+`start(env, log, deps)` builds the server, for tests too:
 
 1. It reads the configuration with `parseConfig`. When the configuration is refused, it logs each
    problem as `config_error`, naming the variable and its rule, all at once, and starts nothing:
@@ -753,37 +753,63 @@ world is the default world of T5, a new one with a new id at every start; a clie
 2. It logs each warning as `config_warning`: with `CODESPACES=true`, that the forwarded port must
    stay private.
 3. It wires `composeServer` with the real clock and timer of `src/adapters/` (tests may give fake
-   ones, a source, and its projection) and the transport, starts both, and logs `listening` with
-   the host and the port.
+   ones, a source, its projection, and a journal) and the transport. A port it cannot bind is
+   logged as `listen_failed` with the error's code (`EADDRINUSE`) and no message.
+4. It starts the server. When that throws once the listener bound, it logs `start_failed` with the
+   error's name, stops the transport and the server, and the throw goes on.
 
 It returns the running server, whose `stop()` stops the transport first, closing every socket with
 1001, then the server, which flushes every executed tick (RPO 0 once the journal is durable), and
 logs `stopped` with the executed, committed, and published ticks, the state, and the halt, if
 any. The server stops even when the transport fails to; every call returns the same promise.
 
-`main()` binds `start` to the process:
+`main(host, deps)` binds a started server to its process, `host`, which tests replace with a
+double: it installs every handler, then logs `listening` with the host and the port, so a
+supervisor that signals on that line always finds the handlers in place.
 
 | Event | What happens |
 |---|---|
-| A refused configuration | Exit code 1, after the `config_error` lines |
+| A refused configuration, or a port it cannot bind | Exit code 1, after the `config_error` or `listen_failed` lines |
+| A start that throws once bound | The throw goes on, after `start_failed`: exit code 1 and Bun's report on stderr |
 | SIGTERM or SIGINT | `signal`, then `stop()`, then exit code 0, or 1 if stopping failed (`stop_failed`, with the error's name) |
+| Another SIGTERM or SIGINT while it stops | `forced_exit`, with the signal, then exit code 1 at once |
 | `unhandledRejection` | The world halts by `rejectionPolicy(AI_MODE)`: with `off`, every client hears `status` `halted`. The line `unhandled_rejection` carries what was thrown (`causeOf`: an engine error's code, else its message and code) and the ticks; the server keeps serving the halted world |
+
+Every exit waits until the lines before it reached stdout: an empty write goes after them, and the
+process exits in its callback. The server sets no deadline on a stop: once the journal is durable,
+a stop can hang on it, and a supervisor brings its own grace period, then a second signal forces
+the exit.
 
 The log is JSON lines on stdout, the transport's events among them: events with codes, ticks,
 counts, and sizes, never a payload or an address, which are C2. An exception no handler catches,
 such as a fault of the whole presentation plane, ends the process with exit code 1 and Bun's own
 report on stderr, flushing nothing: with the ephemeral journal there is nothing durable to lose.
 
-`main.test.ts` runs `start` in process over the counting world on a fake clock: the refusal of
-every problem at once, the warning, the port it reports, and a `stop` that closes a client with
-1001 and publishes the two ticks a batch held (seven executed, five committed before it), and an
-unhandled rejection that halts the world. `tests/e2e/server.test.ts` (ADR 0019) spawns `main.ts`
-with `Bun.spawn` at 50 Hz on port 0: it reports its port; two clients receive commits, follow the
-same being, and show the same views at every tick both committed; a rejection that
-`tests/e2e/fixtures/reject-on-input.ts` plants on request, as a `bun --preload` in the server's own
-process, halts the world for both; SIGTERM closes them with 1001 and exits with 0, every executed
-tick published. Started without ephemeral mode, on `0.0.0.0`, and with `AI_MODE=on`, it names the
-three problems and exits with 1. The server's code has no switch for tests.
+`main.test.ts` runs `start` and `main` in process over the counting world on a fake clock and a
+double of the process:
+
+- `start` refuses every problem at once, reports a port in use as `listen_failed`, frees the port
+  when the server's start throws, and stops the transport before the world flushes: a journal that
+  counts the open sockets at each append sees one at the first batch and none at the last;
+- `main` binds every handler before `listening`; SIGTERM and SIGINT each close a client with
+  1001, publish the two ticks a batch held (seven executed, five committed before), and exit with 0
+  only once the pipe took the `stopped` line; a second signal forces exit 1; an unhandled rejection
+  halts the world; a refused configuration and a port in use exit with 1.
+
+`tests/e2e/server.test.ts` (ADR 0019) spawns `main.ts` with `Bun.spawn` on port 0:
+
+- at 50 Hz, it reports its port; two clients receive commits, follow the same being, and show the
+  same views at every tick both committed, and no frame they got holds a seed of the default
+  world, its terrain, or its spawns, or the key `terrainSeed`, though real terrain reached them; a
+  rejection that `tests/e2e/fixtures/reject-on-input.ts` plants on request, as a `bun --preload` in
+  the server's own process, halts the world for both; SIGTERM closes them with 1001 and exits with
+  0, every executed tick published;
+- signalled with SIGINT in the very task that reads its `listening` line, it stops and exits with 0;
+- started without ephemeral mode, on `0.0.0.0`, and with `AI_MODE=on`, it names the three problems
+  and exits with 1.
+
+A stdout line that is not JSON is kept and expected absent, so a failure shows it. The server's
+code has no switch for tests.
 
 ## Observer invariance
 
@@ -823,7 +849,8 @@ The clients are:
 - a follower that follows a being the world does not hold (`unknown_being`, no strike), then
   churns camera and followed being at random, pings, and resyncs;
 - a client that stops reading for ten periods and catches up, consistent at every commit, and one
-  that leaves and comes back to a new `hello` and a reset;
+  that leaves and comes back to a new `hello` and a reset, each of its commits from its return the
+  published world;
 - the hostile battery (plan test 12): a binary frame closed with 1003, a frame over 4 KiB closed with
   1009, bad JSON, `__proto__`, and a type that would pause the world, closed with 1008 on the third
   strike, and 25 pings at once, 20 answered and the rest refused until 1008.
