@@ -1,13 +1,15 @@
 /**
  * The memory and work limits of the presentation's edge (plan tests 7b and 14 in process; ADR 0026,
  * "Limits and backpressure"). A view is trimmed to its limit at L', the follow window first, then
- * the camera in the client's order, and the client is told what was left out in a `notice`. The
- * replaced versions clients pin are held to their limit after each period's fan-out: every client
- * that pins the oldest is aborted, with its view when it pins that version at L, and the third
- * abort within 60 s closes it with 1013. At most 16 chunks of terrain are generated a period, from
- * a queue served first come, first served that holds terrain for its head alone, which a cache that
- * evicts it cannot take back, and the clients of a flood are served in the order they arrived.
- * Connections, closes, aborts, faults, and waits for terrain leave every count at zero.
+ * the camera in the client's order, and the client is told what was left out in a `notice`, all of
+ * it when the followed being's own chunk alone passes the limit. The replaced versions clients pin
+ * are held to their limit after each period's fan-out: every client that pins the oldest is
+ * aborted, with its view when it pins that version at L, and the third abort within 60 s closes it
+ * with 1013. At most 16 chunks of terrain are generated a period, from a queue served first come,
+ * first served that holds terrain for its head alone, which a cache that evicts it cannot take
+ * back; the clients of a flood are served in the order they arrived, and a generation that throws
+ * drops its client alone. Connections, closes, aborts, faults, and waits for terrain leave every
+ * count at zero.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -18,7 +20,7 @@ import {
   type TerrainPublic,
 } from "@open-origin/protocol/public";
 import type { ClientId } from "../src/presentation/interest.ts";
-import type { Presentation } from "../src/presentation/presentation.ts";
+import type { Ending, Presentation } from "../src/presentation/presentation.ts";
 import { guardRetention } from "../src/presentation/retention.ts";
 import { TerrainCache, TerrainQueue, WIDEST_TERRAIN_BYTES } from "../src/presentation/terrain.ts";
 import { ChunkVersion } from "../src/presentation/version.ts";
@@ -48,6 +50,41 @@ const keysOf = (client: ViewClient) => [...(client.state.view?.chunks.keys() ?? 
 
 /** The chunk keys of `chunks`, sorted. */
 const sortedKeys = (chunks: readonly ChunkCoord[]) => chunks.map(chunkKey).sort();
+
+/** The window of the chunk (10, 10), its center first, then the camera's chunk (0, 0). */
+const CENTER_FIRST: ChunkCoord[] = [
+  [10, 10],
+  [9, 9],
+  [10, 9],
+  [11, 9],
+  [9, 10],
+  [11, 10],
+  [9, 11],
+  [10, 11],
+  [11, 11],
+  [0, 0],
+];
+
+/**
+ * A client whose view limit the chunk (10, 10) passes alone, with the 40 beings it holds, being 1
+ * among them, while its camera, the empty chunk (0, 0), fits: it shows the camera.
+ */
+function oversizedCenter() {
+  const followed = beingsOf([10, 10], 1, 40);
+  const over = presentationOver(new ModelWorld(0, followed), {
+    viewBytes: viewBytes(followed) - 1,
+  });
+  const client = new ViewClient();
+  const id = over.presentation.connect(client);
+  over.presentation.subscribe(id, [[0, 0]]);
+  over.presentation.period();
+  expect(keysOf(client)).toEqual(["0,0"]);
+  return { ...over, client, id };
+}
+
+/** The notices `client` received. */
+const noticesOf = (client: ViewClient) =>
+  client.messages.flatMap((message) => (message.type === "notice" ? [message] : []));
 
 describe("the view's limit", () => {
   test("keeps the follow window first, then the camera in the client's order, and lists the rest in a notice", () => {
@@ -105,6 +142,40 @@ describe("the view's limit", () => {
     advance();
     expect(keysOf(client)).toEqual([...windowKeys, "3,0", "6,0"].sort());
     expect(client.messages.filter(({ type }) => type === "notice")).toHaveLength(1);
+    expect(presentation.telemetry().trims).toBe(2);
+  });
+
+  test("drops the whole view when the followed being's own chunk alone passes the limit, and lists every chunk in a notice", () => {
+    const { presentation, advance, client, id } = oversizedCenter();
+    presentation.follow(id, 1);
+    advance();
+    // The prefix that fits is empty: the window, the followed being's chunk first, and the camera
+    // are all left out, and the view drops the chunk it showed.
+    expect(noticesOf(client)).toEqual([
+      { type: "notice", seq: 3, tick: 0, code: "interest_trimmed", chunks: CENTER_FIRST },
+    ]);
+    expect(keysOf(client)).toEqual([]);
+    expect(client.state.trimmed).toEqual(CENTER_FIRST);
+    // The transaction still names the followed being, whose record the view keeps.
+    expect(client.state.view?.followed).toEqual(being(1, [320, 320]));
+    expect(presentation.telemetry().trims).toBe(1);
+    expect(client.anomalies).toEqual([]);
+  });
+
+  test("tells the client again when the chunks left out change after none were", () => {
+    const { presentation, advance, client, id } = oversizedCenter();
+    presentation.follow(id, 1);
+    advance();
+    // Following no one, the camera fits: nothing is left out, and no notice says so.
+    presentation.follow(id, null);
+    advance();
+    expect(keysOf(client)).toEqual(["0,0"]);
+    expect(noticesOf(client)).toHaveLength(1);
+    // The same chunks left out again are a change from none: a second notice lists them.
+    presentation.follow(id, 1);
+    advance();
+    expect(noticesOf(client).map(({ chunks }) => chunks)).toEqual([CENTER_FIRST, CENTER_FIRST]);
+    expect(keysOf(client)).toEqual([]);
     expect(presentation.telemetry().trims).toBe(2);
   });
 
@@ -538,6 +609,55 @@ describe("terrain", () => {
     expect([queue.queued, queue.held]).toEqual([0, 0]);
   });
 
+  test("a queued generation that throws drops the client that waits for it alone, and the queue goes on with the next", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const failure = new Error("no terrain for chunk 9,51");
+    const { calls, read } = countingTerrain();
+    const readTerrain = (at: ChunkCoord): TerrainPublic => {
+      const terrain = read(at);
+      if (chunkKey(at) === "9,51") throw failure;
+      return terrain;
+    };
+    const { presentation, advance } = presentationOver(model, { readTerrain, terrainPerPeriod: 3 });
+    const [first, broken, last] = [new EndedClient(), new EndedClient(), new EndedClient()];
+    const cameras = new Map<EndedClient, ChunkCoord[]>([
+      [first, row(50, 4)],
+      [broken, [...row(51, 2), [9, 51]]],
+      [last, row(52)],
+    ]);
+    for (const [client, camera] of cameras)
+      presentation.subscribe(presentation.connect(client), camera);
+    /** The chunks each period generates. */
+    const generated: string[][] = [];
+    for (let period = 0; period < 5; period += 1) {
+      const before = calls.length;
+      advance();
+      generated.push(calls.slice(before));
+      if (period === 1) expect(broken.ending).toBeUndefined();
+    }
+    // The first client asks for four chunks and gets three at once; the queue gives it the fourth,
+    // then the broken client its first two. Its third throws in the queue: it is dropped, and the
+    // rest of that period's budget goes to the last client.
+    expect(generated).toEqual([
+      ["0,50", "1,50", "2,50"],
+      ["3,50", "0,51", "1,51"],
+      ["9,51", "0,52", "1,52"],
+      ["2,52"],
+      [],
+    ]);
+    expect(broken.ending).toEqual({ reason: "fault", cause: failure });
+    expect(presentation.telemetry()).toMatchObject({ faults: 1, connections: 2, terrainQueue: 0 });
+    expect(keysOf(first)).toEqual(sortedKeys(row(50, 4)));
+    expect(keysOf(last)).toEqual(sortedKeys(row(52)));
+    expect([first.ending, last.ending]).toEqual([undefined, undefined]);
+    expect(presentation.usage()).toMatchObject({
+      clients: 2,
+      terrain: { queued: 0, held: 0 },
+      faults: 1,
+      failed: false,
+    });
+  });
+
   test("a client needs at most the chunks of a full view", () => {
     const queue = new TerrainQueue(new TerrainCache(terrainAt), 1);
     const tooMany = row(0, MAX_VIEW_CHUNKS + 1);
@@ -547,6 +667,15 @@ describe("terrain", () => {
     expect([queue.queued, queue.held]).toEqual([0, 0]);
   });
 });
+
+/** A client that records how the presentation ended it, a fault included, instead of failing. */
+class EndedClient extends ViewClient {
+  ending: Ending | undefined;
+
+  override end(ending: Ending): void {
+    this.ending = ending;
+  }
+}
 
 /** A sink that throws on its `failOn`th message, as a socket that broke would. */
 function breaking(failOn: number) {
