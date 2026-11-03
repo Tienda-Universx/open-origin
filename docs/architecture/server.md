@@ -168,8 +168,8 @@ it publishes `{tick, clock, chunks, speech, feed}`, frozen at every level, and o
   `being.started` is excluded, since the kind of activity it reports is in the being's record.
   Events of other classes are never read.
 - **Plain text.** A rendered text that is not `PlainText` is left out and counted in
-  `omittedSpeech` (C3); the greeting of a `greet` still reaches the feed. The admin status does not
-  carry the count yet.
+  `omittedSpeech` (C3), which the server's status reports; the greeting of a `greet` still reaches
+  the feed.
 - **Terrain.** `readTerrain(chunk)` is a pure closure over the prepared genesis: it generates the
   chunk with worldgen, never in the world's state, and returns `TerrainPublic` with only the
   `surface` observables that vary by cell, `elevation`, `liquidDepth` (max(0, L − elevation)), and
@@ -379,7 +379,7 @@ for the next period, which serves them first. The first client of a period is al
 client deferred one period is first in the next, so a client waits only while the clients ahead of
 it in the rotation are served. The fan-out never runs inside the world's step and never touches
 it: under load, clients see fewer, larger steps, and the world runs on. Each fan-out's duration
-goes to `recordFanOut`, when one is given.
+goes to `recordFanOut`, which `composeServer` keeps for the status's percentiles.
 
 ### The world's state
 
@@ -429,13 +429,13 @@ and no longer needed is let go.
 
 ### Telemetry
 
-`telemetry()` reports, as C3: `connections`; `laggingClients`, the clients the last fan-out found
-with a full buffer; `retainedBytes`; `terrainQueue`, the chunks waiting clients wait for; and the
-counts since start of `aborts`, `trims`, `strikes`, `strikeCloses`, `slowCloses`, and `faults`. No
-public message carries any of them: every public frame is built from the protocol's strict schemas.
-`usage()` reports, for tests, what the presentation holds: clients, interest, index entries,
-followings, pins, retained bytes and versions, and the terrain waited for and kept, every count
-zero once every client is gone.
+`telemetry()` reports, as C3 for the admin status: `connections`; `laggingClients`, the clients the
+last fan-out found with a full buffer; `retainedBytes`; `terrainQueue`, the chunks waiting clients
+wait for; and the counts since start of `aborts`, `trims`, `strikes`, `strikeCloses`, `slowCloses`,
+and `faults`. No public message carries any of them: every public frame is built from the
+protocol's strict schemas. `usage()` reports, for tests, what the presentation holds: clients,
+interest, index entries, followings, pins, retained bytes and versions, and the terrain waited for
+and kept, every count zero once every client is gone.
 
 ### Tests
 
@@ -514,7 +514,7 @@ host, and the scheduler, and returns:
 | `subscribeToPublished(listener)` | Adds a listener of published ticks and returns the function that removes it. The listener receives the boot record first; after the first publication this throws |
 | `readTerrain(chunk)` | The projection's `readTerrain`: the public terrain of a chunk, never materialized |
 | `state()` | The world's state: `halted` once the host halted or the journal failed, otherwise the scheduler's, with `journalStall` as `stalled` |
-| `status()` | The server's status, shaped for `ServerStatus` of `@open-origin/protocol/admin` |
+| `status()` | The world plane's status, shaped for `ServerStatus` of `@open-origin/protocol/admin`; this plane has no clients, so the presentation's members are zero |
 | `unhandledRejection()` | Asks `rejectionPolicy(AI_MODE)`; with `off`, the world halts |
 | `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |
 
@@ -524,8 +524,9 @@ a `TickScheduler` over the options a `FixedRateScheduler` takes), and K. A journ
 halts the host with `journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P`
 from the gate, and its state is `state()`. `projectionMicros` holds the percentiles of each
 projection's duration on the injected clock over the last 1,024 ticks; `stepMicros` covers the
-whole tick, the projection included. `fanOutMicros` and `connections` stay 0 in this status: the
-presentation measures them.
+whole tick, the projection included. `omittedSpeech` is the projection's count of speech left out
+for text that is not plain text, when the projection keeps one (`BeingsProjection` does; a test's
+projection may not, and counts 0).
 
 `rejectionPolicy` is a pure function: with `AI_MODE=off` an unhandled rejection halts the world,
 because no code of the world awaits anything, and async work in a brain would be a wall-clock
@@ -537,7 +538,10 @@ and timer, the configured rate, F, and `MAX_RETAINED_BYTES`, and hello's world: 
 bytes, fresh at every boot unless a test gives `worldId`, and the configured durability. Its
 `start()` starts the presentation's periods, then the world's clock, so a presentation that cannot
 start leaves no world running; `stop()` stops the periods and detaches the presentation, then stops
-the world, resolving once every executed tick is published. T6-7's entry point calls it.
+the world, resolving once every executed tick is published. Its `status()` is the world plane's
+status with the presentation's telemetry, and `fanOutMicros`, the percentiles of the last 1,024
+fan-outs' durations on the injected clock. T6-7's entry point calls it, and T8's admin listener
+serves its status.
 
 ## Observer invariance
 

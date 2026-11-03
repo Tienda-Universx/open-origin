@@ -3,10 +3,10 @@
  * of its world, the host, the publication gate, the journal, and the scheduler, and hands the rest
  * of the server only what the presentation plane may hold: a subscription to frozen published
  * ticks, the public terrain of a chunk, and the world's state. `composeServer` wires the
- * presentation plane to those three functions. The entry point (T6-7) passes the real clock and
- * timer; tests pass fake ones, and may replace the journal, the source, its projection, the
- * scheduler, and K. The planes receive their settings as parameters: only this module and the
- * entry point read the configuration.
+ * presentation plane to those three functions, and joins both planes' telemetry in the server's
+ * status. The entry point (T6-7) passes the real clock and timer; tests pass fake ones, and may
+ * replace the journal, the source, its projection, the scheduler, and K. The planes receive their
+ * settings as parameters: only this module and the entry point read the configuration.
  */
 import { readView, type World } from "@open-origin/engine";
 import type { ServerStatus } from "@open-origin/protocol/admin";
@@ -30,6 +30,12 @@ import {
 import { ScenarioSource, type WorldSource } from "./world/source.ts";
 import type { Clock, Timer } from "./world/time.ts";
 
+/**
+ * A projection of the source's world, and, when it keeps one, the count of items of speech it left
+ * out because their text was not plain text (C3), which BeingsProjection keeps.
+ */
+export type CountingProjection = WorldProjection & { readonly omittedSpeech?: number };
+
 /** What the world plane needs from outside: real time, and replacements for tests. */
 export type WorldPlaneDeps = {
   readonly clock: Clock;
@@ -39,7 +45,7 @@ export type WorldPlaneDeps = {
   /** The default world of T5 unless given. */
   readonly source?: WorldSource;
   /** The projection of the source's world: the C0 projection of a world of beings unless given. */
-  readonly projectionOf?: (world: World) => WorldProjection;
+  readonly projectionOf?: (world: World) => CountingProjection;
   /** K, the ticks between checkpoints: 300 unless given. */
   readonly checkpointTicks?: number;
   /** The scheduler of the world's ticks: a FixedRateScheduler over `options` unless given. */
@@ -64,7 +70,10 @@ export type WorldPlane = {
    * The world's state now, the same for every client: halted once it halted, else the scheduler's.
    */
   state(): ServerStatus["state"];
-  /** The server's status (C3), shaped for the admin contract; this plane has no connections. */
+  /**
+   * The server's status (C3), shaped for the admin contract. This plane has no clients: the
+   * presentation's members are zero, and `composeServer`'s status fills them.
+   */
   status(): ServerStatus;
   /** What the process's `unhandledRejection` handler calls: the world halts under AI_MODE=off. */
   unhandledRejection(): void;
@@ -77,6 +86,21 @@ export type WorldPlane = {
 
 /** Durations the world plane does not measure: the fan-out is the presentation's. */
 const UNMEASURED = Object.freeze({ p50: 0, p95: 0, p99: 0 });
+
+/** The presentation's members of the status, for a world plane that has no clients. */
+const NO_CLIENTS = Object.freeze({
+  fanOutMicros: UNMEASURED,
+  connections: 0,
+  laggingClients: 0,
+  retainedBytes: 0,
+  terrainQueue: 0,
+  aborts: 0,
+  trims: 0,
+  strikes: 0,
+  strikeCloses: 0,
+  slowCloses: 0,
+  faults: 0,
+});
 
 /** The public state of a scheduler's state. */
 const STATES: Readonly<Record<SchedulerState, ServerStatus["state"]>> = Object.freeze({
@@ -92,7 +116,7 @@ type Parts = {
   readonly host: WorldHost;
   readonly scheduler: TickScheduler;
   readonly hold: () => Hold | undefined;
-  readonly projection: WorldProjection;
+  readonly projection: CountingProjection;
   /** How long the projection of each of the last ticks took, in microseconds (C3). */
   readonly projections: SampleWindow;
 };
@@ -155,11 +179,12 @@ function stateOf(hold: Parts["hold"], state: SchedulerState): ServerStatus["stat
   return hold() === "halted" ? "halted" : STATES[state];
 }
 
-/** The status of the wired world plane of `config`. */
+/** The status of the wired world plane of `config`, with no clients. */
 function statusOf(config: Config, parts: Parts): ServerStatus {
-  const { gate, host, scheduler, hold, projections } = parts;
+  const { gate, host, scheduler, hold, projection, projections } = parts;
   const metrics = scheduler.metrics();
   return {
+    ...NO_CLIENTS,
     executedTick: gate.executed,
     committedTick: gate.committed,
     publishedTick: gate.published,
@@ -170,10 +195,9 @@ function statusOf(config: Config, parts: Parts): ServerStatus {
     latenessMicros: metrics.latenessMicros,
     stepMicros: metrics.stepMicros,
     projectionMicros: projections.percentiles(),
-    fanOutMicros: UNMEASURED,
     shortfallTicks: metrics.shortfallTicks,
     rebases: metrics.rebases,
-    connections: 0,
+    omittedSpeech: projection.omittedSpeech ?? 0,
   };
 }
 
@@ -218,6 +242,8 @@ export type Server = {
   start(): void;
   /** Stops the presentation's periods and the world's clock; resolves once every tick is published. */
   stop(): Promise<void>;
+  /** The server's status (C3): the world plane's, with the presentation's telemetry. */
+  status(): ServerStatus;
 };
 
 /**
@@ -236,6 +262,7 @@ function randomWorldId(): string {
  */
 export function composeServer(config: Config, deps: ServerDeps): Server {
   const world = compose(config, deps);
+  const fanOuts = new SampleWindow(TICK_SAMPLES);
   const presentation = new Presentation({
     subscribeToPublished: (listener) => world.subscribeToPublished(listener),
     readTerrain: (chunk) => world.readTerrain(chunk),
@@ -246,10 +273,16 @@ export function composeServer(config: Config, deps: ServerDeps): Server {
     batchTicks: config.publicationBatchTicks,
     world: { id: deps.worldId ?? randomWorldId(), durability: config.durability },
     retainedBytes: config.retainedBytes,
+    recordFanOut: (micros) => fanOuts.add(micros),
   });
   return Object.freeze({
     world,
     presentation,
+    status: () => ({
+      ...world.status(),
+      ...presentation.telemetry(),
+      fanOutMicros: fanOuts.percentiles(),
+    }),
     // The presentation starts first: one that cannot start leaves no world clock running.
     start: () => {
       presentation.start();

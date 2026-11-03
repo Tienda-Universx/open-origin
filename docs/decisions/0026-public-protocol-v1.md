@@ -251,7 +251,9 @@ no session for a client that disconnected.
 `protocol/admin` defines three contracts:
 
 - `ServerStatus` (C3): the executed, committed, and published ticks, rates, lateness, shortfall,
-  connections, durability, and state;
+  connections, durability, and state; the fan-out's durations; the presentation's lagging clients,
+  retained bytes, and terrain queue; its counts of aborts, trims, strikes, closes for strikes and
+  for slowness, and faults; and the speech the projection left out;
 - `OperatorCommand` (`pause{reason}`, `resume`);
 - `AuditEntry`.
 

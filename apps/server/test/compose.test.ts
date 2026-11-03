@@ -5,7 +5,9 @@
  * stop flushes the partial batch; a lagging journal stalls the scheduler without shortfall; a
  * journal failure, an engine fault, and an unhandled rejection halt the world; the source's world
  * is projected once per tick, timed, and its terrain served, and one that is not a world of beings
- * is refused; and the status validates against the admin contract.
+ * is refused; and the status validates against the admin contract. composeServer feeds the
+ * presentation from the world plane alone, which tells every client the world's state, and joins
+ * both planes' telemetry in the server's status.
  */
 import { describe, expect, test } from "bun:test";
 import { readView, type World, worldgen } from "@open-origin/engine";
@@ -25,6 +27,7 @@ import { ScenarioSource, ScriptedSource, type WorldSource } from "../src/world/s
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import { ControlledJournal, settle } from "./support/journals.ts";
+import { ViewClient } from "./support/presentation.ts";
 import { emptyProjection, publishedAt } from "./support/projections.ts";
 
 /** One period at 5 Hz, in microseconds. */
@@ -93,6 +96,16 @@ describe("compose", () => {
       shortfallTicks: 0,
       rebases: 0,
       connections: 0,
+      laggingClients: 0,
+      retainedBytes: 0,
+      terrainQueue: 0,
+      aborts: 0,
+      trims: 0,
+      strikes: 0,
+      strikeCloses: 0,
+      slowCloses: 0,
+      faults: 0,
+      omittedSpeech: 0,
     });
     expect(world.state()).toBe("paused");
     world.start();
@@ -435,5 +448,49 @@ describe("composeServer", () => {
     expect(ids[0]).toMatch(/^[0-9a-f]{32}$/);
     expect(ids[1]).toMatch(/^[0-9a-f]{32}$/);
     expect(ids[0]).not.toBe(ids[1]);
+  });
+});
+
+describe("the server's status", () => {
+  test("joins the presentation's telemetry and the projection's omitted speech, and every client hears the world's state", async () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const server = composeServer(configOf(), {
+      clock,
+      timer,
+      source: new ScriptedSource(countingWorld(1_000_000), []),
+      projectionOf: (world) => ({ ...emptyProjection(world), omittedSpeech: 3 }),
+    });
+    const client = new ViewClient();
+    // Each message takes 100 µs on the injected clock, where the fan-out is measured.
+    client.onMessage = () => clock.advance(100);
+    const id = server.presentation.connect(client);
+    server.start();
+    await timer.runUntilSettled(10 * P);
+    server.presentation.receive(id, "{");
+    expect(ServerStatus.parse(server.status())).toMatchObject({
+      state: "running",
+      connections: 1,
+      laggingClients: 0,
+      strikes: 1,
+      strikeCloses: 0,
+      omittedSpeech: 3,
+    });
+    expect(ServerStatus.parse(server.status()).fanOutMicros.p50).toBeGreaterThanOrEqual(100);
+    server.world.unhandledRejection();
+    await timer.runUntilSettled(20 * P);
+    const states = client.messages.flatMap((message) =>
+      message.type === "hello" || message.type === "status" ? [message.state] : [],
+    );
+    // Hello came before the world started; then it ran, and halted. Once the playout ran out of
+    // published ticks, a halted world is heard each period.
+    expect(states.slice(0, 3)).toEqual(["paused", "running", "halted"]);
+    expect(states.slice(2)).toEqual(Array(states.length - 2).fill("halted"));
+    expect(states.length).toBeGreaterThan(3);
+    expect(ServerStatus.parse(server.status())).toMatchObject({ state: "halted", strikes: 1 });
+    server.presentation.close(id);
+    expect(ServerStatus.parse(server.status())).toMatchObject({ connections: 0, retainedBytes: 0 });
+    await server.stop();
+    expect(client.anomalies).toEqual([]);
   });
 });

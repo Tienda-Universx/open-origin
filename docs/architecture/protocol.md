@@ -289,8 +289,13 @@ the reducer never does.
 - **`ServerStatus`**: `executedTick`, `committedTick`, and `publishedTick`, with E ≥ C ≥ P;
   `tickRateHz` (1 to 1,000) and `simSecondsPerTick` (from 1); `durability` and `state`; the
   percentiles `{p50, p95, p99}`, in rising order and whole microseconds, of `latenessMicros`,
-  `stepMicros`, `projectionMicros`, and `fanOutMicros`; and the counts `shortfallTicks`, `rebases`,
-  and `connections`.
+  `stepMicros`, `projectionMicros`, and `fanOutMicros`; the counts `shortfallTicks`, `rebases`, and
+  `connections`; the presentation's gauges `laggingClients` (the clients the last fan-out found with
+  a full buffer), `retainedBytes` (replaced chunk versions still pinned), and `terrainQueue` (chunks
+  of terrain clients wait for); its counts since start `aborts`, `trims`, `strikes`,
+  `strikeCloses` (1008), `slowCloses` (1013), and `faults`; and `omittedSpeech`, the items of
+  speech the projection left out because their text was not plain text. Every count is an integer
+  from 0.
 - **`OperatorCommand`**: `{type: "pause", reason}`, with a plain-text reason, or `{type: "resume"}`.
 - **`AuditEntry`**: `seq`, `atMs` (wall-clock milliseconds since the Unix epoch), `actor` (an
   identifier), `command`, `tick` (the published tick), and `outcome`, `applied` or `rejected`.
