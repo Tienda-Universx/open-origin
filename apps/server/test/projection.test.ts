@@ -492,6 +492,39 @@ describe("the C0 projection of a world", () => {
     expect(() => new BeingsProjection(worldHolding(7))).toThrow(EngineError);
   });
 
+  test("boots with the full projection of its first tick: every chunk that holds a being, whole", () => {
+    const world = canaryWorld();
+    const view = readView(world as World<beings.BeingsGlobal, beings.BeingsChunk>);
+    const records = (key: string): BeingPublic[] =>
+      (view.readChunk(key)?.beings ?? []).map((being) =>
+        checkedRecord(being.id, publicRecordOf(being)),
+      );
+    const projection = new BeingsProjection(world);
+    const boot = projection.boot();
+    const calendar = calendarClock(PREPARED, view.simSecondsPerTick);
+    expect(boot).toEqual({
+      tick: 0,
+      clock: calendar(0),
+      chunks: view
+        .chunkKeys()
+        .filter((key) => records(key).length > 0)
+        .map((key) => {
+          const [x, y] = key.split(",").map(Number) as [number, number];
+          return { at: [x, y], v: 0, upsert: records(key), gone: [] };
+        }),
+      speech: [],
+      feed: [],
+    });
+    expect(boot.chunks.flatMap(({ upsert }) => upsert.map(({ id }) => id)).sort()).toEqual([
+      WALKER,
+      SITTER,
+    ]);
+    expect(Object.isFrozen(boot.chunks[0]?.upsert[0])).toBe(true);
+    // Projecting later ticks leaves the boot record as it was.
+    projection.project(step(world, []));
+    expect(projection.boot()).toBe(boot);
+  });
+
   test("publishes for each walker the direction of the step it is on, over the default scenario", () => {
     const source = new ScenarioSource();
     const projection = new BeingsProjection(source.world);

@@ -1,4 +1,4 @@
-import type { World } from "@open-origin/engine";
+import { readView, type World } from "@open-origin/engine";
 import type { WorldProjection } from "../../src/projection/projection.ts";
 import { deepFrozen, type PublishedTick } from "../../src/world/published.ts";
 
@@ -11,9 +11,14 @@ export function publishedAt(tick: number): PublishedTick {
   return deepFrozen({ tick, clock, chunks: [], speech: [], feed: [] });
 }
 
-/** The projection of a world that holds no beings and no terrain, such as the counting world. */
-export function emptyProjection(_world: World): WorldProjection {
+/**
+ * The projection of a world that holds no beings and no terrain, such as the counting world: its
+ * boot record is the empty record of the world's tick.
+ */
+export function emptyProjection(world: World): WorldProjection {
+  const boot = publishedAt(readView(world).tick);
   return {
+    boot: () => boot,
     project: ({ tick }) => publishedAt(tick),
     readTerrain: () => {
       throw new Error("a world without beings has no terrain");

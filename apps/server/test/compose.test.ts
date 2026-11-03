@@ -1,17 +1,21 @@
 /**
  * The world plane as compose() wires it (ADR 0025), on a fake clock and timer whose callbacks let
- * the journal's acknowledgements run between ticks, as the event loop does: the world runs at its
- * rate and publishes only what the journal committed; stop flushes the partial batch; a lagging
- * journal stalls the scheduler without shortfall; a journal failure, an engine fault, and an
- * unhandled rejection halt the world; the source's world is projected once per tick, timed, and
- * its terrain served, and one that is not a world of beings is refused; and the status validates
- * against the admin contract.
+ * the journal's acknowledgements run between ticks, as the event loop does: a listener receives
+ * the boot record first; the world runs at its rate and publishes only what the journal committed;
+ * stop flushes the partial batch; a lagging journal stalls the scheduler without shortfall; a
+ * journal failure, an engine fault, and an unhandled rejection halt the world; the source's world
+ * is projected once per tick, timed, and its terrain served, and one that is not a world of beings
+ * is refused; and the status validates against the admin contract.
  */
 import { describe, expect, test } from "bun:test";
 import { readView, type World, worldgen } from "@open-origin/engine";
 import { ServerStatus } from "@open-origin/protocol/admin";
-import { TerrainPublic } from "@open-origin/protocol/public";
-import { compose, type WorldPlaneDeps } from "../src/compose.ts";
+import {
+  parseServerMessage,
+  type ServerMessage,
+  TerrainPublic,
+} from "@open-origin/protocol/public";
+import { compose, composeServer, type WorldPlaneDeps } from "../src/compose.ts";
 import { type Config, parseConfig } from "../src/config/config.ts";
 import { calendarClock } from "../src/projection/clock.ts";
 import { BeingsProjection, type WorldProjection } from "../src/projection/projection.ts";
@@ -21,7 +25,7 @@ import { ScenarioSource, ScriptedSource, type WorldSource } from "../src/world/s
 import { countingWorld } from "./support/counting-world.ts";
 import { FakeClock, FakeTimer } from "./support/fake-time.ts";
 import { ControlledJournal, settle } from "./support/journals.ts";
-import { emptyProjection } from "./support/projections.ts";
+import { emptyProjection, publishedAt } from "./support/projections.ts";
 
 /** One period at 5 Hz, in microseconds. */
 const P = 200_000;
@@ -56,13 +60,16 @@ function plane({
     ...(source === "default" ? {} : { source, projectionOf: emptyProjection }),
     ...deps,
   });
+  /** The boot record, which a listener receives first, and the ticks published after it. */
+  const delivered: { boot?: PublishedTick } = {};
   const published: number[] = [];
-  world.subscribeToPublished(({ tick }) => {
-    published.push(tick);
+  world.subscribeToPublished((tick) => {
+    if (delivered.boot === undefined) delivered.boot = tick;
+    else published.push(tick.tick);
   });
   /** The status, parsed by the admin contract, which also checks E ≥ C ≥ P. */
   const status = () => ServerStatus.parse(world.status());
-  return { clock, timer, world, published, status };
+  return { clock, timer, world, boot: delivered.boot, published, status };
 }
 
 const ticks = (from: number, to: number) =>
@@ -100,6 +107,20 @@ describe("compose", () => {
     });
     expect(published).toEqual(ticks(1, 10));
     expect(world.halted()).toBeUndefined();
+  });
+
+  test("hands a listener the boot record of the world's tick before any published tick", () => {
+    // The counting world's projection: its boot tick, 0, with no chunk.
+    expect(plane().boot).toEqual(publishedAt(0));
+    // The default world of T5 at tick 0: its clock, and no chunk until the admin spawns at tick 1.
+    const { boot } = plane({ source: "default" });
+    expect(boot).toEqual({
+      tick: 0,
+      clock: { tick: 0, day: 0, dayPermille: 0 },
+      chunks: [],
+      speech: [],
+      feed: [],
+    });
   });
 
   test("stop flushes the partial batch and publishes it, and start resumes", async () => {
@@ -318,6 +339,7 @@ describe("compose", () => {
           return projection.project(result);
         },
         readTerrain: (chunk) => projection.readTerrain(chunk),
+        boot: () => projection.boot(),
       };
     };
     const plane = compose(configOf(), { clock, timer, source, projectionOf });
@@ -327,9 +349,10 @@ describe("compose", () => {
     });
     plane.start();
     await timer.runUntilSettled(9 * P);
-    expect(published.map(({ tick }) => tick)).toEqual(ticks(1, 10));
-    expect(published.map(({ clock: at }) => at)).toEqual(ticks(1, 10).map(calendar));
-    expect(published[0]?.feed.map(({ kind }) => kind)).toEqual(Array(8).fill("arrival"));
+    // The boot record of tick 0 comes first, then every published tick.
+    expect(published.map(({ tick }) => tick)).toEqual(ticks(0, 10));
+    expect(published.map(({ clock: at }) => at)).toEqual(ticks(0, 10).map(calendar));
+    expect(published[1]?.feed.map(({ kind }) => kind)).toEqual(Array(8).fill("arrival"));
     const status = ServerStatus.parse(plane.status());
     expect(status.projectionMicros).toEqual({ p50: 137, p95: 137, p99: 137 });
     // A step's duration covers its whole tick, the projection included.
@@ -337,5 +360,78 @@ describe("compose", () => {
     expect(plane.readTerrain([1, -1])).toEqual(
       new BeingsProjection(source.world).readTerrain([1, -1]),
     );
+  });
+});
+
+describe("composeServer", () => {
+  test("starts the presentation first, so one that cannot start leaves no world clock", () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const server = composeServer(configOf(), {
+      clock,
+      timer,
+      source: new ScriptedSource(countingWorld(9), []),
+      projectionOf: emptyProjection,
+    });
+    server.presentation.stop();
+    expect(() => server.start()).toThrow("a stopped presentation cannot start again");
+    expect(timer.pending).toBe(0);
+  });
+
+  test("feeds the presentation from the world plane alone, and stop leaves no timer", async () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const server = composeServer(configOf(), {
+      clock,
+      timer,
+      source: new ScriptedSource(countingWorld(1_000_000), []),
+      projectionOf: emptyProjection,
+    });
+    const messages: ServerMessage[] = [];
+    server.presentation.connect({
+      send: (frame) => {
+        const parsed = parseServerMessage(frame);
+        if (parsed.ok) messages.push(parsed.message);
+      },
+      lagging: () => false,
+      end: (cause) => {
+        throw cause;
+      },
+    });
+    server.start();
+    await timer.runUntilSettled(10 * P);
+    await server.stop();
+    expect(timer.pending).toBe(0);
+    // Hello names a fresh random world; then one commit a period follows the published ticks.
+    expect(messages[0]).toMatchObject({ type: "hello", seq: 0, durability: "ephemeral" });
+    const commits = messages.filter(({ type }) => type === "commit").map(({ tick }) => tick);
+    expect(commits.length).toBeGreaterThan(3);
+    expect(commits).toEqual([...commits].sort((a, b) => a - b));
+    expect(new Set(commits).size).toBe(commits.length);
+    expect(commits.at(-1)).toBeLessThanOrEqual(server.world.status().publishedTick);
+    expect(messages.map(({ seq }) => seq)).toEqual(messages.map((_, index) => index));
+    const ids = [
+      server,
+      composeServer(configOf(), {
+        clock,
+        timer,
+        source: new ScriptedSource(countingWorld(9), []),
+        projectionOf: emptyProjection,
+      }),
+    ].map(({ presentation }) => {
+      const hello: string[] = [];
+      presentation.connect({
+        send: (frame) => hello.push(frame),
+        lagging: () => false,
+        end: (cause) => {
+          throw cause;
+        },
+      });
+      presentation.period();
+      return JSON.parse(hello[0] ?? "{}").world.id;
+    });
+    expect(ids[0]).toMatch(/^[0-9a-f]{32}$/);
+    expect(ids[1]).toMatch(/^[0-9a-f]{32}$/);
+    expect(ids[0]).not.toBe(ids[1]);
   });
 });
