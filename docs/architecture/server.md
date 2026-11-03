@@ -356,8 +356,12 @@ with the strict schema.
   after the first, and late connections.
 - `presentation-sizes.test.ts` (plan test 7b): under parts of 64 KiB and 256 KiB a period, a chunk of
   1,024 beings of records near the widest spans parts and two periods, the view never shows a
-  partial chunk, and the transaction commits at its tick while beings move, arrive, and leave; one
-  chunk of 65,536 beings assembles.
+  partial chunk, and the transaction commits at its tick while beings move, arrive, and leave. The
+  largest view of `beings@2`, 73 such chunks, and one chunk of 65,536 such beings in parts of
+  16 KiB, the smallest, each assemble in one transaction with no part past its limit and no period
+  past its budget, within the reducer's 1,024 parts and the periods their bytes need, the view
+  unchanged until the commit; these two skip the schema for time and keep the reducer's checks. One
+  chunk of 65,536 narrow records also assembles.
 
 ## Composition
 

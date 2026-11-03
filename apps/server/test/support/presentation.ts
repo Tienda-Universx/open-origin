@@ -22,7 +22,6 @@ import {
   parseServerMessage,
   type ServerMessage,
   type TerrainPublic,
-  utf8Length,
 } from "@open-origin/protocol/public";
 import {
   type ClientSink,
@@ -242,7 +241,7 @@ export class ViewClient implements ClientSink {
   readonly messages: ServerMessage[] = [];
   readonly commits: Committed[] = [];
   readonly anomalies: Anomaly[] = [];
-  /** The size in bytes of every frame received. */
+  /** The UTF-8 bytes of every frame received, lost ones included, as the runtime counts them. */
   readonly sizes: number[] = [];
   /** Whether the client says its buffer is full. */
   lag = false;
@@ -252,19 +251,27 @@ export class ViewClient implements ClientSink {
   onMessage: ((message: ServerMessage) => void) | undefined;
   /** Called after each commit the reducer applied. */
   onCommit: ((committed: Committed) => void) | undefined;
+  readonly #strict: boolean;
+
+  /**
+   * With `strict` false, frames skip the schema and only the reducer checks them: the worst cases
+   * do so for time, since their frames take the shapes other tests parse strictly, and the reducer
+   * still checks their order, their transactions, their parts, and their fragments.
+   */
+  constructor({ strict = true }: { readonly strict?: boolean } = {}) {
+    this.#strict = strict;
+  }
 
   send(frame: string): void {
-    this.sizes.push(utf8Length(frame));
-    const parsed = parseServerMessage(frame);
-    if (!parsed.ok)
-      throw new Error(`the server sent a message the schema rejects: ${frame.slice(0, 200)}`);
+    this.sizes.push(Buffer.byteLength(frame, "utf8"));
+    const message = this.#parse(frame);
     if (this.lose > 0) {
       this.lose -= 1;
       return;
     }
-    this.messages.push(parsed.message);
-    this.onMessage?.(parsed.message);
-    const applied = applyMessage(this.state, parsed.message);
+    this.messages.push(message);
+    this.onMessage?.(message);
+    const applied = applyMessage(this.state, message);
     this.state = applied.state;
     if (applied.anomaly !== undefined) this.anomalies.push(applied.anomaly);
     if (applied.committed !== undefined) {
@@ -285,6 +292,15 @@ export class ViewClient implements ClientSink {
   /** The largest frame received, which no part may make larger than MAX_PART_BYTES. */
   get largest(): number {
     return Math.max(0, ...this.sizes);
+  }
+
+  #parse(frame: string): ServerMessage {
+    // JSON.parse gives `any`: unchecked by design here, see the constructor.
+    if (!this.#strict) return JSON.parse(frame);
+    const parsed = parseServerMessage(frame);
+    if (!parsed.ok)
+      throw new Error(`the server sent a message the schema rejects: ${frame.slice(0, 200)}`);
+    return parsed.message;
   }
 }
 
