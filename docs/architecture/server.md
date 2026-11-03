@@ -364,7 +364,11 @@ Every connection's first transaction is a reset, and so is the one after `resync
 64 KiB, filled against an upper bound of their size with every integer at its widest, and broken on
 record boundaries: a chunk's differences may span several parts, and a chunk that enters is cut into
 fragments that each fit in a part, `frag{i, n}`, its terrain in the first. The parts read only pinned
-versions, so content stays that of `L'` however many periods the transaction takes. `seq` grows by
+versions, so content stays that of `L'` however many periods the transaction takes. Terrain is a pure
+function of the genesis, so a transaction keeps only the bytes of its chunks' terrain, which plan its
+parts, and reads the text from the terrain's LRU as it writes each chunk's first fragment, checking
+that it has the bytes planned. A part whose terrain the LRU no longer has waits, as a client the
+fan-out deferred does, never counted as lagging, until the terrain queue serves it (see Terrain). `seq` grows by
 one per message, written when the message is sent; the messages of a transaction carry `L'`, and
 every other message the client's visible tick. At the commit the view takes the pins of `L'` and
 releases those of `L`. `abort` cancels the transaction in flight, whose pins go and which the client
@@ -414,8 +418,9 @@ dead connection. T6 sends no `reason`; T8's operator pause brings one.
   in one pass over their pins, so it costs the pins plus the versions it frees, never a pass over
   the clients per version freed.
 - **Per client**, outside what is shared: references to its pinned versions, its interest, its
-  outbox of at most 13 small messages, its transaction's cursor, its terrain while it waits at the
-  head of the terrain queue, and counters.
+  outbox of at most 13 small messages, its transaction's cursor with the text of the part it writes
+  or has ready, its terrain while it waits at the head of the terrain queue, at most one chunk of
+  terrain served to its transaction, and counters.
 
 ### Terrain
 
@@ -453,15 +458,25 @@ or was evicted. So:
   period gains at most 5, so the head has its chunks within 7 periods, inside its turn of 10, and
   starts at its next turn in the fan-out with room in its buffer.
 
+A transaction in flight reads its terrain from the LRU as it writes its parts; at its start the
+terrain it took goes back in the LRU, its first chunks used last. A chunk the LRU evicted meanwhile
+is generated at once while the budget lasts and no client waits; otherwise the next period serves it
+first, before the head, and holds it until the transaction reads it, one chunk per transaction. So
+the terrain held apart from the LRU is at most the head's 73 chunks and one chunk per transaction in
+flight, and a transaction holds no other terrain than in the text of the one snapshot part it
+writes or has ready: a lagging client holds at most 64 KiB of terrain text, not the 905,273 bytes of
+a full view.
+
 ### Telemetry
 
 `telemetry()` reports, as C3 for the admin status: `connections`; `laggingClients`, the clients with
-a full buffer at the last fan-out, those its time budget deferred included; `retainedBytes`; `terrainQueue`, the chunks waiting clients
-wait for; and the counts since start of `aborts`, `trims`, `strikes`, `strikeCloses`, `slowCloses`,
-and `faults`. No public message carries any of them: every public frame is built from the
-protocol's strict schemas. `usage()` reports, for tests, what the presentation holds: clients,
-interest, index entries, followings, pins, retained bytes and versions, and the terrain waited for
-and kept, every count zero once every client is gone.
+a full buffer at the last fan-out, those its time budget deferred included; `retainedBytes`;
+`terrainQueue`, the chunks waiting clients and transactions in flight wait for; and the counts since
+start of `aborts`, `trims`, `strikes`, `strikeCloses`, `slowCloses`, and `faults`. No public message
+carries any of them: every public frame is built from the protocol's strict schemas. `usage()`
+reports, for tests, what the presentation holds: clients, interest, index entries, followings, pins,
+retained bytes and versions, and the terrain waited for and kept, every count zero once every client
+is gone.
 
 ### Tests
 
@@ -545,12 +560,16 @@ with the strict schema.
   what it still needs; a head whose chunks change every period gives up the head after its turn of
   10 periods, and the client behind it is served in the next; a follower whose window moves every
   tick, behind one client and ahead of 49 that flood the queue, starts in period 5, within its turn;
-  no client may need more than 73 chunks; a generation that throws removes its client from the
-  queue, whatever the fault callback does, reports it once, and the queue serves the next client in
-  the same period; and in the presentation, a queued generation that throws drops the client waiting
-  for it alone, counted as a fault, while the others are served and the plane runs on. Six cycles of
-  clients closed by a fault, by strikes, and by slowness, aborted, and waiting for terrain leave
-  every count at zero.
+  six lagging clients whose transactions are in flight over distinct chunks hold no terrain while
+  the cache of 8 evicts theirs, and once they drain, the terrain of the chunks they had not written
+  yet is generated again ahead of a flooded queue, and each commits within three periods; a chunk a
+  transaction cannot read is served first the next period and held until it reads it, and one whose
+  generation throws drops its client; no client may need more than 73 chunks; a generation that
+  throws removes its client from the queue, whatever the fault callback does, reports it once, and
+  the queue serves the next client in the same period; and in the presentation, a queued generation
+  that throws drops the client waiting for it alone, counted as a fault, while the others are served
+  and the plane runs on. Six cycles of clients closed by a fault, by strikes, and by slowness,
+  aborted, and waiting for terrain leave every count at zero.
 
 ## Composition
 

@@ -58,7 +58,7 @@ import type { EncodedText } from "./parts.ts";
 import { Playout } from "./playout.ts";
 import { guardRetention, RETAINED_BYTES } from "./retention.ts";
 import { noCounts, type PresentationTelemetry } from "./telemetry.ts";
-import { TERRAIN_PER_PERIOD, TerrainCache, TerrainQueue } from "./terrain.ts";
+import { TERRAIN_ENTRIES, TERRAIN_PER_PERIOD, TerrainCache, TerrainQueue } from "./terrain.ts";
 import { Transaction, ViewState } from "./txn.ts";
 import { trimView, VIEW_BYTES } from "./view.ts";
 
@@ -110,6 +110,8 @@ export type PresentationOptions = {
   readonly viewBytes?: number;
   /** The most chunks of terrain generated per period: TERRAIN_PER_PERIOD unless given. */
   readonly terrainPerPeriod?: number;
+  /** The entries of the terrain's LRU: TERRAIN_ENTRIES unless given. */
+  readonly terrainEntries?: number;
 };
 
 /** What the presentation holds, for tests: each count is zero once every client is gone. */
@@ -125,7 +127,7 @@ export type PresentationUsage = {
   readonly retainedBytes: number;
   /** Replaced versions still pinned. */
   readonly retained: number;
-  /** Chunks of terrain the queue has yet to serve, and those held for its head. */
+  /** Chunks of terrain the queue has yet to serve, and those held apart from its cache. */
   readonly terrain: { readonly queued: number; readonly held: number };
   /** Clients dropped because serving them threw (C3). */
   readonly faults: number;
@@ -249,7 +251,7 @@ export class Presentation {
     }
     this.#playout = new Playout(options.batchTicks);
     this.#terrain = new TerrainQueue(
-      new TerrainCache(options.readTerrain),
+      new TerrainCache(options.readTerrain, options.terrainEntries ?? TERRAIN_ENTRIES),
       options.terrainPerPeriod ?? TERRAIN_PER_PERIOD,
     );
     this.#world = options.world;
@@ -475,6 +477,9 @@ export class Presentation {
     const { txn } = client;
     if (txn !== undefined) {
       txn.release(this.#mirror);
+      // A client with a transaction does not wait in the terrain queue: only what its transaction
+      // waited for goes.
+      this.#terrain.remove(client.id);
       client.txn = undefined;
       client.queue(abortFrame(txn.txn, txn.tick));
       if (txn.reset) client.view.needsReset = true;
@@ -655,7 +660,8 @@ export class Presentation {
       mirror: this.#mirror,
       interest: kept,
       target,
-      terrain: (at) => terrainIn(taken, at),
+      terrainBytes: (at) => terrainIn(taken, at).bytes,
+      terrain: this.#terrain.reader(client.id),
       partBytes: this.#sizes.part,
     });
     client.nextTxn += 1;

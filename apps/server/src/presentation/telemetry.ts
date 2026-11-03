@@ -29,7 +29,7 @@ export type PresentationTelemetry = Readonly<PresentationCounts> & {
   readonly laggingClients: number;
   /** The bytes of the replaced chunk versions clients still pin. */
   readonly retainedBytes: number;
-  /** The chunks of terrain that waiting clients still wait for. */
+  /** The chunks of terrain that waiting clients and transactions in flight still wait for. */
   readonly terrainQueue: number;
 };
 

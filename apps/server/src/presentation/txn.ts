@@ -15,6 +15,11 @@
  *
  * The client applies it whole at the commit (the protocol's reducer); the server then takes the
  * pins of `L'` as the view's own and releases those of `L`.
+ *
+ * The terrain of the chunks that enter is fixed by the world's genesis, so a transaction keeps only
+ * its bytes, which plan its parts, and reads its text through `terrain` as each part is written. A
+ * part whose terrain cannot be had in this period waits: `peek` gives nothing, and tries again at
+ * the next call.
  */
 import { type ChunkCoord, type Clock, chunkKey } from "@open-origin/protocol/public";
 import { commitFrame, type Frame } from "./frames.ts";
@@ -22,11 +27,13 @@ import { FEED, type Mirror } from "./mirror.ts";
 import {
   type DeltaContent,
   deltaParts,
-  type EncodedText,
   type Entering,
   eventsParts,
   type PartHead,
   snapshotParts,
+  TERRAIN_PENDING,
+  type TerrainPending,
+  type TerrainSource,
 } from "./parts.ts";
 import type { RingRead } from "./ring.ts";
 import type { ChunkVersion, EncodedBeing } from "./version.ts";
@@ -64,8 +71,10 @@ export type TransactionStart = {
   readonly interest: readonly ChunkCoord[];
   /** The being the client follows, or null. */
   readonly target: number | null;
-  /** The encoded public terrain of a chunk. */
-  readonly terrain: (at: ChunkCoord) => EncodedText;
+  /** The bytes of the encoded public terrain of a chunk that enters, at hand when it starts. */
+  readonly terrainBytes: (at: ChunkCoord) => number;
+  /** Where the transaction reads the terrain of a chunk as it writes the chunk's first part. */
+  readonly terrain: TerrainSource;
   /** The most bytes of a part. */
   readonly partBytes: number;
 };
@@ -143,6 +152,7 @@ type Content = {
   readonly drop: readonly ChunkCoord[];
   readonly deltas: readonly DeltaContent[];
   readonly entering: readonly Entering[];
+  readonly terrain: TerrainSource;
   readonly followed: string | undefined;
   readonly feed: RingRead;
   readonly clock: Clock;
@@ -150,11 +160,11 @@ type Content = {
 };
 
 /** The frames of `content`, in the protocol's order, ending with its commit. */
-function* framesOf(content: Content): Generator<Frame> {
-  const { head, reset, drop, deltas, entering, followed, feed, partBytes } = content;
+function* framesOf(content: Content): Generator<Frame | TerrainPending> {
+  const { head, reset, drop, deltas, entering, terrain, followed, feed, partBytes } = content;
   if (drop.length > 0 || deltas.length > 0) yield* deltaParts(head, drop, deltas, partBytes);
   if (reset || entering.length > 0 || followed !== undefined) {
-    yield* snapshotParts(head, { reset, chunks: entering, followed }, partBytes);
+    yield* snapshotParts(head, { reset, chunks: entering, followed, terrain }, partBytes);
   }
   if (feed.items.length > 0 || feed.missed > 0) {
     yield* eventsParts(head, feed.items, feed.missed, partBytes);
@@ -171,8 +181,8 @@ export class Transaction {
   /** The versions of L' it reads, pinned, by chunk key: the client's view once it commits. */
   readonly pins: ReadonlyMap<string, ChunkVersion>;
   readonly #after: After;
-  readonly #frames: Iterator<Frame>;
-  #next: IteratorResult<Frame>;
+  readonly #frames: Iterator<Frame | TerrainPending>;
+  #next: IteratorResult<Frame | TerrainPending>;
 
   private constructor(start: TransactionStart, pins: ReadonlyMap<string, ChunkVersion>) {
     const { view, mirror } = start;
@@ -190,7 +200,8 @@ export class Transaction {
       deltas: this.reset ? [] : deltasOf(start, pins),
       entering: [...pins.values()]
         .filter(({ key }) => this.reset || !view.pinned.has(key))
-        .map((version) => ({ version, terrain: start.terrain(version.at) })),
+        .map((version) => ({ version, terrainBytes: start.terrainBytes(version.at) })),
+      terrain: start.terrain,
       followed: follow.send,
       feed: mirror.feed.since(FEED, view.feedSeen),
       clock: mirror.clock,
@@ -224,9 +235,16 @@ export class Transaction {
     }
   }
 
-  /** The next frame to send, or undefined once the commit went out. */
+  /**
+   * The next frame to send; undefined once the commit went out, or while the terrain of the next
+   * part cannot be had in this period. A part that waited for terrain tries again first.
+   */
   peek(): Frame | undefined {
-    return this.#next.done === true ? undefined : this.#next.value;
+    if (this.#next.done !== true && this.#next.value === TERRAIN_PENDING) {
+      this.#next = this.#frames.next();
+    }
+    const next = this.#next;
+    return next.done === true || next.value === TERRAIN_PENDING ? undefined : next.value;
   }
 
   /** Moves past the frame `peek` gave, which was sent. */

@@ -32,6 +32,13 @@
  *   periods, 7 for a follow window that moves one chunk a period (d ≤ 5), when its turn in the
  *   fan-out comes each period: the pass and its take at once generate B a period for it, of which
  *   d go to what changed. It then starts at its next turn in the fan-out with room in its buffer.
+ *
+ * A transaction in flight keeps only the bytes of its terrain and reads the text through `read` as
+ * it writes its parts; when it starts, the terrain it took goes back in the cache, its first chunks
+ * used last. A chunk the cache evicted meanwhile is generated at once while the budget lasts and no
+ * client waits; otherwise the next period serves it first, before the head, and holds it until the
+ * transaction reads it: one chunk per transaction. Terrain held apart from the cache is so at most
+ * the head's 73 chunks and one chunk per transaction in flight.
  */
 import {
   type ChunkCoord,
@@ -43,7 +50,7 @@ import {
 } from "@open-origin/protocol/public";
 import { byteLength } from "./bytes.ts";
 import type { ClientId } from "./interest.ts";
-import type { EncodedText } from "./parts.ts";
+import type { EncodedText, TerrainSource } from "./parts.ts";
 
 /** The entries the cache keeps. */
 export const TERRAIN_ENTRIES = 2048;
@@ -82,6 +89,9 @@ export class TerrainCache {
   #reads = 0;
 
   constructor(read: (chunk: ChunkCoord) => TerrainPublic, entries = TERRAIN_ENTRIES) {
+    if (!Number.isSafeInteger(entries) || entries < 1) {
+      throw new RangeError(`the terrain's cache keeps at least one entry, not ${entries}`);
+    }
     this.#read = read;
     this.#entries = entries;
   }
@@ -108,12 +118,18 @@ export class TerrainCache {
     this.#reads += 1;
     const json = JSON.stringify(this.#read(at));
     const encoded = Object.freeze({ json, bytes: byteLength(json) });
-    this.#cache.set(chunkKey(at), encoded);
+    this.keep(chunkKey(at), encoded);
+    return encoded;
+  }
+
+  /** Keeps `terrain`, the encoded terrain of the chunk `key`, as used last; the oldest go. */
+  keep(key: string, terrain: EncodedText): void {
+    this.#cache.delete(key);
+    this.#cache.set(key, terrain);
     for (const oldest of this.#cache.keys()) {
       if (this.#cache.size <= this.#entries) break;
       this.#cache.delete(oldest);
     }
-    return encoded;
   }
 }
 
@@ -170,6 +186,13 @@ export class TerrainQueue {
   #held = new Map<string, EncodedText>();
   /** The periods of its turn the head has had. */
   #turnUsed = 0;
+  /**
+   * The chunk each transaction in flight could not read, by client, in the order they asked: the
+   * next period serves them first.
+   */
+  readonly #missed = new Map<ClientId, ChunkCoord>();
+  /** The terrain served to each of those transactions, held until it reads it: one chunk each. */
+  readonly #given = new Map<ClientId, { readonly key: string; readonly terrain: EncodedText }>();
   #left: number;
 
   constructor(cache: TerrainCache, perPeriod = TERRAIN_PER_PERIOD) {
@@ -182,25 +205,30 @@ export class TerrainQueue {
     this.#left = perPeriod;
   }
 
-  /** How many chunks of terrain the queue has yet to serve the clients that wait. */
+  /** How many chunks of terrain the queue has yet to serve the clients and transactions that wait. */
   get queued(): number {
-    let queued = 0;
+    let queued = this.#missed.size;
     for (const { pending } of this.#waiting.values()) queued += pending.length;
     return queued;
   }
 
-  /** How many chunks of terrain are held for the head of the queue: at most MAX_VIEW_CHUNKS. */
+  /**
+   * How many chunks of terrain are held apart from the cache: at most MAX_VIEW_CHUNKS for the head
+   * of the queue, and one for each transaction in flight served one it has not read yet.
+   */
   get held(): number {
-    return this.#held.size;
+    return this.#held.size + this.#given.size;
   }
 
   /**
-   * Starts a period: the budget is whole again; a head whose turn is over goes to the back; and the
-   * head is served first, before any request. A generation that throws removes its client from the
-   * queue and reports it through `fault`, and the next client, the head now, is served instead.
+   * Starts a period: the budget is whole again; the chunks transactions in flight could not read
+   * are served first, each held until its transaction reads it; a head whose turn is over goes to
+   * the back; and the head is served next, before any request. A generation that throws removes its
+   * client and reports it through `fault`; the next client, the head now, is served instead.
    */
   period(fault: (client: ClientId, cause: unknown) => void): void {
     this.#left = this.#perPeriod;
+    this.#serveMissed(fault);
     if (this.#turnUsed >= this.#turn) this.#back();
     let head = this.#first();
     while (head !== undefined && this.#left > 0 && !this.#served(head, fault)) {
@@ -254,16 +282,60 @@ export class TerrainQueue {
     }
     if (pending.length === 0) {
       this.remove(client);
+      // The transaction reads its terrain from the cache, its first chunks used last.
+      for (const [key, terrain] of [...found].reverse()) this.#cache.keep(key, terrain);
       return found;
     }
     this.#wait(client, needs, pending, found);
     return undefined;
   }
 
-  /** Forgets `client`: what it waited for, and what was held for it; the next client is the head. */
+  /** Where the transaction in flight of `client` reads its terrain: see `read`. */
+  reader(client: ClientId): TerrainSource {
+    return (at) => this.read(client, at);
+  }
+
+  /**
+   * The terrain of `at` for the transaction in flight of `client`: what the queue served it, else
+   * the cache's, else generated now while the budget lasts and no client waits. Otherwise
+   * undefined: the next period serves it first, and holds it until the transaction reads it.
+   */
+  read(client: ClientId, at: ChunkCoord): EncodedText | undefined {
+    const key = chunkKey(at);
+    const given = this.#given.get(client);
+    this.#given.delete(client);
+    if (given?.key === key) return given.terrain;
+    const generates = this.#waiting.size === 0 && this.#left > 0;
+    const terrain = this.#cache.cached(at) ?? (generates ? this.#generate(at) : undefined);
+    if (terrain === undefined) this.#missed.set(client, at);
+    else this.#missed.delete(client);
+    return terrain;
+  }
+
+  /**
+   * Forgets `client`: what it waited for, what was held for it, and what its transaction waited
+   * for; the next client is the head.
+   */
   remove(client: ClientId): void {
+    this.#missed.delete(client);
+    this.#given.delete(client);
     const head = this.#isHead(client);
     if (this.#waiting.delete(client) && head) this.#promote();
+  }
+
+  /** Serves the chunks transactions in flight could not read, in the order they asked. */
+  #serveMissed(fault: (client: ClientId, cause: unknown) => void): void {
+    for (const [client, at] of this.#missed) {
+      if (this.#left === 0) return;
+      try {
+        const terrain = this.#cache.cached(at) ?? this.#generate(at);
+        this.#given.set(client, { key: chunkKey(at), terrain });
+        this.#missed.delete(client);
+      } catch (cause) {
+        this.remove(client);
+        fault(client, cause);
+      }
+    }
   }
 
   /** Records what `client` waits for, at the back unless it waits already; the head holds `found`. */
