@@ -69,7 +69,7 @@ export type TickSample = {
 };
 
 /** The sample of a timed tick. */
-export function sampleOf({ stepNs, projectNs, changedChunks, published }: TimedTick): TickSample {
+function sampleOf({ stepNs, projectNs, changedChunks, published }: TimedTick): TickSample {
   return {
     stepNs,
     projectNs,
@@ -191,7 +191,7 @@ export function verdicts(summaries: ReadonlyMap<WorldName, Summary>): string[] {
 }
 
 /** Runs the worlds `argv` names and prints their table and the budgets. */
-export async function main(argv: readonly string[]): Promise<void> {
+async function main(argv: readonly string[]): Promise<void> {
   const options = parseArguments(argv);
   console.log(header("The projection's cost per tick (apps/server/bench/projection.ts)"));
   const summaries = new Map<WorldName, Summary>();

@@ -49,7 +49,7 @@ export type FanOutArguments = {
 };
 
 /** The numbers of clients each scenario runs with unless `--clients` says otherwise. */
-export const CLIENT_COUNTS = Object.freeze([1, 10, 100, 1_000]);
+const CLIENT_COUNTS = Object.freeze([1, 10, 100, 1_000]);
 
 /** A list of positive integers, written `1,10,100`. */
 function clientsArg(text: string | undefined): number[] {
@@ -209,7 +209,7 @@ const PERIOD_MICROS = 200_000;
  * The system's clock in whole microseconds, moved ahead by a period at each `nextPeriod`: time
  * within a period is real, and periods run 200 ms apart as the server's do.
  */
-export class PeriodsClock {
+class PeriodsClock {
   #offset = 0;
 
   now(): number {
@@ -374,7 +374,7 @@ const slowest = (samples: readonly PeriodSample[]) =>
   Math.max(0, ...samples.map((sample) => sample.fanOutMicros));
 
 /** The numbers a row reports of `result`. */
-export function summarizeRun(result: RunResult) {
+function summarizeRun(result: RunResult) {
   const { samples } = result;
   const of = (read: (sample: PeriodSample) => number) => percentilesOf(samples.map(read));
   const clientPeriods = samples.length * result.clients;
@@ -405,7 +405,7 @@ const COLUMNS = [
 ];
 
 /** The row of `scenario`'s run `result`. */
-export function runRow(scenario: Scenario, result: RunResult): string[] {
+function runRow(scenario: Scenario, result: RunResult): string[] {
   const s = summarizeRun(result);
   return [
     scenario,
@@ -423,7 +423,7 @@ export function runRow(scenario: Scenario, result: RunResult): string[] {
 }
 
 /** Runs the scenarios `argv` names and prints one table. */
-export async function main(argv: readonly string[]): Promise<void> {
+async function main(argv: readonly string[]): Promise<void> {
   const options = parseArguments(argv);
   console.log(header("The fan-out's cost per period (apps/server/bench/fanout.ts)"));
   const ticks = WARM_UP_PERIODS + options.periods;

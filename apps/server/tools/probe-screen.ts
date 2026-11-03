@@ -152,7 +152,7 @@ function viewLines({ state }: ScreenInput): string[] {
 }
 
 /** The lines of a screen, before they are sanitized. */
-export function screenLines(input: ScreenInput): string[] {
+function screenLines(input: ScreenInput): string[] {
   const { counts, state } = input;
   const trimmed = state.trimmed.length === 0 ? "none" : state.trimmed.map(at).join(" ");
   return [

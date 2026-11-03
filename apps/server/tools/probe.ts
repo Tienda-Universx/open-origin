@@ -49,7 +49,7 @@ export type ProbeOptions = {
 /** The server's address when no `--url` is given: the server's default host and port. */
 export const DEFAULT_URL = "ws://127.0.0.1:8080/ws";
 
-export const USAGE =
+const USAGE =
   "usage: bun apps/server/tools/probe.ts [--url ws://host:port/ws] [--chunk x,y]... [--around x,y [--radius r]] [--follow id] [--commits n]";
 
 /** A non-negative safe integer written in plain decimal, or a RangeError naming `what`. */
@@ -429,7 +429,7 @@ export function processDeps(): ProbeDeps {
 }
 
 /** Runs the probe of `argv` until a signal or its last commit; exits 2 on a bad argument. */
-export async function main(argv: readonly string[]): Promise<void> {
+async function main(argv: readonly string[]): Promise<void> {
   let options: ProbeOptions;
   try {
     options = parseProbeArgs(argv);

@@ -39,7 +39,7 @@ export function niceOf(stat: string | undefined): string | undefined {
  * The machine class: CPU model, the machine's logical cores (not only those this process may use),
  * memory, and Bun's version.
  */
-export function machineClass(): string {
+function machineClass(): string {
   const cpuinfo = readText("/proc/cpuinfo");
   const model = field(cpuinfo, "model name") ?? "unknown CPU";
   const cores = fields(cpuinfo, "processor").length || "unknown";

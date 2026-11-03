@@ -367,7 +367,7 @@ export function aheadOf(marks: readonly Mark[]): string {
 }
 
 /** The row of a load run. */
-export function loadRow(run: LoadRun): string[] {
+function loadRow(run: LoadRun): string[] {
   const { status } = run.after;
   const delays = latencies(
     run.marks,
@@ -414,7 +414,7 @@ async function syncRun(): Promise<Entry> {
 }
 
 /** Runs the benchmark `argv` asks for and prints its table. */
-export async function main(argv: readonly string[]): Promise<void> {
+async function main(argv: readonly string[]): Promise<void> {
   const options = parseArguments(argv);
   console.log(header("The load benchmark (apps/server/bench/load.ts)"));
   const load = loadAverage();
