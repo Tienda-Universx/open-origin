@@ -16,7 +16,8 @@
  * - **Lifecycle.** `drain` calls `drained`; a socket's close gives its slot back and calls `close`,
  *   unless the presentation ended the client itself. That call waits for a microtask: Bun can run a
  *   close handler inside a `send` the presentation makes, and the presentation must not lose a
- *   client in the middle of serving it. `stop` closes every socket with 1001.
+ *   client in the middle of serving it. `stop` stops listening and closes every socket with 1001,
+ *   as Bun's `stop(true)` does.
  * - **Logs.** Events with their codes, sizes, statuses, and counts only: never an address, a
  *   header, a payload, or what an error says, which could hold what a client sent.
  */
@@ -96,12 +97,11 @@ function nameOf(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }
 
-/** The listener's state between Bun's callbacks: its caps, its sockets, and its policy. */
+/** The listener's state between Bun's callbacks: its caps and its policy. */
 class Listener {
   readonly #options: TransportOptions;
   readonly #presentation: PresentationPort;
   readonly #capacity: Capacity;
-  readonly #sockets = new Set<Socket>();
   #policy: Policy | undefined;
 
   constructor(options: TransportOptions) {
@@ -127,11 +127,6 @@ class Listener {
     this.#log({ event: "handler_error", error: nameOf(error) });
     return new Response("internal error", { status: 500 });
   };
-
-  /** Closes every socket with 1001; each close handler runs within its `close`. */
-  closeAll(): void {
-    for (const socket of [...this.#sockets]) socket.close(CLOSE_CODES.shutdown);
-  }
 
   readonly handlers: Bun.WebSocketHandler<Connection> = {
     maxPayloadLength: SOCKET_LIMITS.maxPayloadLength,
@@ -184,7 +179,6 @@ class Listener {
   }
 
   #open(socket: Socket): void {
-    this.#sockets.add(socket);
     socket.data.client = this.#presentation.connect(this.#sinkOf(socket));
     this.#log({ event: "open", connections: this.#capacity.open });
   }
@@ -226,7 +220,6 @@ class Listener {
 
   /** Gives the slot back and, unless the presentation ended the client, closes it there. */
   #close(socket: Socket, code: number): void {
-    this.#sockets.delete(socket);
     this.#capacity.release(socket.data.ip);
     const { data } = socket;
     const client = this.#clientOf(socket);
@@ -256,9 +249,7 @@ export function serveTransport(options: TransportOptions): Transport {
   return Object.freeze({
     port,
     connections: () => listener.connections,
-    stop: () => {
-      listener.closeAll();
-      return server.stop(true);
-    },
+    // Bun closes every socket with 1001, the shutdown code, running each close handler.
+    stop: () => server.stop(true),
   });
 }

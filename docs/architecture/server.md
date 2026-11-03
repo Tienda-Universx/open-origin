@@ -636,8 +636,8 @@ only. Its options are the presentation, the address and port to bind (0 lets the
   presentation ended the client itself. That call runs in a microtask: Bun runs a close handler
   synchronously, even within a `sendText` the presentation makes, and the presentation must not
   lose a client in the middle of serving it. A socket the presentation ended has its frames
-  ignored. A handler that throws is logged and its socket closed with 1011. `stop()` closes every
-  socket with 1001, then stops listening.
+  ignored. A handler that throws is logged and its socket closed with 1011. `stop()` is Bun's
+  `stop(true)`: it stops listening and closes every socket with 1001, running each close handler.
 - **Logs.** `refused` with the status and reason, `open` and `close` with the code and the count of
   connections, `binary_frame` with its size, and `handler_error` with the error's name. Never an
   address, a header, a payload, or an error's message, which could quote what a client sent.
