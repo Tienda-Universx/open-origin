@@ -214,9 +214,12 @@ describe("the mirror", () => {
     mirror.unpin(pinned);
     expect([mirror.pins, mirror.retainedBytes]).toEqual([0, 0]);
     expect(() => mirror.unpin(pinned)).toThrow("the version 0 of 0,0 is not pinned");
-    // A version replaced with no pin is never retained.
+    // A version replaced with no pin is never retained, and is freed: it can no longer be pinned.
+    const replaced = mirror.current([0, 0]);
     mirror.apply(tickOf(2, { chunks: [change([0, 0], 2, [being(1, [4, 1])])] }));
     expect(mirror.retainedBytes).toBe(0);
+    expect(() => mirror.pin(replaced)).toThrow("the version 1 of 0,0 was replaced and is freed");
+    expect([mirror.pins, mirror.retainedBytes]).toEqual([0, 0]);
     // A current version whose pins go is no retained version either.
     mirror.pin(mirror.current([0, 0]));
     mirror.unpin(mirror.current([0, 0]));

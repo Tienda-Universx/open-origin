@@ -106,10 +106,18 @@ export class Mirror {
     return key === undefined ? undefined : this.#versions.get(key)?.find(id);
   }
 
-  /** Pins `version`: it stays readable until unpinned. An empty version pins nothing. */
+  /**
+   * Pins `version`: it stays readable until unpinned. An empty version pins nothing. Only a current
+   * version or one already pinned can be pinned: a replaced version with no pin was freed, and
+   * pinning it would retain bytes the count of retained versions never added.
+   */
   pin(version: ChunkVersion): void {
     if (!version.held) return;
-    this.#pins.set(version, (this.#pins.get(version) ?? 0) + 1);
+    const pins = this.#pins.get(version);
+    if (pins === undefined && this.#versions.get(version.key) !== version) {
+      throw new Error(`the version ${version.v} of ${version.key} was replaced and is freed`);
+    }
+    this.#pins.set(version, (pins ?? 0) + 1);
     this.#pinCount += 1;
   }
 
