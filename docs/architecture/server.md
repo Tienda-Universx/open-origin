@@ -634,9 +634,10 @@ only. Its options are the presentation, the address and port to bind (0 lets the
   is the WebSocket code for an internal error (ADR 0026).
 - **Lifecycle.** `drain` calls `drained`. A close gives the slot back and calls `close`, unless the
   presentation ended the client itself. That call runs in a microtask: Bun runs a close handler
-  synchronously, even within a `sendText` the presentation makes, and the presentation must not
-  lose a client in the middle of serving it. A socket the presentation ended has its frames
-  ignored. A handler that throws is logged and its socket closed with 1011. `stop()` is Bun's
+  synchronously within the call that closes the socket, and no call the presentation makes to a
+  sink may take a client away from it while it serves that client. (Bun's own close at its
+  backpressure limit was measured to run after the `send` that reached it returned.) A socket the
+  presentation ended has its frames ignored. A handler that throws is logged and its socket closed with 1011. `stop()` is Bun's
   `stop(true)`: it stops listening and closes every socket with 1001, running each close handler.
 - **Logs.** `refused` with the status and reason, `open` and `close` with the code and the count of
   connections, `binary_frame` with its size, and `handler_error` with the error's name. Never an

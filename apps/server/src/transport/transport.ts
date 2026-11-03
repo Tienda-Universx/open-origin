@@ -14,10 +14,10 @@
  *   leaves to the server. `backpressureLimit` is 1 MiB with `closeOnBackpressureLimit`, twice what
  *   the presentation's budget lets a buffer reach; `idleTimeout` is 120 s, with `sendPings`.
  * - **Lifecycle.** `drain` calls `drained`; a socket's close gives its slot back and calls `close`,
- *   unless the presentation ended the client itself. That call waits for a microtask: Bun can run a
- *   close handler inside a `send` the presentation makes, and the presentation must not lose a
- *   client in the middle of serving it. `stop` stops listening and closes every socket with 1001,
- *   as Bun's `stop(true)` does.
+ *   unless the presentation ended the client itself. That call waits for a microtask: Bun runs a
+ *   close handler synchronously within the call that closes the socket, and no call the
+ *   presentation makes to a sink may take a client away from it while it serves that client.
+ *   `stop` stops listening and closes every socket with 1001, as Bun's `stop(true)` does.
  * - **Logs.** Events with their codes, sizes, statuses, and counts only: never an address, a
  *   header, a payload, or what an error says, which could hold what a client sent.
  */
