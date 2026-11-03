@@ -4,7 +4,7 @@
  * functions only: a subscription that delivers the boot record and then each published tick,
  * deep-frozen C0 records; `readTerrain`; and the world's state. Nothing it holds reaches the world.
  * It has no network either: the transport of T6-7 drives it, with a sink per client, through
- * `connect`, `subscribe`, `follow`, `resync`, `drained`, and `close`.
+ * `connect`, `receive` (one raw text message of a client), `drained`, and `close`.
  *
  * Each period, in a task of its own and never inside a step's callback, the playout hands the
  * mirror at most one published tick; a change of the world's state is announced to every client;
@@ -18,10 +18,32 @@
  * alone; any other throw of a period, from the playout, the mirror, or a drop, is a fault of the
  * whole plane: the presentation stops and detaches, and the throw goes on.
  */
-import { type ChunkCoord, MAX_PART_BYTES, type TerrainPublic } from "@open-origin/protocol/public";
+import {
+  type ChunkCoord,
+  type ClientMessage,
+  type ErrorCode,
+  MAX_PART_BYTES,
+  parseClientMessage,
+  type TerrainPublic,
+} from "@open-origin/protocol/public";
 import type { PublishedListener } from "../world/published.ts";
-import { type Blocked, BUFFER_BYTES, Client, type ClientSink } from "./client.ts";
-import { abortFrame, helloFrame, statusFrame, type WorldInfo, type WorldState } from "./frames.ts";
+import {
+  type Blocked,
+  BUFFER_BYTES,
+  Client,
+  type ClientSink,
+  type Ending,
+  STRIKES_ENDING,
+} from "./client.ts";
+import {
+  abortFrame,
+  errorFrame,
+  helloFrame,
+  pongFrame,
+  statusFrame,
+  type WorldInfo,
+  type WorldState,
+} from "./frames.ts";
 import { type ClientId, Interest } from "./interest.ts";
 import { FEED, Mirror } from "./mirror.ts";
 import { Playout } from "./playout.ts";
@@ -95,6 +117,9 @@ type Sizes = { readonly part: number; readonly period: number };
 
 const MICROS_PER_SECOND = 1_000_000;
 
+/** Rejections a correct client may still meet, by a race with the world or its own timing. */
+const NO_STRIKE: ReadonlySet<ErrorCode> = new Set(["unknown_being", "resync_too_soon"]);
+
 /** Checks the sizes of `options`: a part holds the widest terrain, and a period holds a part. */
 function sizesOf(options: PresentationOptions): Sizes {
   const part = options.partBytes ?? MAX_PART_BYTES;
@@ -119,7 +144,7 @@ function startOf(clients: readonly Client[], id: ClientId | undefined): number {
   );
 }
 
-/** The presentation plane: playout, mirror, interest, and each client's transactions. */
+/** The presentation plane: playout, mirror, interest, sessions, and each client's transactions. */
 export class Presentation {
   readonly #mirror = new Mirror();
   readonly #interest = new Interest();
@@ -185,11 +210,28 @@ export class Presentation {
     this.#nextClient += 1;
     const mirror = this.#mirror;
     const view = new ViewState(mirror.tick, mirror.feed.count(FEED));
-    const client = new Client(id, sink, view);
+    const client = new Client(id, sink, view, this.#clock.now());
     client.queue(helloFrame(this.#world, mirror.clock, this.#state));
     this.#clients.set(id, client);
     this.#interest.add(id);
     return id;
+  }
+
+  /**
+   * One raw text message of `client`, which the transport already held to 4 KiB and to text: read
+   * with the protocol's strict schema, then held to the bucket of messages, and, for a subscribe,
+   * to the bucket of new chunks. A rejected message gets `error` with its code alone, and, unless
+   * a correct client may meet it too (`unknown_being`, `resync_too_soon`), a strike: the third
+   * within 10 s closes the client with 1008, with no `error` for it. An answer goes out at once,
+   * within the client's budget and buffer; what does not fit waits.
+   */
+  receive(client: ClientId, text: string): void {
+    const connected = this.#client(client);
+    try {
+      this.#read(connected, text);
+    } catch (cause) {
+      this.#fault(connected, cause);
+    }
   }
 
   /** The client's buffer drained: what waits of its messages and its transaction goes on. */
@@ -329,11 +371,17 @@ export class Presentation {
     this.#clients.delete(client.id);
   }
 
+  /** Ends `client`: it is removed and counted, and its transport told to close it, once. */
+  #end(client: Client, ending: Ending): void {
+    this.#remove(client);
+    if (ending.reason === "strikes") this.#counts.strikeCloses += 1;
+    else this.#counts.faults += 1;
+    client.sink.end(ending);
+  }
+
   /** Serving `client` threw `cause`: it is dropped and counted, and its transport told to end it. */
   #fault(client: Client, cause: unknown): void {
-    this.#remove(client);
-    this.#counts.faults += 1;
-    client.sink.end({ reason: "fault", cause });
+    this.#end(client, { reason: "fault", cause });
   }
 
   #releaseView(view: ViewState): void {
@@ -359,6 +407,60 @@ export class Presentation {
     this.#interest.follow(client.id, being);
     const center = being === null ? undefined : this.#mirror.locate(being);
     this.#interest.moveWindow(client.id, center);
+  }
+
+  /** Reads one message of `client` and answers it. */
+  #read(client: Client, text: string): void {
+    const now = this.#clock.now();
+    const parsed = parseClientMessage(text);
+    let code: ErrorCode | undefined;
+    if (!parsed.ok) code = parsed.code;
+    else if (!client.session.admitMessage(now)) code = "rate_limited";
+    else code = this.#apply(client, parsed.message, now);
+    // A client that a strike closed gets nothing more.
+    if (code !== undefined && !this.#reject(client, code, now)) return;
+    this.#flush(client, false);
+  }
+
+  /** Applies `message`; returns why it is rejected, if it is. */
+  #apply(client: Client, message: ClientMessage, now: number): ErrorCode | undefined {
+    switch (message.type) {
+      case "subscribe": {
+        const added = this.#interest.added(client.id, message.chunks);
+        if (!client.session.admitChunks(now, added)) return "rate_limited";
+        this.#interest.subscribe(client.id, message.chunks);
+        return undefined;
+      }
+      case "follow": {
+        const { being } = message;
+        if (being !== null && this.#mirror.locate(being) === undefined) return "unknown_being";
+        this.#follow(client, being);
+        return undefined;
+      }
+      case "ping":
+        client.queue(pongFrame(client.view.tick, message.nonce), "pong");
+        return undefined;
+      case "resync":
+        if (!client.session.mayResync(now)) return "resync_too_soon";
+        client.view.needsReset = true;
+        return undefined;
+    }
+  }
+
+  /**
+   * Rejects a message of `client` with `code`, and strikes it unless a correct client may meet the
+   * code too. Returns whether the client stays: the third strike within 10 s ends it with 1008.
+   */
+  #reject(client: Client, code: ErrorCode, now: number): boolean {
+    if (!NO_STRIKE.has(code)) {
+      this.#counts.strikes += 1;
+      if (client.session.strike(now)) {
+        this.#end(client, STRIKES_ENDING);
+        return false;
+      }
+    }
+    client.queue(errorFrame(client.view.tick, code), `error:${code}`);
+    return true;
   }
 
   /** The world's state changed: every client is told, at its visible tick. */

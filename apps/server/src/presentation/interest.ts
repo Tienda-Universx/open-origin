@@ -64,6 +64,12 @@ export class Interest {
     this.#reindex(client, wants);
   }
 
+  /** How many chunks of `chunks` the camera of `client` does not hold. */
+  added(client: ClientId, chunks: readonly ChunkCoord[]): number {
+    const camera = new Set(this.#of(client).camera.map(chunkKey));
+    return chunks.filter((at) => !camera.has(chunkKey(at))).length;
+  }
+
   /** Makes `client` follow `being`, or nothing for null. The window moves with `moveWindow`. */
   follow(client: ClientId, being: number | null): void {
     const wants = this.#of(client);

@@ -7,15 +7,15 @@ published records. Its presentation plane turns those records into each client's
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
 describes what the code implements as of T6-6b: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
-(playout, mirror, interest, transactions, the send discipline, and the fan-out), their composition,
-and the test of observer invariance. Sessions, the limits of memory and terrain, the transport, and
-the entry point (T6-7) arrive later.
+(playout, mirror, interest, transactions, sessions, the send discipline, and the fan-out), their
+composition, and the test of observer invariance. The limits of memory and terrain, the transport,
+and the entry point (T6-7) arrive later.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
-`presentation-sizes`, `presentation-backpressure`, and `observer-invariance`), and
-`tests/repo/server-boundaries.test.ts`.
+`presentation-sizes`, `presentation-input`, `presentation-backpressure`, and `observer-invariance`),
+and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -24,7 +24,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | `src/config/` | — | `parseConfig`: the environment, parsed and deep-frozen |
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
 | `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
-| `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, `client.ts` (a client and its sink), `terrain.ts`, and `telemetry.ts` |
+| `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, `client.ts` (a client and its sink), `session.ts` (input limits), `terrain.ts`, and `telemetry.ts` |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane; `composeServer(config, deps)`: both planes |
 
@@ -233,21 +233,22 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
 `Presentation` receives from the world plane three functions only: the subscription to published
 ticks, which delivers the boot record first; `readTerrain`; and the world's state. It holds nothing
 of the world but those frozen C0 records and that state, which every client shares, and no network:
-the transport of T6-7 drives it through `connect(sink)`, `subscribe`, `follow`, and `resync` with
-what a client asked, `drained(client)` when a socket's buffer drains, and `close(client)` when a
-socket closes. `abort` acts on a client directly.
+the transport of T6-7 drives it through `connect(sink)`, `receive(client, text)` for each raw text
+message, `drained(client)` when a socket's buffer drains, and `close(client)` when a socket closes.
+`subscribe`, `follow`, `resync`, and `abort` act on a client directly, for tests; the transport
+never calls them.
 
 A sink is `{send(frame), buffered(), end(ending)}`. `buffered()` is the bytes the client's socket
 holds and has not written, Bun's `getBufferedAmount()`. `end` closes the connection, once: the
-presentation already released the client, so the transport must not call `drained` or `close` for
-it again. Its `ending` says why: `strikes`, with close code 1008; `too_slow`, with 1013;
+presentation already released the client, so the transport must not call `receive`, `drained`, or
+`close` for it again. Its `ending` says why: `strikes`, with close code 1008; `too_slow`, with 1013;
 or `fault`, with what serving the client threw and no code, since the protocol fixes none (T6-7
 chooses one).
 
-A throw while serving one client, from its sink's `send`, the terrain, or the start of its
-transaction, drops that client alone: its interest, pins, and transaction go, the drop is counted
-as `faults` (C3), and its sink's `end` gets the fault. The period goes on with the next client. Any
-other throw of a period, from the playout, the
+A throw while serving one client, from its sink's `send`, the terrain, the start of its
+transaction, or the reading of one of its messages, drops that client alone: its interest, pins,
+and transaction go, the drop is counted as `faults` (C3), and its sink's `end` gets the fault. The
+period goes on with the next client. Any other throw of a period, from the playout, the
 mirror, or a drop, is a fault of the whole plane, whose state may be inconsistent: the presentation
 stops, `usage().failed` turns true, and the throw goes on to the runtime. `stop()` stops the
 periods and unsubscribes from the world plane for good, so a stopped presentation receives no
@@ -295,12 +296,33 @@ transaction starts. An inverted index maps each chunk to the clients whose effec
 it, and `followers(being)` counts the clients that follow a being: observation telemetry (C3) that
 lives in this plane, where the world cannot import it.
 
+### Sessions and input
+
+`receive(client, text)` takes one raw text message, which the transport already held to 4 KiB and
+to text frames, and applies, in order:
+
+1. `parseClientMessage`: `JSON.parse` in a try, then the strict schema, which rejects `__proto__`,
+   extra keys, and every type but the four;
+2. the bucket of messages, 10 a second with a burst of 20;
+3. for a `subscribe`, the bucket of chunks new to the camera, 64 every 2 s;
+4. the message itself: `subscribe` replaces the camera; `follow` of a being the mirror does not hold
+   is `unknown_being`; `ping` gets `pong{nonce}`; `resync` within 2 s of the last one allowed is
+   `resync_too_soon`, and otherwise makes the next transaction a reset.
+
+A rejected message gets `error{code}`, the code alone, never anything of the input, and a strike,
+unless a correct client may meet the code too: `unknown_being`, after a being it saw died, and
+`resync_too_soon`, after two anomalies close together. The third strike within 10 s ends the client
+with 1008 and no `error` for it. Both buckets are counted in whole microseconds on the injected
+clock, so every timing is exact: a message costs 100,000 µs of a bucket of 2,000,000, and a chunk
+31,250 µs of a bucket of 2,000,000. A rejected message takes nothing from them. A strike counts
+while it is younger than 10 s, and a resync waits 2 s from the last one allowed.
+
 ### Send budget and backpressure
 
-A client gets at most 256 KiB a period, every message counted: hello, parts, commits, `status`,
-`abort`, and what a drain sends. The period's budget runs from one period to the next, so parts
-sent by `drained` between two periods take from the budget of the period before them; a drain never
-renews it. A message goes out
+A client gets at most 256 KiB a period, every message counted: hello, parts, commits, `pong`,
+`status`, `error`, `abort`, and what a drain sends. The period's budget runs from one period to the
+next, so answers sent at once by `receive` and parts sent by `drained` between two periods take
+from the budget of the period before them; a drain never renews it. A message goes out
 only while the client's socket buffers less than 256 KiB, checked before each message, and a message
 is at most 64 KiB, so the buffer stays under 320 KiB, within the 512 KiB the ADR bounds and far from
 Bun's limit of 1 MiB. A client whose buffer is full at its turn in the fan-out gets nothing and
@@ -308,9 +330,9 @@ starts no transaction; `drained` sends what waits of its messages and of its tra
 and never starts a transaction.
 
 Messages that are not parts of a transaction wait in the client's outbox and go before any part. The
-outbox stays small however long a client does not read: a pending `status` is replaced by a newer
-one, so it holds at most hello, one abort, and one `status`. A transaction starts only when the
-outbox is empty.
+outbox stays small whatever a client sends while it does not read: a pending `pong` or `status` is
+replaced by a newer one, and an `error` waits once per code, so it holds at most hello, one abort,
+and one message of each other kind. A transaction starts only when the outbox is empty.
 
 A period that leaves part of a transaction unsent sent more than the budget less a part, since the
 fan-out stops only when the next message does not fit. A transaction of B bytes, every message of
@@ -371,10 +393,10 @@ dead connection. T6 sends no `reason`; T8's operator pause brings one.
 ### Telemetry
 
 `telemetry()` reports, as C3: `connections`; `laggingClients`, the clients the last fan-out found
-with a full buffer; and the count since start of `faults`. No public message carries any of them:
-every public frame is built from the protocol's strict schemas. `usage()` reports, for tests, what
-the presentation holds: clients, interest, index entries, followings, pins, and retained bytes,
-every count zero once every client is gone.
+with a full buffer; and the counts since start of `strikes`, `strikeCloses`, and `faults`. No public
+message carries any of them: every public frame is built from the protocol's strict schemas.
+`usage()` reports, for tests, what the presentation holds: clients, interest, index entries,
+followings, pins, and retained bytes, every count zero once every client is gone.
 
 ### Tests
 
@@ -412,6 +434,15 @@ with the strict schema.
   past its budget, within the reducer's 1,024 parts and the periods their bytes need, the view
   unchanged until the commit, every frame read with the strict schema. One chunk of 65,536 narrow
   records also assembles.
+- `presentation-input.test.ts` (plan test 12 in process): `pong` with its nonce; 21 hostile messages
+  (text that is no JSON or looks binary, values that are not records, the types `pause`, `speed`,
+  `step`, `seek`, `rewind`, `tick`, and `rate`, extra keys, `__proto__`, a nonce past 2³¹ − 1, a
+  repeated chunk, 65 chunks, a chunk outside the world, and 5 KB of text), each with its exact code,
+  no byte of its input, and a strike; a strike 10 s old no longer counting, and a third strike
+  within 9.999999 s closing with 1008 and no `error`; 20 messages at once, then one at 100 ms and
+  none at 99.999 ms; 64 new chunks, then one at 31.25 ms; resyncs at most every 2 s,
+  `resync_too_soon` and `unknown_being` with no strike; and the answers to a lagging client
+  coalesced and sent first once it drains.
 - `presentation-backpressure.test.ts` (plan tests 7b and 13 in process): exactly 256 KiB buffered
   stops a client, and one byte less lets one message through; a drain sends only what is left of a
   period's budget and starts no transaction, and every period that leaves a transaction unsent sent

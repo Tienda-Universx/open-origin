@@ -9,6 +9,7 @@ import {
   CLIENT_LIMITS,
   type Clock,
   type DURABILITIES,
+  type ErrorCode,
   PROTOCOL_ID,
   type SERVER_MESSAGE_TYPES,
   type WORLD_STATES,
@@ -93,6 +94,16 @@ export function commitFrame(txn: number, clock: Clock): Frame {
 /** Cancels the transaction `txn` of tick `tick`: the client discards its parts. */
 export function abortFrame(txn: number, tick: number): Frame {
   return frameFrom("abort", { tick, txn });
+}
+
+/** The answer to a ping with `nonce`, at the client's visible tick. */
+export function pongFrame(tick: number, nonce: number): Frame {
+  return frameFrom("pong", { tick, nonce });
+}
+
+/** The rejection of a client message, with only its code: the input is never echoed. */
+export function errorFrame(tick: number, code: ErrorCode): Frame {
+  return frameFrom("error", { tick, code });
 }
 
 /** The world's state, at the client's visible tick. */

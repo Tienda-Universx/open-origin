@@ -7,6 +7,10 @@
 
 /** Counts since the presentation started, each only ever growing. */
 export type PresentationCounts = {
+  /** Strikes clients earned. */
+  strikes: number;
+  /** Clients closed with 1008 for three strikes in 10 s. */
+  strikeCloses: number;
   /** Clients dropped because serving them threw. */
   faults: number;
 };
@@ -21,5 +25,5 @@ export type PresentationTelemetry = Readonly<PresentationCounts> & {
 
 /** Counts that start at zero. */
 export function noCounts(): PresentationCounts {
-  return { faults: 0 };
+  return { strikes: 0, strikeCloses: 0, faults: 0 };
 }

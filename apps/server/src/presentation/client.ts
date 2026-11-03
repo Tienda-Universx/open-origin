@@ -1,20 +1,22 @@
 /**
  * One connected client of the presentation plane (ADR 0026, "Ordering and liveness" and "Limits
  * and backpressure"): its sink, its view, its order of messages, the messages that wait for their
- * turn, its transaction in flight, and what it may still receive this period.
+ * turn, its transaction in flight, its input limits, and what it may still receive this period.
  *
  * A client gets at most `periodBytes` a period, every message counted, and a message goes out only
  * while the bytes its socket buffers are under BUFFER_BYTES. A message is at most 64 KiB, so its
  * buffer stays under BUFFER_BYTES plus one message: always within 512 KiB.
  *
  * Messages that are not parts of a transaction wait in an outbox, which goes before any part. The
- * outbox stays small however long the client does not read: a pending `status` is replaced by a
- * newer one, so it holds at most hello, one abort, and one `status`.
+ * outbox stays small whatever the client sends while it does not read: a pending `pong` or
+ * `status` is replaced by a newer one, and an `error` is queued once per code, so it holds at most
+ * hello, one abort, and one message of each other kind.
  */
-import type { CLOSE_CODES } from "@open-origin/protocol/public";
+import { CLOSE_CODES, type ErrorCode } from "@open-origin/protocol/public";
 import { type Frame, frameBytes, frameText } from "./frames.ts";
 import type { ClientId } from "./interest.ts";
 import type { Mirror } from "./mirror.ts";
+import { Session } from "./session.ts";
 import type { Transaction, ViewState } from "./txn.ts";
 
 /** The buffered bytes at or above which a client gets nothing: 256 KiB. */
@@ -30,6 +32,11 @@ export type Ending =
   | { readonly reason: "too_slow"; readonly code: typeof CLOSE_CODES.tooSlow }
   | { readonly reason: "fault"; readonly cause: unknown };
 
+export const STRIKES_ENDING: Ending = Object.freeze({
+  reason: "strikes",
+  code: CLOSE_CODES.strikes,
+});
+
 /** Where a client's messages go: the transport's socket, or a test's double. */
 export interface ClientSink {
   /** Sends one text frame. */
@@ -38,13 +45,13 @@ export interface ClientSink {
   buffered(): number;
   /**
    * Ends the connection, once. The presentation already released the client, so the transport
-   * must not call `drained` or `close` for it again. It must not throw.
+   * must not call `receive`, `drained`, or `close` for it again. It must not throw.
    */
   end(ending: Ending): void;
 }
 
 /** The outbox slot of a message that coalesces with the pending one of its kind. */
-export type Slot = "status";
+export type Slot = "pong" | "status" | `error:${ErrorCode}`;
 
 /** A message that waits in the outbox, and its slot, if it coalesces. */
 type Queued = { readonly frame: Frame; readonly slot: Slot | undefined };
@@ -57,6 +64,7 @@ export class Client {
   readonly id: ClientId;
   readonly sink: ClientSink;
   readonly view: ViewState;
+  readonly session: Session;
   /** The `seq` of its next message. */
   seq = 0;
   /** The id of its next transaction. */
@@ -70,10 +78,11 @@ export class Client {
   #left = 0;
   #sentIn = -1;
 
-  constructor(id: ClientId, sink: ClientSink, view: ViewState) {
+  constructor(id: ClientId, sink: ClientSink, view: ViewState, now: number) {
     this.id = id;
     this.sink = sink;
     this.view = view;
+    this.session = new Session(now);
   }
 
   /** How many messages wait in the outbox. */

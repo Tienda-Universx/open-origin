@@ -64,6 +64,22 @@ that applies:
 | `out_of_bounds` | A `subscribe` whose only problems are safe integer coordinates outside the world |
 | `bad_message` | Any other problem: an extra key (`__proto__` and `constructor` included), a wrong type, a fraction, an unsafe integer, a repeated chunk |
 
+The server then holds each message to the client's limits, in this order: the bucket of messages
+(`messagesPerSecond` with a burst of `burst`), and, for a `subscribe`, the bucket of chunks new to
+the camera (`newChunksPer2s` every 2 s); a rejected message takes nothing from either. It answers:
+
+| Code | When |
+|---|---|
+| `rate_limited` | A message beyond the bucket of messages, or a `subscribe` whose chunks new to the camera are beyond theirs |
+| `unknown_being` | A `follow` of a being the world the server plays out does not hold |
+| `resync_too_soon` | A `resync` less than 2 s after the last one the server allowed |
+
+Every rejected message gets `error{code}`, the code alone, and a strike, except `unknown_being` and
+`resync_too_soon`, which a correct client may meet: a being it saw may have died, and two anomalies
+may come close together. The third strike within 10 s closes the connection with 1008, with no
+`error` for it. A `ping` gets `pong` with its nonce; a `resync` the server allows makes its next
+transaction a reset.
+
 ## Server to client
 
 Every message carries `type`, `seq`, and `tick`. `seq` starts at 0 with `hello` and grows by exactly
@@ -99,8 +115,9 @@ What the server sends besides transactions:
   that gets nothing else in a period, and is not lagging, gets `status` again, so a client of a
   stopped world that keeps up does not take the silence for a lost connection.
 - **Answers that wait.** A message goes out only while the client's socket buffers less than
-  256 KiB and within the period's budget of 256 KiB. While a client does not read, a newer
-  `status` replaces the one that waits.
+  256 KiB and within the period's budget of 256 KiB. While a client does not read, a newer `pong`
+  or `status` replaces the one that waits, and an `error` waits once per code: a client that pings
+  faster than it reads gets the newest nonce.
 
 ### Field classes
 

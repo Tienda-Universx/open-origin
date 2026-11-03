@@ -226,7 +226,7 @@ per tick and shared by all clients.
 | Input message | At most 4 KB (`maxPayloadLength`). Binary frames are refused |
 | Message rate | A token bucket of 10 per second, burst 20 |
 | New chunks | At most 64 every 2 s |
-| Strikes | 3 in 10 s close with 1008 |
+| Strikes | 3 in 10 s close with 1008. Every rejected message earns one, except `unknown_being` and `resync_too_soon`, which a correct client may meet |
 | Connections | 1,024 in all and 16 per IP, both configurable, refused at the upgrade |
 | Idle | `idleTimeout` 120 s, with `sendPings` |
 | Origin | Exact match against `PUBLIC_ORIGINS`. A request without `Origin` is accepted, for non-browser tools |
