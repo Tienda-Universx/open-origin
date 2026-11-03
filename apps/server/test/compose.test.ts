@@ -380,6 +380,9 @@ describe("composeServer", () => {
         if (parsed.ok) messages.push(parsed.message);
       },
       lagging: () => false,
+      end: (cause) => {
+        throw cause;
+      },
     });
     server.start();
     await timer.runUntilSettled(10 * P);
@@ -403,7 +406,13 @@ describe("composeServer", () => {
       }),
     ].map(({ presentation }) => {
       const hello: string[] = [];
-      presentation.connect({ send: (frame) => hello.push(frame), lagging: () => false });
+      presentation.connect({
+        send: (frame) => hello.push(frame),
+        lagging: () => false,
+        end: (cause) => {
+          throw cause;
+        },
+      });
       presentation.period();
       return JSON.parse(hello[0] ?? "{}").world.id;
     });

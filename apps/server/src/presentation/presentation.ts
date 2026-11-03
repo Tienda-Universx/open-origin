@@ -10,7 +10,9 @@
  * pending messages, then the parts of its transaction, up to a byte budget per client and period.
  * A client's transaction starts only after its previous one committed, and only once the playout
  * tick passed that commit's, so a client that is up to date gets one commit per period. Every
- * connection's first transaction is a reset.
+ * connection's first transaction is a reset. A throw while serving one client drops that client
+ * alone, and the period goes on with the others; a throw of the playout or the mirror is a fault
+ * of the whole plane, which stops its periods.
  */
 import { type ChunkCoord, MAX_PART_BYTES, type TerrainPublic } from "@open-origin/protocol/public";
 import type { PublishedListener } from "../world/published.ts";
@@ -34,6 +36,11 @@ export interface ClientSink {
   send(frame: string): void;
   /** Whether the client's buffer is full: it gets nothing this period (T6-6b measures it). */
   lagging(): boolean;
+  /**
+   * Ends the connection: serving the client threw `cause`, and the presentation already dropped
+   * it, so it must not be closed again. Called once; it must not throw.
+   */
+  end(cause: unknown): void;
 }
 
 /** A monotonic clock, in whole microseconds. */
@@ -98,6 +105,8 @@ export type PresentationUsage = {
   };
   readonly pins: number;
   readonly retainedBytes: number;
+  /** Clients dropped because serving them threw (C3). */
+  readonly faults: number;
 };
 
 const MICROS_PER_SECOND = 1_000_000;
@@ -134,7 +143,11 @@ export class Presentation {
   /** How many periods ran. */
   #period = 0;
   #running = false;
+  /** Whether `stop` ran: a stopped presentation is detached from the world plane for good. */
+  #stopped = false;
   #cancel: (() => void) | undefined;
+  readonly #unsubscribe: () => void;
+  #faults = 0;
   #anchor = 0;
   #periods = 0;
 
@@ -154,7 +167,7 @@ export class Presentation {
     this.#timer = options.timer;
     this.#hz = hz;
     let booted = false;
-    options.subscribeToPublished((published) => {
+    this.#unsubscribe = options.subscribeToPublished((published) => {
       if (booted) this.#playout.push(published);
       else this.#mirror.apply(published);
       booted = true;
@@ -226,11 +239,7 @@ export class Presentation {
 
   /** Disconnects `client`: its interest, its index entries, its pins, and its transaction go. */
   close(client: ClientId): void {
-    const connected = this.#client(client);
-    connected.txn?.release(this.#mirror);
-    this.#releaseView(connected.view);
-    this.#interest.remove(client);
-    this.#clients.delete(client);
+    this.#remove(this.#client(client));
   }
 
   /** How many clients follow `being`: observation telemetry (C3), which the world cannot read. */
@@ -245,6 +254,7 @@ export class Presentation {
       interest: this.#interest.usage(),
       pins: mirror.pins,
       retainedBytes: mirror.retainedBytes,
+      faults: this.#faults,
     };
   }
 
@@ -252,11 +262,19 @@ export class Presentation {
   period(): void {
     this.#period += 1;
     this.#playout.release((published) => this.#mirror.apply(published));
-    for (const client of this.#clients.values()) this.#serve(client);
+    // Deleting the entry being visited, as a fault does, leaves a Map's iteration well defined.
+    for (const client of this.#clients.values()) {
+      try {
+        this.#serve(client);
+      } catch (cause) {
+        this.#fault(client, cause);
+      }
+    }
   }
 
   /** Runs a period every 1/tickRateHz seconds, each in a timer task of its own, from a period now. */
   start(): void {
+    if (this.#stopped) throw new Error("a stopped presentation cannot start again");
     if (this.#running) return;
     this.#running = true;
     this.#anchor = this.#clock.now();
@@ -264,17 +282,37 @@ export class Presentation {
     this.#arm();
   }
 
-  /** Stops the periods. */
+  /**
+   * Stops the periods and detaches from the world plane for good: a stopped presentation receives
+   * no published tick, so nothing grows its playout, and it cannot start again.
+   */
   stop(): void {
     this.#running = false;
     this.#cancel?.();
     this.#cancel = undefined;
+    if (!this.#stopped) this.#unsubscribe();
+    this.#stopped = true;
   }
 
   #client(id: ClientId): Client {
     const client = this.#clients.get(id);
     if (client === undefined) throw new Error(`client ${id} is not connected`);
     return client;
+  }
+
+  /** Removes `client` with everything it holds: interest, index entries, pins, and transaction. */
+  #remove(client: Client): void {
+    client.txn?.release(this.#mirror);
+    this.#releaseView(client.view);
+    this.#interest.remove(client.id);
+    this.#clients.delete(client.id);
+  }
+
+  /** Serving `client` threw `cause`: it is dropped and counted, and its transport told to end it. */
+  #fault(client: Client, cause: unknown): void {
+    this.#faults += 1;
+    this.#remove(client);
+    client.sink.end(cause);
   }
 
   #releaseView(view: ViewState): void {

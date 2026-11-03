@@ -255,6 +255,9 @@ class Audience {
         this.activity.received += 1;
       },
       lagging: () => observer.lag,
+      end: (cause) => {
+        throw cause;
+      },
     });
     this.activity.connects += 1;
     this.#subscribe(presentation, observer.id);

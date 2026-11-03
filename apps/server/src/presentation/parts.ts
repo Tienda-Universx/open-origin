@@ -14,6 +14,7 @@ import {
   MAX_VIEW_CHUNKS,
   MIN_CHUNK,
 } from "@open-origin/protocol/public";
+import { byteLength } from "./bytes.ts";
 import { type Frame, frameOf, headBytes, WIDEST_INTEGER as W } from "./frames.ts";
 import type { RingItem } from "./ring.ts";
 import type { ChunkVersion, EncodedBeing } from "./version.ts";
@@ -273,7 +274,10 @@ export function* snapshotParts(
 ): Generator<Frame> {
   const cap = fragmentCap(limit);
   let followed = content.followed;
-  let part = new Filling(SNAPSHOT_FRAME + (followed?.length ?? 0), limit);
+  let part = new Filling(
+    SNAPSHOT_FRAME + (followed === undefined ? 0 : byteLength(followed)),
+    limit,
+  );
   for (const chunk of content.chunks) {
     const fragments = fragmentsOf(chunk, cap);
     for (const [i, fragment] of fragments.entries()) {

@@ -20,6 +20,7 @@ import {
   Publisher,
   plain,
   presentationOver,
+  rethrow,
   shown,
   terrainAt,
   ViewClient,
@@ -447,7 +448,11 @@ describe("closing", () => {
     const open: number[] = [];
     for (let cycle = 0; cycle < 20; cycle += 1) {
       // A sink that drops what it gets: these clients only hold pins and interest.
-      const id = presentation.connect({ send: () => undefined, lagging: () => false });
+      const id = presentation.connect({
+        send: () => undefined,
+        lagging: () => false,
+        end: rethrow,
+      });
       presentation.subscribe(id, [
         [0, 0],
         [1, 0],
@@ -470,6 +475,7 @@ describe("closing", () => {
       interest: { clients: 0, indexEntries: 0, following: 0 },
       pins: 0,
       retainedBytes: 0,
+      faults: 0,
     });
   });
 });
@@ -490,5 +496,88 @@ describe("interest", () => {
     expect(() => presentation.subscribe(id, camera)).toThrow(RangeError);
     presentation.follow(id, null);
     expect(presentation.followers(7)).toBe(0);
+  });
+});
+
+describe("faults", () => {
+  test("a throw while serving one client drops it alone, and the next is served that period", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const { presentation, advance } = presentationOver(model);
+    const failure = new Error("socket gone");
+    const ended: unknown[] = [];
+    let sent = 0;
+    // Served first, it throws on its second message, inside its first transaction.
+    const faulty = presentation.connect({
+      send: () => {
+        sent += 1;
+        if (sent === 2) throw failure;
+      },
+      lagging: () => false,
+      end: (cause) => ended.push(cause),
+    });
+    presentation.subscribe(faulty, [[0, 0]]);
+    const healthy = new ViewClient();
+    const id = presentation.connect(healthy);
+    presentation.subscribe(id, [[0, 0]]);
+    presentation.period();
+    expect(ended).toEqual([failure]);
+    expect(healthy.commits.map(({ tick }) => tick)).toEqual([0]);
+    expect(presentation.usage()).toMatchObject({ clients: 1, faults: 1 });
+    expect(() => presentation.close(faulty)).toThrow(`client ${faulty} is not connected`);
+    advance();
+    expect(healthy.commits.map(({ tick }) => tick)).toEqual([0, 1]);
+    expect(ended).toEqual([failure]);
+    presentation.close(id);
+    expect(presentation.usage()).toMatchObject({
+      clients: 0,
+      pins: 0,
+      retainedBytes: 0,
+      faults: 1,
+    });
+  });
+
+  test("a terrain that throws as a transaction starts drops its client with no pin left", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const failure = new Error("no terrain");
+    const { presentation } = presentationOver(model, {
+      readTerrain: (at) => {
+        if (at[0] === 1 && at[1] === 0) throw failure;
+        return terrainAt(at);
+      },
+    });
+    const ended: unknown[] = [];
+    const faulty = presentation.connect({
+      send: () => undefined,
+      lagging: () => false,
+      end: (cause) => ended.push(cause),
+    });
+    presentation.subscribe(faulty, [
+      [0, 0],
+      [1, 0],
+    ]);
+    const healthy = new ViewClient();
+    const id = presentation.connect(healthy);
+    presentation.subscribe(id, [[0, 0]]);
+    presentation.period();
+    expect(ended).toEqual([failure]);
+    expect(healthy.commits.map(({ tick }) => tick)).toEqual([0]);
+    presentation.close(id);
+    expect(presentation.usage()).toMatchObject({
+      clients: 0,
+      pins: 0,
+      retainedBytes: 0,
+      faults: 1,
+    });
+  });
+
+  test("stop detaches the presentation from the world plane for good", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const { presentation, publisher } = presentationOver(model);
+    expect(publisher.listeners).toBe(1);
+    presentation.start();
+    presentation.stop();
+    expect(publisher.listeners).toBe(0);
+    presentation.stop();
+    expect(() => presentation.start()).toThrow("a stopped presentation cannot start again");
   });
 });

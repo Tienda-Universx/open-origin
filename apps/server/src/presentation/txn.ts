@@ -213,9 +213,15 @@ export class Transaction {
       start.mirror.pin(version);
       pins.set(version.key, version);
     }
-    const transaction = new Transaction(start, pins);
-    start.view.needsReset = false;
-    return transaction;
+    try {
+      const transaction = new Transaction(start, pins);
+      start.view.needsReset = false;
+      return transaction;
+    } catch (cause) {
+      // Its content could not be fixed, from the terrain or the mirror: nothing stays pinned.
+      for (const version of pins.values()) start.mirror.unpin(version);
+      throw cause;
+    }
   }
 
   /** The next frame to send, or undefined once the commit went out. */

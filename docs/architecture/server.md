@@ -232,7 +232,16 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
 `Presentation` receives from the world plane two functions only: the subscription to published
 ticks, which delivers the boot record first, and `readTerrain`. It holds nothing of the world but
 those frozen C0 records, and no network: the transport of T6-7 will drive it through `connect(sink)`,
-`subscribe`, `follow`, `resync`, `abort`, and `close`, where a sink is `{send(frame), lagging()}`.
+`subscribe`, `follow`, `resync`, `abort`, and `close`, where a sink is
+`{send(frame), lagging(), end(cause)}`.
+
+A throw while serving one client, from its sink's `send`, the terrain, or the start of its
+transaction, drops that client alone: its interest, pins, and transaction go, the drop is counted as
+`faults` (C3), and its sink's `end(cause)` tells the transport to close the connection, which must
+not call `close` for it again. The period goes on with the next client. A throw of the playout or
+the mirror is a fault of the whole plane: it leaves the period and stops the schedule. `stop()`
+stops the periods and unsubscribes from the world plane for good, so a stopped presentation
+receives no published tick and cannot start again.
 
 ### Playout
 
@@ -371,8 +380,8 @@ channel. T6-7's entry point installs the process handler that calls `unhandledRe
 from the world plane's `subscribeToPublished` and `readTerrain` alone, with the same clock and
 timer, the configured rate and F, and hello's world: a random id of 16 bytes, fresh at every boot
 unless a test gives `worldId`, and the configured durability. Its `start()` starts the world's
-clock and the presentation's periods; `stop()` stops the periods, then the world, resolving once
-every executed tick is published. T6-7's entry point calls it.
+clock and the presentation's periods; `stop()` stops the periods and detaches the presentation, then
+stops the world, resolving once every executed tick is published. T6-7's entry point calls it.
 
 ## Observer invariance
 

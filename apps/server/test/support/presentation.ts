@@ -262,6 +262,11 @@ export class ViewClient implements ClientSink {
     return this.lag;
   }
 
+  /** A test client never faults: the cause of a fault, such as a rejected frame, fails the test. */
+  end(cause: unknown): never {
+    throw cause;
+  }
+
   /** The largest frame received, which no part may make larger than MAX_PART_BYTES. */
   get largest(): number {
     return Math.max(0, ...this.sizes);
@@ -291,6 +296,16 @@ export class Publisher {
   publish(published: PublishedTick): void {
     for (const listener of this.#listeners) listener(published);
   }
+
+  /** How many listeners are subscribed. */
+  get listeners(): number {
+    return this.#listeners.size;
+  }
+}
+
+/** The `end` of a test's sink: a fault in serving it fails the test with its cause. */
+export function rethrow(cause: unknown): never {
+  throw cause;
 }
 
 /** A presentation over a model world, driven period by period by the test. */
