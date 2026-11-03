@@ -512,14 +512,18 @@ with the strict schema.
 - `presentation-reconstruction.test.ts` (plan test 7): a seeded model world of beings that walk,
   cross, arrive, leave, and speak, published in bursts now and then and with more feed than a tick
   keeps every 40 ticks, and clients that change camera and follow at random, resync, lag, lose a
-  message, abort, and reconnect. After every commit each view equals the model at the commit's tick,
-  terrain and followed record included, but for chunks whose terrain was not at hand, which enter a
-  later commit and are never ones the view showed; unless a lost message left the client behind, the
-  commit brings exactly the feed of `(L, L']`, the items of a tick beyond 64 counted as `missed`,
-  and the local speech of `(L, L']` of the chunks that stayed in view; and no client gets more than
-  its budget or one commit in a period. The run must cover drops, re-entries, returns, fragments,
-  multi-period transactions, crossings, playout skips, aborts, feed, missed feed, speech, resets
-  after the first, late connections, and commits that left out a chunk waiting for its terrain.
+  message, abort, and reconnect, over a terrain LRU of 8 entries filled 4 chunks a period. After
+  every commit each view equals the model at the commit's tick, terrain and followed record
+  included, but for chunks whose terrain was not at hand, which enter a later commit and are never
+  ones the view showed; unless a lost message left the client behind, the commit brings exactly the
+  feed of `(L, L']`, the items of a tick beyond 64 counted as `missed`, and the local speech of
+  `(L, L']` of the chunks that stayed in view; and no client gets more than its budget or one commit
+  in a period. The run must cover drops, re-entries, returns, fragments, multi-period transactions,
+  crossings, playout skips, aborts, feed, missed feed, speech, resets after the first, late
+  connections, and commits that left out a chunk waiting for its terrain. Then every client asks
+  once more for a camera and a followed being, and nothing changes after: within the periods the
+  terrain and transaction bounds give, every view holds exactly its whole interest, though commits
+  of that phase left out chunks waiting for their terrain.
 - `presentation-sizes.test.ts` (plan test 7b): under parts of 64 KiB and 256 KiB a period, a chunk of
   1,024 beings of records near the widest spans parts and two periods, the view never shows a
   partial chunk, and the transaction commits at its tick while beings move, arrive, and leave. The
