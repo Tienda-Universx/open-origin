@@ -11,7 +11,9 @@
  * that earn strikes and closes; their sockets stall and drain slowly, so the presentation's
  * backpressure holds their messages back; and they disconnect midway. For every tick the
  * fake-clock time it ran at, its full command list, rejected commands included, its checksum, and
- * the bytes of its PublishedTick must be equal, and so must the final snapshot.
+ * the bytes of its PublishedTick must be equal, and so must the final snapshot. The run and the
+ * comparison live in support/invariance.ts, which ws-world.test.ts shares for the variant over real
+ * sockets.
  *
  * The run with 32 observers also holds four clients of the protocol's reducer that watch the
  * subject's first chunk crossing (plan test 9): one of the chunk the being leaves, one of the chunk
@@ -27,78 +29,37 @@
  * runs one extra tick per subscribe, which only the timeline shows.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
-import { type beings, type Command, encodeSnapshot, type World } from "@open-origin/engine";
+import type { beings } from "@open-origin/engine";
 import {
   type BeingPublic,
   type ChunkCoord,
   type ClientState,
   type Clock,
   chunkKey,
-  encodeTerrain,
-  type TerrainPublic,
 } from "@open-origin/protocol/public";
-import { rulesetOf, subjectBrain } from "../../../packages/agents/test/support/mind-ruleset.ts";
-import {
-  mindWorld,
-  SUBJECT_SEEDS,
-  subjectScript,
-} from "../../../packages/agents/test/support/mind-subject.ts";
-import type { SuiteRuleset } from "../../../packages/engine/test/support/determinism-records.ts";
+import { subjectBrain } from "../../../packages/agents/test/support/mind-ruleset.ts";
 import { Random } from "../../../packages/protocol/test/support/random.ts";
-import { composeServer, type Server, type WorldPlaneDeps } from "../src/compose.ts";
-import { parseConfig } from "../src/config/config.ts";
+import type { Server, WorldPlaneDeps } from "../src/compose.ts";
 import { BUFFER_BYTES } from "../src/presentation/client.ts";
 import type { Ending, Presentation } from "../src/presentation/presentation.ts";
-import { BeingsProjection, type WorldProjection } from "../src/projection/projection.ts";
-import { EphemeralJournal, type JournalBatch, type TickJournal } from "../src/world/journal.ts";
 import type { PublishedTick } from "../src/world/published.ts";
 import { FixedRateScheduler, type TickScheduler } from "../src/world/scheduler.ts";
-import type { CommandIntent, WorldSource } from "../src/world/source.ts";
-import { FakeClock, FakeTimer } from "./support/fake-time.ts";
+import type { CommandIntent } from "../src/world/source.ts";
+import {
+  divergence,
+  P,
+  PublicHistory,
+  subjectRun,
+  TERRAIN,
+  type Timeline,
+} from "./support/invariance.ts";
 import { type ChunkState, shown, ViewClient, windowKeys } from "./support/presentation.ts";
 
-/** One period at 5 Hz, in microseconds. */
-const P = 200_000;
 /** The ticks of the compared runs, and of the runs of the negative controls. */
 const TICKS = 100;
 const LEAK_TICKS = 30;
 /** The period at which the negative controls' observers join: clean ticks precede each leak. */
 const LATE_JOIN = 10;
-const WORLD_ID = "0123456789abcdef0123456789abcdef";
-
-/** The configuration production starts with, in ephemeral mode. */
-function config() {
-  const parsed = parseConfig({ OPEN_ORIGIN_DURABILITY: "ephemeral" });
-  if (!parsed.ok) throw new Error(parsed.errors.join("; "));
-  return parsed.config;
-}
-
-/** One flat terrain for every chunk: what the world does never depends on terrain sent out. */
-const TERRAIN: TerrainPublic = encodeTerrain(
-  {
-    elevation: Array(1024).fill(0),
-    liquidDepth: Array(1024).fill(0),
-    substrate: Array(1024).fill(0),
-  },
-  {
-    elevation: { min: -100, max: 100 },
-    liquidDepth: { min: 0, max: 100 },
-    substrate: { min: 0, max: 15 },
-  },
-);
-
-/** The C0 projection of a world of beings, with the constant terrain. */
-function constantTerrain(world: World): WorldProjection {
-  const projection = new BeingsProjection(world);
-  return {
-    boot: () => projection.boot(),
-    project: (result) => projection.project(result),
-    readTerrain: () => TERRAIN,
-    get omittedSpeech() {
-      return projection.omittedSpeech;
-    },
-  };
-}
 
 /** What the observers and the leaks share: the presentation, the tick being run, and the leak. */
 type Probe = {
@@ -119,69 +80,6 @@ type Leak = {
   readonly brain?: (probe: Probe) => beings.Controller2;
   readonly schedulerOf?: (probe: Probe) => NonNullable<WorldPlaneDeps["schedulerOf"]>;
 };
-
-/** What a run recorded of each tick, and its final snapshot. */
-type Timeline = {
-  readonly ticks: number;
-  readonly times: ReadonlyMap<number, number>;
-  readonly commands: ReadonlyMap<number, string>;
-  readonly checksums: ReadonlyMap<number, string>;
-  readonly published: ReadonlyMap<number, string>;
-  readonly snapshot: string;
-};
-
-/** The first tick at which `run` differs from `reference`, and in what; undefined when none. */
-function divergence(reference: Timeline, run: Timeline) {
-  const fields = ["times", "commands", "checksums", "published"] as const;
-  for (let tick = 0; tick <= Math.max(reference.ticks, run.ticks); tick += 1) {
-    const what = fields.find((field) => reference[field].get(tick) !== run[field].get(tick));
-    if (what !== undefined) return { tick, what };
-  }
-  return reference.snapshot === run.snapshot ? undefined : { tick: run.ticks, what: "snapshot" };
-}
-
-/** A journal that keeps each tick's commands and checksum, then acknowledges as production does. */
-class RecordingJournal implements TickJournal {
-  readonly level = "none";
-  readonly commands = new Map<number, string>();
-  readonly checksums = new Map<number, string>();
-  readonly #inner = new EphemeralJournal();
-
-  append(batch: JournalBatch): Promise<void> {
-    for (const { tick, commands, checksum } of batch.records) {
-      this.commands.set(tick, JSON.stringify(commands));
-      this.checksums.set(tick, checksum);
-    }
-    return this.#inner.append(batch);
-  }
-}
-
-/** The subject's script: the commands of tick `t` at index `t − 1`, the injection among them. */
-let script: readonly (readonly Command[])[];
-
-/**
- * The mind@1 subject world, with its brain replaced when a leak asks, as a source that gives the
- * script's commands and records the fake-clock time at which the host asks for each tick's.
- */
-function recordingSource(clock: FakeClock, probe: Probe, leak: Leak) {
-  const brain = leak.brain?.(probe) ?? subjectBrain();
-  const world = mindWorld(SUBJECT_SEEDS[0], rulesetOf(brain) as unknown as SuiteRuleset, false);
-  const times = new Map<number, number>();
-  const source: WorldSource = {
-    world,
-    commandsAt: (tick) => {
-      probe.tick = tick;
-      times.set(tick, clock.now());
-      const commands = (script[tick - 1] ?? []).map(({ type, origin, payload }) => ({
-        type,
-        origin,
-        payload,
-      }));
-      return leak.extra === undefined ? commands : [...commands, ...leak.extra(tick, probe)];
-    },
-  };
-  return { source, times, world };
-}
 
 /**
  * Messages no correct client sends: text that is no JSON, binary-like text, types that would
@@ -392,10 +290,6 @@ class Audience {
   }
 }
 
-beforeAll(() => {
-  script = subjectScript();
-});
-
 /** What a run varies. */
 type RunOptions = {
   readonly observers: number;
@@ -412,8 +306,6 @@ type RunOptions = {
  * period after each tick and `leak` injected; returns the run's timeline and what observers did.
  */
 async function runWorld({ observers, ticks, leak = {}, firstJoin = 0, watch }: RunOptions) {
-  const clock = new FakeClock();
-  const timer = new FakeTimer(clock);
   const probe: Probe = {
     presentation: undefined,
     tick: 0,
@@ -421,26 +313,20 @@ async function runWorld({ observers, ticks, leak = {}, firstJoin = 0, watch }: R
     subscribes: 0,
     leaks: [],
   };
-  const { source, times, world } = recordingSource(clock, probe, leak);
-  const journal = new RecordingJournal();
-  const schedulerOf = leak.schedulerOf?.(probe);
-  const server = composeServer(config(), {
-    clock,
-    timer,
-    source,
-    journal,
-    projectionOf: constantTerrain,
-    worldId: WORLD_ID,
-    ...(schedulerOf === undefined ? {} : { schedulerOf }),
+  const { extra } = leak;
+  const run = subjectRun({
+    brain: leak.brain?.(probe),
+    extra: extra === undefined ? undefined : (tick) => extra(tick, probe),
+    onTick: (tick) => {
+      probe.tick = tick;
+    },
+    schedulerOf: leak.schedulerOf?.(probe),
   });
+  const { server, timer } = run;
   probe.presentation = server.presentation;
   watch?.(server);
   const audience = new Audience(observers, ticks, probe, firstJoin);
-  const published = new Map<number, string>();
-  server.world.subscribeToPublished((tick) => {
-    published.set(tick.tick, JSON.stringify(tick));
-    audience.learn(tick.chunks);
-  });
+  server.world.subscribeToPublished((tick) => audience.learn(tick.chunks));
   const act = (step: number) => {
     if (step >= ticks) return;
     audience.act(step);
@@ -449,16 +335,7 @@ async function runWorld({ observers, ticks, leak = {}, firstJoin = 0, watch }: R
   timer.schedule(P / 2, () => act(0));
   server.start();
   await timer.runUntilSettled((ticks - 1) * P);
-  await server.stop();
-  const executed = server.world.status().executedTick;
-  const timeline: Timeline = {
-    ticks: executed,
-    times,
-    commands: journal.commands,
-    checksums: journal.checksums,
-    published,
-    snapshot: encodeSnapshot(world),
-  };
+  const timeline = await run.finish();
   return { timeline, activity: audience.activity, probe };
 }
 
@@ -537,50 +414,6 @@ function firstCrossing(published: ReadonlyMap<number, string>): Crossing {
     }
   }
   throw new Error("no being of the subject world crossed a chunk");
-}
-
-/** The public world at each published tick, as the C0 projection published it. */
-class PublicHistory {
-  readonly #chunks = new Map<number, ReadonlyMap<string, ChunkState>>();
-  readonly #clocks = new Map<number, Clock>();
-  #boot = 0;
-
-  /** Applies the next published tick, the boot record first. */
-  readonly apply = (published: PublishedTick): void => {
-    if (this.#chunks.size === 0) this.#boot = published.tick;
-    const chunks = new Map(this.#chunks.get(published.tick - 1));
-    for (const { at, v, upsert, gone } of published.chunks) {
-      const beings = new Map(chunks.get(chunkKey(at))?.beings);
-      for (const id of gone) beings.delete(id);
-      for (const record of upsert) beings.set(record.id, record);
-      chunks.set(chunkKey(at), { v, beings });
-    }
-    this.#chunks.set(published.tick, chunks);
-    this.#clocks.set(published.tick, published.clock);
-  };
-
-  /** The chunks `keys` at `tick`: a chunk no tick published is empty at the boot tick. */
-  chunks(tick: number, keys: Iterable<string>): Map<string, ChunkState> {
-    const world = this.#chunks.get(tick);
-    if (world === undefined) throw new Error(`no tick ${tick} was published`);
-    const empty: ChunkState = { v: this.#boot, beings: new Map() };
-    return new Map([...keys].map((key) => [key, world.get(key) ?? empty]));
-  }
-
-  /** The record of `being` at `tick`, or undefined when no chunk holds it. */
-  record(tick: number, being: number): BeingPublic | undefined {
-    for (const { beings } of this.#chunks.get(tick)?.values() ?? []) {
-      const record = beings.get(being);
-      if (record !== undefined) return record;
-    }
-    return undefined;
-  }
-
-  clock(tick: number): Clock {
-    const clock = this.#clocks.get(tick);
-    if (clock === undefined) throw new Error(`no tick ${tick} was published`);
-    return clock;
-  }
 }
 
 /** What a client's view showed after a commit. */

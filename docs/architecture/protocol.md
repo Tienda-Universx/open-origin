@@ -39,6 +39,28 @@ the C0 members of the engine's registry of classes.
 - The server speaks exactly one version. Any change of shape raises the version and updates
   ADR 0026, this document, and the allowlist tests (`client.test.ts`, `server.test.ts`).
 
+## HTTP surface
+
+The public listener (`apps/server/src/transport/`, described in the
+[server's document](server.md#transport)) answers two paths and refuses everything else. It checks a
+request in this order, and the first refusal wins:
+
+| Request | Answer |
+|---|---|
+| A `Host` header off the allowlist, or none, on any path and with any method | 403 |
+| `GET /healthz` | 200, `{"ok":true}` |
+| Any other method or path but `GET /ws` | 404 |
+| `GET /ws` that is not a WebSocket upgrade asking for `open-origin.public.v1` among its subprotocols | 426, with `Upgrade: websocket`, before the upgrade |
+| A `Sec-WebSocket-Version` other than `13`, or none | 426, with `Upgrade: websocket` and `Sec-WebSocket-Version: 13` (RFC 6455, 4.4), before the upgrade |
+| An `Origin` that is not exactly one of `PUBLIC_ORIGINS` (`scheme://host:port`, so `null` too) | 403. A request without `Origin`, from a tool that is not a browser, passes |
+| The connections are at `MAX_CONNECTIONS`, or the request's address is at `MAX_CONNECTIONS_PER_IP` | 503, with `Retry-After: 5`, the least a client waits after a 503 |
+| An upgrade Bun cannot complete: a `Sec-WebSocket-Key` missing or malformed | 400. Its slot goes back at once |
+| Otherwise | 101: the upgrade, which names the subprotocol it agreed to |
+
+No answer carries a CORS header, and none repeats what the request sent: each refusal has a fixed
+text. The allowlist of `Host` is `ALLOWED_HOSTS`, or, unset, the listener's own name and address at
+the port it bound (`localhost:<port>` and `<host>:<port>`), compared whatever their case.
+
 ## Client to server
 
 An exact allowlist of four types:
@@ -209,7 +231,9 @@ out an item whose text is not plain, and counts it (C3).
 | `MAX_FEED_ITEMS_PER_TICK` | 64 |
 
 Close codes (`CLOSE_CODES`): 1001 shutdown, 1003 a binary frame, 1008 strikes, 1009 a message too
-large, and 1013 too slow for its interest. Error codes (`ERROR_CODES`): `bad_json`, `bad_message`,
+large, and 1013 too slow for its interest. The server also closes with 1011 when serving a client
+fails: the protocol fixes no code for its own faults, and 1011 is the WebSocket code for an
+internal error (ADR 0026). Error codes (`ERROR_CODES`): `bad_json`, `bad_message`,
 `unknown_type`, `too_many_chunks`, `out_of_bounds`, `unknown_being`, `rate_limited`, and
 `resync_too_soon`.
 

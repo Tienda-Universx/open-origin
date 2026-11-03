@@ -41,7 +41,7 @@ describe("parseConfig", () => {
         tickRateHz: 5,
         publicationBatchTicks: 5,
         publicOrigins: [],
-        allowedHosts: ["localhost:8080", "127.0.0.1:8080"],
+        allowedHosts: undefined,
         connections: { global: 1024, perIp: 16 },
         retainedBytes: 134_217_728,
         aiMode: "off",
@@ -51,8 +51,12 @@ describe("parseConfig", () => {
     const config = configOf(EPHEMERAL);
     expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.publicOrigins)).toBe(true);
-    expect(Object.isFrozen(config.allowedHosts)).toBe(true);
     expect(Object.isFrozen(config.connections)).toBe(true);
+    // Unset, the Host values are the listener's own at the port it binds: the transport's.
+    expect(config.allowedHosts).toBeUndefined();
+    const hosts = configOf({ ...EPHEMERAL, ALLOWED_HOSTS: "localhost:8080" }).allowedHosts;
+    expect(hosts).toEqual(["localhost:8080"]);
+    expect(Object.isFrozen(hosts)).toBe(true);
   });
 
   test("runs with AI_MODE off by default and refuses every other mode until T9", () => {
@@ -71,7 +75,7 @@ describe("parseConfig", () => {
     expect(DURABILITY_ERROR).toContain("no durable journal is available until T7");
   });
 
-  test("accepts only loopback hosts, and allows their Host header by default", () => {
+  test("accepts only loopback hosts", () => {
     for (const host of [
       "0.0.0.0",
       "::",
@@ -84,13 +88,12 @@ describe("parseConfig", () => {
     }
     expect(errorsOf({ ...EPHEMERAL, OPEN_ORIGIN_HOST: "127.0.0.01" })).toEqual([HOST_ERROR]);
     expect(configOf({ ...EPHEMERAL, OPEN_ORIGIN_HOST: "127.4.5.6" }).host).toBe("127.4.5.6");
-    const ipv6 = configOf({ ...EPHEMERAL, OPEN_ORIGIN_HOST: "::1", OPEN_ORIGIN_PORT: "9000" });
-    expect(ipv6.allowedHosts).toEqual(["localhost:9000", "[::1]:9000"]);
+    expect(configOf({ ...EPHEMERAL, OPEN_ORIGIN_HOST: "::1" }).host).toBe("::1");
   });
 
   test("bounds every number, and accepts each bound itself", () => {
     const bounds: [string, number, number][] = [
-      ["OPEN_ORIGIN_PORT", 1, 65_535],
+      ["OPEN_ORIGIN_PORT", 0, 65_535],
       ["TICK_RATE_HZ", 1, 1000],
       ["PUBLICATION_BATCH_TICKS", 1, 300],
       ["MAX_CONNECTIONS", 1, 65_536],
@@ -112,6 +115,8 @@ describe("parseConfig", () => {
         expect(errorsOf(env(text))).toEqual([rule]);
       }
     }
+    // Port 0 asks the system for a free port, which the entry point reports once it listens.
+    expect(configOf({ ...EPHEMERAL, OPEN_ORIGIN_PORT: "0" }).port).toBe(0);
     expect(configOf({ ...EPHEMERAL, TICK_RATE_HZ: "20" }).tickRateHz).toBe(20);
     expect(configOf({ ...EPHEMERAL, PUBLICATION_BATCH_TICKS: "7" }).publicationBatchTicks).toBe(7);
     expect(configOf({ ...EPHEMERAL, MAX_RETAINED_BYTES: "2097152" }).retainedBytes).toBe(2_097_152);

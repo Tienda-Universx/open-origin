@@ -41,8 +41,10 @@ What the code and Bun 1.4.4 show:
 - **Publishing to a topic hides who lagged.** Bun's `server.publish` reports backpressure or a drop if
   it happened for *any* subscriber, without saying which.
 
-Expected from Codespaces' documentation, and measured in T6-7: Codespaces forwards the ports that
-listen on localhost, and forwarded connections are expected to arrive from 127.0.0.1.
+Expected from Codespaces' documentation, and left unmeasured in T6-7, which had no access to the
+forwarded URL from outside the machine: Codespaces forwards the ports that listen on localhost, and
+forwarded connections are expected to arrive from 127.0.0.1. How its proxy sets `Host` is unmeasured
+too ([server](../architecture/server.md#transport)).
 
 ## Decision
 

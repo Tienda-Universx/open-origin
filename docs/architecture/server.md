@@ -5,18 +5,19 @@ rate, makes each tick durable before it publishes it, and hands the rest of the 
 published records. Its presentation plane turns those records into each client's view.
 [ADR 0025](../decisions/0025-real-time-world-host.md) and
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
-describes what the code implements as of T6-6b: the configuration, the scheduler, the world host
+describes what the code implements as of T6-7: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
 (playout, mirror, interest, transactions, sessions, the send discipline, the fan-out, and the
-limits of memory and terrain), their composition, and the test of observer invariance. The
-transport and the entry point (T6-7) arrive in a later batch.
+limits of memory and terrain), the transport, their composition, the entry point, and the tests
+of observer invariance.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
 `presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`,
-`presentation-terrain`, `presentation-liveness`, and `observer-invariance`), and
-`tests/repo/server-boundaries.test.ts`.
+`presentation-terrain`, `presentation-liveness`, `observer-invariance`, `transport`, `ws-world`,
+and `main`),
+`tests/e2e/server.test.ts`, and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -26,8 +27,10 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
 | `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
 | `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, `client.ts` (a client and its sink), `session.ts` (input limits), `view.ts` (the view's limit), `retention.ts` (the memory guard), `terrain.ts` (the terrain cache and queue), and `telemetry.ts` |
+| `src/transport/` | Presentation | `transport.ts` (`serveTransport`: the `Bun.serve` adapter), `http.ts` (routing and refusals), and `capacity.ts` (the connection caps) |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane; `composeServer(config, deps)`: both planes |
+| `src/main.ts` | — | `start(env, deps)` and `main()`: the process entry point |
 
 The package depends on `@open-origin/engine`, `@open-origin/agents`, `@open-origin/scenarios`,
 `@open-origin/protocol`, and zod 4.6.7, pinned exactly.
@@ -42,11 +45,11 @@ naming the variable and its rule, never its value.
 |---|---|---|
 | `OPEN_ORIGIN_DURABILITY` | none: required | Only `ephemeral`; anything else, or nothing, is refused with "no durable journal is available until T7" |
 | `OPEN_ORIGIN_HOST` | `127.0.0.1` | A loopback address, IPv4 `127.0.0.0/8` or `::1`. Names, `localhost` included, are refused: they resolve outside the check |
-| `OPEN_ORIGIN_PORT` | `8080` | An integer from 1 to 65535 |
+| `OPEN_ORIGIN_PORT` | `8080` | An integer from 0 to 65535; 0 lets the system choose a free port |
 | `TICK_RATE_HZ` | `5` | An integer from 1 to 1000, the bounds of the admin contract's `tickRateHz` |
 | `PUBLICATION_BATCH_TICKS` | `5` | F, an integer from 1 to 300, so a batch never spans more than one checkpoint interval |
 | `PUBLIC_ORIGINS` | empty | A comma-separated list of exact `http` or `https` origins |
-| `ALLOWED_HOSTS` | `localhost:<port>` and `<host>:<port>`, with an IPv6 host in brackets | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
+| `ALLOWED_HOSTS` | The listener's own: `localhost:<port>` and `<host>:<port>` at the port it bound, with an IPv6 host in brackets; the transport derives it once it listens, so port 0 works | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
 | `MAX_CONNECTIONS` | `1024` | An integer from 1 to 65536 |
 | `MAX_CONNECTIONS_PER_IP` | `16`, or `MAX_CONNECTIONS` when that is lower | An integer from 1 to 65536; when set, at most `MAX_CONNECTIONS`, compared only when both are valid, so a cap at fault is reported alone |
 | `MAX_RETAINED_BYTES` | `134217728` (128 MiB) | The limit of replaced chunk versions clients keep pinned, in all: an integer from 1,048,576 (1 MiB) to 17,179,869,184 (16 GiB) |
@@ -608,6 +611,83 @@ with the strict schema.
   period in silence until it commits; a transaction whose part waits says so with `TERRAIN_PENDING`,
   keeps its pins, and goes on once the terrain comes.
 
+## Transport
+
+`serveTransport(options)` (`src/transport/transport.ts`) is the public listener, a `Bun.serve`
+adapter. It reaches Bun through the global `Bun`, never an import of `bun`, so rule 2 of the
+boundary holds, and it drives the presentation through `connect`, `receive`, `drained`, and `close`
+only. Its options are the presentation, the address and port to bind (0 lets the system choose),
+`PUBLIC_ORIGINS`, `ALLOWED_HOSTS` or nothing, the connection caps, and the log.
+
+- **HTTP.** `http.ts` routes each request with a pure function, `route(facts, policy)`: the order
+  of its checks and its answers are the protocol's [HTTP surface](protocol.md#http-surface).
+  `capacity.ts` holds the caps: an upgrade takes a slot, in all and for its address, which
+  `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes.
+  Bun runs the open handler within `upgrade`, so two upgrades never pass a cap together.
+- **Socket limits.** `SOCKET_OPTIONS`, one constant that `websocketOptions` spreads after the
+  handlers, so no handler's key can override a limit: `maxPayloadLength` is 4,096 bytes, so Bun closes a larger frame with 1009 before any of it reaches the presentation;
+  `backpressureLimit` is 1 MiB with `closeOnBackpressureLimit`, a backstop, since the presentation
+  keeps a buffer under about 320 KiB: Bun closes a socket that reaches it (its close handler sees
+  1006); `idleTimeout` is 120 s, with `sendPings`. A binary frame is closed with 1003. Nothing is
+  compressed.
+- **The sink.** `send` is `sendText`; `buffered()` is `getBufferedAmount()`; `end(ending)` marks the
+  socket ended and closes it with the ending's code (`closeCodeOf`): 1008 for strikes, 1013 for
+  slowness, and 1011 for a fault. The protocol fixes no code for a fault of the server, and 1011
+  is the WebSocket code for an internal error (ADR 0026).
+- **Lifecycle.** `open` connects the client; when `connect` throws, the socket is closed with 1011
+  at once, where Bun would end it with no close frame, and its slot comes back through the close
+  handler. `drain` calls `drained`. A close gives the slot back and calls `close`, unless the
+  presentation ended the client itself. That call runs in a microtask: Bun runs a close handler
+  synchronously within the call that closes the socket, and no call the presentation makes to a
+  sink may take a client away from it while it serves that client. (Bun's own close at its
+  backpressure limit was measured to run after the `send` that reached it returned.) A socket the
+  presentation ended has its frames ignored. Another handler that throws is logged, and Bun's
+  `error` handler closes its socket with 1011; a fetch that throws is answered with 500. `stop()`
+  is Bun's `stop(true)`: it stops listening and closes every socket with 1001, running each close
+  handler.
+- **Logs.** `refused` with the status and reason, `open` and `close` with the code and the count of
+  connections, `binary_frame` with its size, and `handler_error` with the error's name. Never an
+  address, a header, a payload, or an error's message, which could quote what a client sent.
+
+**Codespaces, unverified.** A Codespace forwards a port that listens on localhost. The plan relies
+on GitHub's documentation for two expectations: a forwarded port is private by default, and
+forwarded connections arrive from 127.0.0.1, so `MAX_CONNECTIONS_PER_IP` counts them together. T6-7
+measured neither, nor how the proxy sets `Host` on a forwarded request: that needs the forwarded URL
+from outside the machine, which T6-7 did not use. If the proxy keeps the browser's `Host`
+(`<name>-<port>.app.github.dev`), the default allowlist refuses it with 403, and a developer who
+wants it through adds that name to `ALLOWED_HOSTS`. Either way the port must stay private, which
+the server's warning at start says.
+
+`transport.test.ts` runs the listener on a free loopback port over a presentation of a model
+world, driven period by period:
+
+- `route` on a table of cases, the `Host` before the method among them, and `Capacity` on its own;
+- the health check, 404 with no CORS header, 426 before the upgrade, and the listener's own 426
+  for a WebSocket version other than 13; a handshake Bun cannot complete, answered with the
+  listener's 400, its slot back for the next client; 500 when answering a request throws;
+- an `Origin` matched exactly and its absence accepted; a `Host` refused on every path and method;
+- 503 with `Retry-After` at the cap of one address, with a second address, 127.0.0.2, still
+  admitted, and at the global cap, until a socket closes; a client that leaves in the middle of
+  its handshake gives its slot back;
+- the close codes 1003, 1009 (a frame of 4,096 bytes passes), 1008, 1011 (a planted terrain fault,
+  a `connect` that throws, and a `receive` that throws), and 1001; a close that releases the client
+  unless the presentation ended it; and logs that hold no address and nothing a client sent;
+- Bun's limits: `SOCKET_OPTIONS` equals ADR 0026's numbers, since an idle timeout of 120 s and its
+  pings cannot be observed in a test's time; `websocketOptions` keeps them over handlers that try to
+  override every one; and a client that does not read is closed by Bun once
+  1 MiB waits for it, released once; and Bun 1.4.4 runs the open handler within `upgrade`, which the
+  slots rely on.
+
+Plan test 13 runs on real sockets: over one chunk of 65,536 beings, about 6 MB, a client that
+stops reading (`pause()`) lags alone once loopback's buffers are full, while a client that reads
+does not; when it reads again, Bun's `drain` makes the presentation send it more before any other
+period runs. The test asserts only what the code guarantees: the buffer stays under 512 KiB, and
+the lag comes within a generous bound of periods, since how much loopback absorbs is the kernel's
+(at most `tcp_wmem`'s maximum, 4 MiB by default, and a window that does not grow while nothing
+reads). A second test pins the Bun behavior that relies on, with no code of the server: a paused
+client makes `send` return −1 past what loopback absorbs, and 16 MiB pushed arrive whole once it
+reads, after a `drain`.
+
 ## Composition
 
 `compose(config, deps)` wires a source (the default scenario unless given), the projection of its
@@ -625,7 +705,7 @@ host, and the scheduler, and returns:
 | `unhandledRejection()` | Asks `rejectionPolicy(AI_MODE)`; with `off`, the world halts |
 | `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |
 
-`deps` carries the clock and the timer, which the entry point of T6-7 takes from `src/adapters/`,
+`deps` carries the clock and the timer, which the entry point takes from `src/adapters/`,
 and, for tests, the journal, the source, the projection of its world, the scheduler (`schedulerOf`,
 a `TickScheduler` over the options a `FixedRateScheduler` takes), and K. A journal failure
 halts the host with `journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P`
@@ -637,7 +717,7 @@ projection may not, and counts 0).
 
 `rejectionPolicy` is a pure function: with `AI_MODE=off` an unhandled rejection halts the world,
 because no code of the world awaits anything, and async work in a brain would be a wall-clock
-channel. T6-7's entry point installs the process handler that calls `unhandledRejection`.
+channel. The entry point installs the process handler that calls `unhandledRejection`.
 
 `composeServer(config, deps)` wires both planes: it calls `compose`, then builds the `Presentation`
 from the world plane's `subscribeToPublished`, `readTerrain`, and `state` alone, with the same clock
@@ -647,10 +727,99 @@ bytes, fresh at every boot unless a test gives `worldId`, and the configured dur
 start leaves no world running; `stop()` stops the periods and detaches the presentation, then stops
 the world, resolving once every executed tick is published. Its `status()` is the world plane's
 status with the presentation's telemetry, and `fanOutMicros`, the percentiles of the last 1,024
-fan-outs' durations on the injected clock. T6-7's entry point calls it, and T8's admin listener
+fan-outs' durations on the injected clock. The entry point calls it, and T8's admin listener
 serves its status. `compose.test.ts` runs it with a small limit of retained bytes: the memory guard
 aborts a lagging client three times and closes it with 1013, and the status carries every count of
 the presentation's telemetry, each but `trims` above zero.
+
+## Entry point
+
+`src/main.ts` runs the server as a process. To run it on this machine, in ephemeral mode, on
+`127.0.0.1:8080`:
+
+```sh
+OPEN_ORIGIN_DURABILITY=ephemeral bun run --bun apps/server/src/main.ts
+```
+
+`OPEN_ORIGIN_PORT=0` lets the system choose the port, which the `listening` line reports. The
+world is the default world of T5, a new one with a new id at every start; a client connects to
+`ws://127.0.0.1:<port>/ws` with the subprotocol `open-origin.public.v1`.
+
+`start(env, log, deps)` builds the server, for tests too:
+
+1. It reads the configuration with `parseConfig`. When the configuration is refused, it logs each
+   problem as `config_error`, naming the variable and its rule, all at once, and starts nothing:
+   among them, no `OPEN_ORIGIN_DURABILITY=ephemeral` ("no durable journal is available until T7"),
+   a host that is not loopback, and an `AI_MODE` other than `off`.
+2. It logs each warning as `config_warning`: with `CODESPACES=true`, that the forwarded port must
+   stay private.
+3. It wires `composeServer` with the real clock and timer of `src/adapters/` (tests may give fake
+   ones, a source, its projection, a journal, or a server of their own, `serverOf`) and the
+   transport. A port it cannot bind is logged as `listen_failed` with the error's code
+   (`EADDRINUSE`) and no message.
+4. It starts the server. When that throws once the listener bound, it logs `start_failed` with the
+   error's name and the port it bound, then stops the transport and the server, logging each stop
+   that fails as `stop_failed` with its part and the error's name, and returns the start's error as
+   the cause: a stop's failure never replaces it.
+
+It returns the running server, whose `stop()` stops the transport first, closing every socket with
+1001, then the server, which flushes every executed tick (RPO 0 once the journal is durable), and
+logs `stopped` with the executed, committed, and published ticks, the state, and the halt, if
+any. The server stops even when the transport fails to; every call returns the same promise.
+
+`main(host, deps)` binds a started server to its process, `host`, which tests replace with a
+double: it installs every handler, then logs `listening` with the host and the port, so a
+supervisor that signals on that line always finds the handlers in place.
+
+| Event | What happens |
+|---|---|
+| A refused configuration, a port it cannot bind, or a start that throws once bound | Exit code 1, after the `config_error`, `listen_failed`, or `start_failed` lines; no crash |
+| SIGTERM or SIGINT | `signal`, then `stop()`, then exit code 0, or 1 if stopping failed (`stop_failed`, with the error's name) |
+| Another SIGTERM or SIGINT less than 1 s after the first | `signal_ignored`, with the signal: a duplicate, such as the copies a terminal's Ctrl-C sends both a wrapper (`bun run`) and the server |
+| Another SIGTERM or SIGINT 1 s or more after the first | `forced_exit`, with the signal, then exit code 1 at once |
+| `unhandledRejection` | The world halts by `rejectionPolicy(AI_MODE)`: with `off`, every client hears `status` `halted`. The line `unhandled_rejection` carries what was thrown (`causeOf`: an engine error's code, else its message and code) and the ticks; the server keeps serving the halted world |
+
+Every exit but the forced one waits until the lines before it reached stdout: an empty write goes
+after them, and the process exits in its callback. The forced exit does not wait: stdout may be a
+stalled pipe, the very case in which a stop may hang, and losing the `forced_exit` line is better
+than not exiting. The server sets no deadline on a stop: once the journal is durable, a stop can
+hang on it, and a supervisor brings its own grace period, then a second signal forces the exit.
+The 1 s that separates a duplicate from a forced exit is measured on the server's clock.
+
+The log is JSON lines on stdout, the transport's events among them: events with codes, ticks,
+counts, and sizes, never a payload or an address, which are C2. An exception no handler catches,
+such as a fault of the whole presentation plane, ends the process with exit code 1 and Bun's own
+report on stderr, flushing nothing: with the ephemeral journal there is nothing durable to lose.
+
+`main.test.ts` runs `start` and `main` in process over the counting world on a fake clock and a
+double of the process:
+
+- `start` refuses every problem at once, reports a port in use as `listen_failed`, and, given a
+  server whose start throws and whose stop then rejects, closes the listener on the port it bound
+  and returns the start's error as the cause; and it stops the transport before the world flushes:
+  a journal that counts the open sockets at each append sees one at the first batch and none at
+  the last;
+- `main` binds every handler before `listening`; SIGTERM and SIGINT each close a client with
+  1001, publish the two ticks a batch held (seven executed, five committed before), and exit with 0
+  only once the pipe took the `stopped` line; on a stdout that never drains, a signal 1 µs short of
+  1 s after the first is ignored and one at 1 s forces exit 1 at once; an unhandled rejection halts
+  the world; a refused configuration, a port in use, and a start that throws exit with 1 once
+  written.
+
+`tests/e2e/server.test.ts` (ADR 0019) spawns `main.ts` with `Bun.spawn` on port 0:
+
+- at 50 Hz, it reports its port; two clients receive commits, follow the same being, and show the
+  same views at every tick both committed, and no frame they got holds a seed of the default
+  world, its terrain, or its spawns, or the key `terrainSeed`, though real terrain reached them; a
+  rejection that `tests/e2e/fixtures/reject-on-input.ts` plants on request, as a `bun --preload` in
+  the server's own process, halts the world for both; SIGTERM closes them with 1001 and exits with
+  0, every executed tick published;
+- signalled with SIGINT in the very task that reads its `listening` line, it stops and exits with 0;
+- started without ephemeral mode, on `0.0.0.0`, and with `AI_MODE=on`, it names the three problems
+  and exits with 1.
+
+A stdout line that is not JSON is kept and expected absent, so a failure shows it. The server's
+code has no switch for tests.
 
 ## Observer invariance
 
@@ -676,6 +845,32 @@ chunk it enters, of both, and its follower. After every commit each view equals 
 published at the commit's tick, and the crossing falls between two of each client's commits: the
 being leaves one chunk and enters the other in one transaction, and the follower's window moves
 with it.
+
+The run and the comparison live in `test/support/invariance.ts`. `ws-world.test.ts` shares them for
+the variant over real sockets: the subject world runs 40 ticks behind the real transport on a free
+loopback port, and ten clients of Bun's WebSocket act between periods, the test waiting after each
+until every frame, each way, arrived. Every tick and the final snapshot equal a run with no client.
+The clients are:
+
+- two calm clients of the subject's chunks, which see the same ticks and the same views, each the
+  published world at its commit's tick (plan tests 1 and 2);
+- a client of a distant region, which floods the bucket of new chunks once, with one strike, and
+  then hears the same feed as the calm ones (plan test 10);
+- a follower that follows a being the world does not hold (`unknown_being`, no strike), then
+  churns camera and followed being at random, pings, and resyncs;
+- a client that stops reading for ten periods and catches up, consistent at every commit, and one
+  that leaves and comes back to a new `hello` and a reset, each of its commits from its return the
+  published world;
+- the hostile battery (plan test 12): a binary frame closed with 1003, a frame over 4 KiB closed with
+  1009, bad JSON, `__proto__`, and a type that would pause the world, closed with 1008 on the third
+  strike, and 25 pings at once, 20 answered and the rest refused until 1008.
+
+The same file scans the bytes real sockets carried (plan test 11): every frame of every client
+parses with the strict schemas, the calm clients heard greetings and tells, and no frame holds a
+taint, a seal, a checksum, or the state root of the subject, after its research injection; a run of
+the canary world through the same transport, watched and its sitter followed, holds none of its
+canaries, seeds, seals, or state root either. The helpers of the scan live in
+`test/support/leak.ts`, which `leak.test.ts` shares.
 
 Three permanent negative controls are test doubles injected through `compose`'s dependencies, never
 production code:
@@ -709,8 +904,8 @@ that leaves `src/`, the server's own package name, an absolute path, a URL other
 rejected: a path or a URL would join the graph as a package, out of every rule's reach. The scan is
 lexical, so a string that reads like an import or names a WebSocket counts, and a `require` reached
 through another name (`const load = require`) is left to review. The real tree, `presentation/`
-included, keeps every rule, and each rule is also proved on planted trees whose legal version
-passes; `transport/` arrives in T6-7. The same
+and `transport/` included, keeps every rule, and each rule is also proved on planted trees whose
+legal version passes. The same
 reader rejects, in `packages/scenarios/src` and `packages/protocol/src`, a relative path that leaves
 `src`, a type-level `import()`, a `require()` or `import.meta.require()`, a computed specifier, and a
 triple-slash reference directive, which their Biome rules cannot see.

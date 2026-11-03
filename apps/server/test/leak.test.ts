@@ -36,27 +36,8 @@ import {
   canaryScript,
   canaryWorld,
 } from "./support/canary-world.ts";
+import { FORBIDDEN_NAMES, found, sealsOf, seedTexts, stateText } from "./support/leak.ts";
 import { type PublishedRun, publishedRun } from "./support/runs.ts";
-
-/** Names of taints and C3 members that no public message may hold, as text or as a key. */
-const FORBIDDEN_NAMES = [
-  "model-prior-suspect",
-  "human-external",
-  "implementation-leak",
-  '"tn"',
-  '"ex"',
-  '"exposure"',
-  '"captured"',
-  '"needs"',
-  '"traits"',
-  '"mind"',
-  '"depletion"',
-  '"due"',
-  '"genesis"',
-  '"life"',
-  '"seed"',
-  '"simSecondsPerTick"',
-];
 
 /** The keys a published tick, its chunks, and its speech hold: no other. */
 const TICK_KEYS = ["chunks", "clock", "feed", "speech", "tick"];
@@ -111,32 +92,6 @@ const textOf = ({ published }: PublishedRun) => JSON.stringify(published);
 
 /** Every value of `run`'s journal that is C3 and textual: the checksum of every tick. */
 const checksumsOf = ({ records }: PublishedRun) => records.map(({ checksum }) => checksum);
-
-/** The C3 digests of `world`'s global value: the genesis seal and the life seal. */
-function sealsOf(world: World): string[] {
-  const global = readView(world as World<beings.BeingsGlobal, beings.BeingsChunk>).readGlobal();
-  return [global.genesisSeal, global.lifeSeal];
-}
-
-/** The decimal and hexadecimal texts of each word of `words`, a seed's u32 words. */
-function seedTexts(words: readonly number[]): string[] {
-  return words.flatMap((word) => [
-    String(word),
-    word.toString(16),
-    word.toString(16).padStart(8, "0"),
-  ]);
-}
-
-/** The texts of `forbidden` that `text` holds: none, for a projection that leaks nothing. */
-function found(text: string, forbidden: readonly string[]): string[] {
-  return forbidden.filter((entry) => text.includes(entry));
-}
-
-/** The text of every chunk of `world`, as the engine holds it: C0, C1, and C3 alike. */
-function stateText(world: World): string {
-  const view = readView(world);
-  return JSON.stringify(view.chunkKeys().map((key) => view.readChunk(key)));
-}
 
 describe("what the world plane publishes", () => {
   test("holds no C1 or C3 datum of the mind@1 subject, which greets, tells, and is injected", async () => {
