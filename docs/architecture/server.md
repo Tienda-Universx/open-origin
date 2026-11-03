@@ -502,10 +502,10 @@ with the strict schema.
   a period's budget that counts hello and aborts; a lost message detected as a `seq` gap and healed
   by a resync (plan test 8); speech of `(L, L']` and the feed of `(L, L']` in every transaction, a
   reset included, and those released while a transaction spans periods in the next one;
-  `speechMissed` and `missed` counted once however many parts the speech and the feed span; abort;
-  periods on the timer; connect and close cycles that leave interest, index, followings, pins, and
-  retained bytes at zero; and a presentation whose boot record cannot be applied, which leaves no
-  listener.
+  `speechMissed` and `missed` counted once however many parts the speech and the feed span; abort,
+  which waits apart from a pending `status`, so a lagging client gets both; periods on the timer;
+  connect and close cycles that leave interest, index, followings, pins, and retained bytes at zero;
+  and a presentation whose boot record cannot be applied, which leaves no listener.
 - `presentation-reconstruction.test.ts` (plan test 7): a seeded model world of beings that walk,
   cross, arrive, leave, and speak, published in bursts now and then and with more feed than a tick
   keeps every 40 ticks, and clients that change camera and follow at random, resync, lag, lose a
@@ -529,13 +529,15 @@ with the strict schema.
   (text that is no JSON or looks binary, values that are not records, the types `pause`, `speed`,
   `step`, `seek`, `rewind`, `tick`, and `rate`, extra keys, `__proto__`, a nonce past 2³¹ − 1, a
   repeated chunk, 65 chunks, a chunk outside the world, and 5 KB of text), each with its exact code,
-  no byte of its input, and a strike; a strike 10 s old no longer counting, and a third strike
-  within 9.999999 s closing with 1008 and no `error`; 20 messages at once, then one at 100 ms and
-  none at 99.999 ms; 64 new chunks, then one at 31.25 ms; resyncs at most every 2 s,
+  no byte of its input, and a strike; a strike 10 s old no longer counting, a third strike exactly
+  10 s after the first closing nothing, and a third strike within 9.999999 s closing with 1008 and
+  no `error`; 20 messages at once, then one at 100 ms and none at 99.999 ms, and 20 at most after a
+  minute idle; no token taken by a message the schema rejects; 64 new chunks, then one at 31.25 ms; resyncs at most every 2 s,
   `resync_too_soon` and `unknown_being` with no strike; and the answers to a lagging client
   coalesced and sent first once it drains.
 - `presentation-backpressure.test.ts` (plan tests 7b and 13 in process): exactly 256 KiB buffered
-  stops a client, and one byte less lets one message through; a drain sends only what is left of a
+  stops a client, and one byte less lets one message through; a message that pushes the buffer to
+  256 KiB lets no transaction start after it; a drain sends only what is left of a
   period's budget and starts no transaction, and every period that leaves a transaction unsent sent
   more than the budget less a part. The fan-out serves four clients of ten a period when each takes
   10 ms on the injected clock, in the rotation 1–4, 5–8, 9, 10, 1, 2, and so on, and records each
@@ -635,7 +637,9 @@ start leaves no world running; `stop()` stops the periods and detaches the prese
 the world, resolving once every executed tick is published. Its `status()` is the world plane's
 status with the presentation's telemetry, and `fanOutMicros`, the percentiles of the last 1,024
 fan-outs' durations on the injected clock. T6-7's entry point calls it, and T8's admin listener
-serves its status.
+serves its status. `compose.test.ts` runs it with a small limit of retained bytes: the memory guard
+aborts a lagging client three times and closes it with 1013, and the status carries every count of
+the presentation's telemetry, each but `trims` above zero.
 
 ## Observer invariance
 

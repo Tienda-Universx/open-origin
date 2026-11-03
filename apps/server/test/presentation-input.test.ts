@@ -28,6 +28,10 @@ function served() {
 /** What `client` received after its first `from` messages. */
 const since = (client: ViewClient, from: number): ServerMessage[] => client.messages.slice(from);
 
+/** The nonces of the `pong`s among `messages`. */
+const pongsOf = (messages: readonly ServerMessage[]) =>
+  messages.flatMap((message) => (message.type === "pong" ? [message.nonce] : []));
+
 /** The `error` codes among `messages`. */
 const codes = (messages: readonly ServerMessage[]) =>
   messages.flatMap((message) => (message.type === "error" ? [message.code] : []));
@@ -113,6 +117,41 @@ describe("a client's message", () => {
     expect(() => presentation.receive(id, "{")).toThrow(`client ${id} is not connected`);
     expect(presentation.usage()).toMatchObject({ clients: 0, pins: 0 });
     expect(presentation.telemetry()).toMatchObject({ strikes: 4, strikeCloses: 1 });
+  });
+
+  test("a third strike 10 s after the first, the second between, does not close the client", () => {
+    const { presentation, client, clock, id } = served();
+    presentation.receive(id, "{");
+    clock.advance(5_000_000);
+    presentation.receive(id, "{");
+    clock.advance(5_000_000);
+    // At 10 s, the strike at 0 s no longer counts.
+    presentation.receive(id, "{");
+    expect(client.ended).toBeUndefined();
+    expect(presentation.telemetry()).toMatchObject({ strikes: 3, strikeCloses: 0 });
+  });
+
+  test("the bucket holds 20 at most, however long the client was idle", () => {
+    const { presentation, client, clock, id } = served();
+    clock.advance(60_000_000);
+    const before = client.messages.length;
+    for (let nonce = 0; nonce < 21; nonce += 1) send(presentation, id, { type: "ping", nonce });
+    expect(pongsOf(since(client, before))).toEqual(Array.from({ length: 20 }, (_, nonce) => nonce));
+    expect(codes(since(client, before))).toEqual(["rate_limited"]);
+  });
+
+  test("a message the schema rejects takes no token", () => {
+    const { presentation, client, clock, id } = served();
+    // Three rejected messages, 10 s apart so that their strikes never close the client.
+    for (let rejected = 0; rejected < 3; rejected += 1) {
+      presentation.receive(id, "{");
+      clock.advance(TEN_SECONDS);
+    }
+    // The bucket refilled in the first 2 s and none of the three took a token: 20 pings pass.
+    presentation.receive(id, "{");
+    const before = client.messages.length;
+    for (let nonce = 0; nonce < 20; nonce += 1) send(presentation, id, { type: "ping", nonce });
+    expect(pongsOf(since(client, before))).toEqual(Array.from({ length: 20 }, (_, nonce) => nonce));
   });
 
   test("passes 20 at once, then one each 100 ms: the rest get rate_limited and a strike", () => {

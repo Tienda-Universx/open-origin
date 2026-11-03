@@ -324,6 +324,29 @@ describe("a client's sends", () => {
     expect(presentation.telemetry().laggingClients).toBe(1);
   });
 
+  test("start no transaction once a message pushed the buffer to 256 KiB", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const { presentation, advance } = presentationOver(model);
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.follow(id, 1);
+    presentation.period();
+    expect(client.commits).toHaveLength(1);
+    // A pong waits while the client lags; then its buffer stands 10 bytes under the threshold.
+    client.lag = true;
+    presentation.receive(id, JSON.stringify({ type: "ping", nonce: 7 }));
+    client.lag = false;
+    client.buffering = true;
+    client.buffer = BUFFER_BYTES - 10;
+    const pins = presentation.usage().pins;
+    // The fan-out sends the pong, which passes the threshold: no transaction may start after it.
+    advance({ set: [being(1, [6, 5])] });
+    expect(client.messages.slice(-1).map(({ type }) => type)).toEqual(["pong"]);
+    expect(client.buffer).toBeGreaterThanOrEqual(BUFFER_BYTES);
+    expect(presentation.usage().pins).toBe(pins);
+    expect(client.commits).toHaveLength(1);
+  });
+
   test("go out on a drain within what is left of the period's budget, and a drain starts no transaction", () => {
     const model = new ModelWorld(0, populate());
     const { presentation, advance } = presentationOver(model, {

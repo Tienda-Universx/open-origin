@@ -19,6 +19,7 @@ import {
   MAX_FEED_ITEMS_PER_TICK,
   type ServerMessage,
 } from "@open-origin/protocol/public";
+import type { WorldState } from "../src/presentation/frames.ts";
 import { Presentation } from "../src/presentation/presentation.ts";
 import { EphemeralJournal } from "../src/world/journal.ts";
 import { PublicationGate } from "../src/world/publication.ts";
@@ -534,6 +535,32 @@ describe("a transaction", () => {
     ]);
     expect(shown(client.state)).toEqual(expected(model, 3, ["0,0"], 0));
     expect(client.anomalies).toEqual([]);
+  });
+
+  test("an abort and a status that wait for a lagging client both reach it: neither replaces the other", () => {
+    const beings = Array.from({ length: 200 }, (_, index) => being(index + 1, [index % 32, 1]));
+    let state: WorldState = "running";
+    const { presentation, advance } = presentationOver(new ModelWorld(0, beings), {
+      partBytes: 16_384,
+      periodBytes: 16_384,
+      worldState: () => state,
+    });
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.subscribe(id, [[0, 0]]);
+    // Hello and the reset's first part go; its second part waits, and the client lags.
+    presentation.period();
+    client.lag = true;
+    state = "paused";
+    advance();
+    presentation.abort(id);
+    const before = client.messages.length;
+    client.lag = false;
+    presentation.drained(id);
+    expect(client.messages.slice(before)).toEqual([
+      { type: "status", seq: 2, tick: 0, state: "paused" },
+      { type: "abort", seq: 3, tick: 0, txn: 0 },
+    ]);
   });
 
   test("that is aborted is discarded; the next one moves the view from L, or resets it", () => {
