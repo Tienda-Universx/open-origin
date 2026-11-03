@@ -158,7 +158,8 @@ const SnapshotChunk = z.strictObject({
 /**
  * A part of a transaction: the full content of chunks that enter the view, or, with `reset`, of the
  * whole view, which replaces the old one at the commit; and `followed`, the followed being's
- * record, or null when it is outside the view or gone.
+ * record, even while its chunk is not shown (trimmed, or waiting for terrain), or null when it is
+ * gone.
  */
 export const SnapshotMessage = z
   .strictObject({

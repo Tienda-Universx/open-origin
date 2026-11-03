@@ -119,7 +119,8 @@ Capacity is refused at the upgrade, with HTTP 503 and `Retry-After`.
   pings still apply.
 - **Fields.**
   - `v` is the tick at which a chunk's C0 content last changed.
-  - `followed` is the followed being's `BeingPublic`, or `null` when it is outside the view or gone.
+  - `followed` is the followed being's `BeingPublic`, even while its chunk is not shown (trimmed, or
+    waiting for terrain), or `null` when it is gone.
   - `hello.state` takes the values of `status.state`.
   - `limits` holds `maxChunks`, `maxFollowChunks`, `maxMessageBytes`, `messagesPerSecond`, `burst`,
     `newChunksPer2s`, and `maxViewBytes`: limits on the client, none on the world's rate.

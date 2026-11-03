@@ -44,7 +44,8 @@ export type ClientView = {
   readonly chunks: ReadonlyMap<string, ChunkView>;
   /**
    * The followed being's record at this tick while a visible chunk holds it, else the one the last
-   * commit's parts sent; null when nothing is followed, or the being is gone or outside the view.
+   * commit's parts sent, even while its chunk is not shown; null when nothing is followed or the
+   * being is gone.
    */
   readonly followed: BeingPublic | null;
 };
