@@ -398,45 +398,53 @@ function guarding(versions: readonly ChunkVersion[], clients: readonly Pinning[]
 /** The version `v` of the chunk `[x, 0]`. */
 const versionOf = (x: number, v: number) => ChunkVersion.empty([x, 0], v);
 
+/**
+ * Two retained versions, a1 and b1, replaced by a2 and b2, and the clients that pin them: one pins
+ * a1 at L; one a1 in its transaction and b1 at L; one only current versions; one b1 in its
+ * transaction; and one a1 and b1 both in its transaction.
+ */
+function pinningOld() {
+  const [a1, b1, a2, b2] = [versionOf(0, 1), versionOf(1, 1), versionOf(0, 2), versionOf(1, 2)];
+  const clients = [
+    pinning("at L", [a1]),
+    pinning("both", [b1], [a1]),
+    pinning("current", [a2, b2]),
+    pinning("in transaction", [a2], [b1]),
+    pinning("both in transaction", [a2], [a1, b1]),
+  ];
+  return { retained: [a1, b1], clients };
+}
+
 describe("the memory guard", () => {
-  test("aborts every client that pins the oldest retained version, with its view when it pins it at L, and reports each client once", () => {
-    const [a1, b1, a2, b2] = [versionOf(0, 1), versionOf(1, 1), versionOf(0, 2), versionOf(1, 2)];
-    const clients = [
-      pinning("at L", [a1]),
-      // Its transaction pins a1, and its view b1: two aborts in one check, reported once.
-      pinning("both", [b1], [a1]),
-      pinning("current", [a2, b2]),
-      pinning("in transaction", [a2], [b1]),
-    ];
-    // Down to one byte, the oldest goes alone: one version, b1, may stay.
-    expect(guarding([a1, b1], clients, 1)).toEqual({
-      aborted: ["at L", "both"],
+  test("aborts every client that pins the oldest retained version, with its view when it pins it at L", () => {
+    const { retained, clients } = pinningOld();
+    // Down to one byte, the oldest goes alone: b1 may stay.
+    expect(guarding(retained, clients, 1)).toEqual({
+      aborted: ["at L", "both", "both in transaction"],
       aborts: [
         ["at L", true],
         ["both", false],
+        ["both in transaction", false],
       ],
-      read: 4,
+      read: 5,
       left: 1,
     });
   });
 
-  test("frees every version over the limit", () => {
-    const [a1, b1, a2, b2] = [versionOf(0, 1), versionOf(1, 1), versionOf(0, 2), versionOf(1, 2)];
-    const clients = [
-      pinning("at L", [a1]),
-      pinning("both", [b1], [a1]),
-      pinning("current", [a2, b2]),
-      pinning("in transaction", [a2], [b1]),
-    ];
-    expect(guarding([a1, b1], clients, 0)).toEqual({
-      aborted: ["at L", "both", "in transaction"],
+  test("frees every version over the limit, aborting a client again only while it still pins the version taken, and reports each client once", () => {
+    const { retained, clients } = pinningOld();
+    // Aborted for a1, "both" still pins b1 at L, and is aborted again with its view; "both in
+    // transaction" pinned b1 in the transaction that abort released, and is not.
+    expect(guarding(retained, clients, 0)).toEqual({
+      aborted: ["at L", "both", "both in transaction", "in transaction"],
       aborts: [
         ["at L", true],
         ["both", false],
+        ["both in transaction", false],
         ["both", true],
         ["in transaction", false],
       ],
-      read: 4,
+      read: 5,
       left: 0,
     });
   });
@@ -656,6 +664,34 @@ describe("terrain", () => {
       faults: 1,
       failed: false,
     });
+  });
+
+  test("a generation that throws removes its client from the queue, reports it once, and the queue serves the next in the same period", () => {
+    const failure = new Error("no terrain for chunk 1,0");
+    const { calls, read } = countingTerrain();
+    const readTerrain = (at: ChunkCoord): TerrainPublic => {
+      const terrain = read(at);
+      if (chunkKey(at) === "1,0") throw failure;
+      return terrain;
+    };
+    const queue = new TerrainQueue(new TerrainCache(readTerrain), 3);
+    const faults: [ClientId, unknown][] = [];
+    const record = (client: ClientId, cause: unknown) => faults.push([client, cause]);
+    // Client 3 spends the budget at once; clients 1 and 2 wait.
+    expect(takenKeys(queue.take(3, row(9)))).toEqual(sortedKeys(row(9)));
+    expect(queue.take(1, row(0))).toBeUndefined();
+    expect(queue.take(2, row(1, 1))).toBeUndefined();
+    queue.period(record);
+    // Client 1's second chunk throws: the queue forgets client 1, whatever the callback does, and
+    // the rest of the budget goes to client 2, the head now.
+    expect(calls.slice(3)).toEqual(["0,0", "1,0", "0,1"]);
+    expect(faults).toEqual([[1, failure]]);
+    expect([queue.queued, queue.held]).toEqual([0, 1]);
+    expect(takenKeys(queue.take(2, row(1, 1)))).toEqual(["0,1"]);
+    queue.period(record);
+    expect(calls).toHaveLength(6);
+    expect(faults).toHaveLength(1);
+    expect([queue.queued, queue.held]).toEqual([0, 0]);
   });
 
   test("a client needs at most the chunks of a full view", () => {

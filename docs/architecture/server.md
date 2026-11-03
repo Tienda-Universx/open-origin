@@ -525,18 +525,20 @@ with the strict schema.
   at 60.999999 s, and not at a third when the first is 60 s old. The guard itself, over a mirror and
   clients modeled in the test, reads each client once a check, however many versions it frees, and
   no client under the limit; a client that pins one retained version in its transaction and another
-  at `L` is aborted twice in a check, its view going at the second, and counted once; and a version
-  its clients' aborts do not free throws. A flood of ten clients, each entering 64 new chunks,
-  generates 16 chunks a period, each chunk once, and serves the clients in the order they arrived,
-  four periods apart, the last at period 41, holding terrain for the head of the queue alone. The
-  queue gives its head the period's generations until it needs nothing more, then the next client;
-  the head's terrain survives a cache that evicts it, and a client behind it gets an evicted chunk
+  at `L` is aborted twice in a check, its view going at the second, and counted once, while one
+  whose first abort released its pin of the next version is not aborted for it; and a version its
+  clients' aborts do not free throws. A flood of ten clients, each entering 64 new chunks, generates
+  16 chunks a period, each chunk once, and serves the clients in the order they arrived, four
+  periods apart, the last at period 41, holding terrain for the head of the queue alone. The queue
+  gives its head the period's generations until it needs nothing more, then the next client; the
+  head's terrain survives a cache that evicts it, and a client behind it gets an evicted chunk
   generated again; a waiting client whose chunks change goes to the back with nothing held, while
   one that asks for the same chunks in another order keeps its place; no client may need more than
-  73 chunks; and a queued generation that throws drops the client waiting for it alone, counted as a
-  fault, while the queue goes on with the next client and the plane runs on. Six cycles of clients
-  closed by a fault, by strikes, and by slowness, aborted, and waiting for terrain leave every count
-  at zero.
+  73 chunks; a generation that throws removes its client from the queue, whatever the fault callback
+  does, reports it once, and the queue serves the next client in the same period; and in the
+  presentation, a queued generation that throws drops the client waiting for it alone, counted as a
+  fault, while the others are served and the plane runs on. Six cycles of clients closed by a fault,
+  by strikes, and by slowness, aborted, and waiting for terrain leave every count at zero.
 
 ## Composition
 
