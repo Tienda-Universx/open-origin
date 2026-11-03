@@ -18,6 +18,7 @@ import {
   type BeingPublic,
   type ChunkCoord,
   chunkKey,
+  encodeTerrain,
   MAX_VIEW_CHUNKS,
   type TerrainPublic,
 } from "@open-origin/protocol/public";
@@ -803,6 +804,88 @@ describe("terrain", () => {
     expect([queue.queued, queue.held]).toEqual([0, 4]);
     expect(takenKeys(queue.take(1, row(0, 4)))).toEqual(sortedKeys(row(0, 4)));
     expect([queue.queued, queue.held, faults.length]).toEqual([0, 0, 1]);
+  });
+
+  test("while clients wait, only the head generates at once: what the pass leaves goes to the head's own request, then to the clients behind it", () => {
+    const { calls, read } = countingTerrain();
+    const queue = new TerrainQueue(new TerrainCache(read), 4);
+    expect(queue.take(1, row(0, 5))).toBeUndefined();
+    expect(queue.take(2, row(1, 2))).toBeUndefined();
+    queue.period(noFault);
+    // Three of the period's four generations are left: client 2, behind the head, waits for them.
+    expect(queue.take(2, row(1, 2))).toBeUndefined();
+    expect(calls).toEqual(["0,0", "1,0", "2,0", "3,0", "4,0"]);
+    // The head asks for one chunk more, and has it at once.
+    const moved: ChunkCoord[] = [...row(0, 5), [9, 9]];
+    expect(takenKeys(queue.take(1, moved))).toEqual(sortedKeys(moved));
+    queue.prefetch(noFault);
+    expect(calls.slice(5)).toEqual(["9,9", "0,1", "1,1"]);
+    expect(takenKeys(queue.take(2, row(1, 2)))).toEqual(sortedKeys(row(1, 2)));
+  });
+
+  test("a terrain read again with other bytes than its transaction planned drops that client alone", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const reads = new Map<string, number>();
+    /** The terrain of a chunk, with wider fields from its second generation on: other bytes. */
+    const readTerrain = (at: ChunkCoord): TerrainPublic => {
+      const count = (reads.get(chunkKey(at)) ?? 0) + 1;
+      reads.set(chunkKey(at), count);
+      if (count === 1) return terrainAt(at);
+      const zero = Array(1024).fill(0);
+      return encodeTerrain(
+        { elevation: zero, liquidDepth: zero, substrate: zero },
+        {
+          elevation: { min: -100_000, max: 100_000 },
+          liquidDepth: { min: 0, max: 100_000 },
+          substrate: { min: 0, max: 15 },
+        },
+      );
+    };
+    const { presentation, advance } = presentationOver(model, {
+      readTerrain,
+      terrainEntries: 2,
+      partBytes: 16_384,
+      periodBytes: 16_384,
+    });
+    const [changed, other] = [new EndedClient(), new EndedClient()];
+    presentation.subscribe(presentation.connect(changed), row(0, 4));
+    // The cache of two keeps the transaction's first two chunks: its third is generated again, as
+    // it writes its first part.
+    advance();
+    expect(changed.ending).toMatchObject({ reason: "fault" });
+    const cause = changed.ending?.reason === "fault" ? changed.ending.cause : undefined;
+    expect(String(cause)).toMatch(
+      /^Error: the terrain of chunk 2,0 has \d+ bytes, not the 4209 planned$/,
+    );
+    presentation.subscribe(presentation.connect(other), [[0, 9]]);
+    advance();
+    expect(keysOf(other)).toEqual(["0,9"]);
+    expect(presentation.usage()).toMatchObject({ clients: 1, faults: 1, failed: false });
+  });
+
+  test("an aborted transaction that waited for terrain leaves nothing in the queue", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const { presentation, advance } = presentationOver(model, {
+      terrainEntries: 2,
+      partBytes: 16_384,
+      periodBytes: 16_384,
+    });
+    const reader = new ViewClient();
+    const id = presentation.connect(reader);
+    presentation.subscribe(id, row(0, 9));
+    // Its view takes three parts, one a period: it lags once the first went out.
+    advance();
+    reader.lag = true;
+    // A client waits for 64 chunks, which pass through the cache of two.
+    presentation.subscribe(presentation.connect(new ViewClient()), row(1, 64));
+    advance();
+    const waiting = presentation.usage().terrain.queued;
+    // Back, the transaction sends its second part, then waits for the evicted terrain of its third.
+    reader.lag = false;
+    advance();
+    expect(presentation.usage().terrain.queued).toBe(waiting - 16 + 1);
+    presentation.abort(id);
+    expect(presentation.usage().terrain.queued).toBe(waiting - 16);
   });
 
   test("a queued generation that throws drops the client that waits for it alone, and the queue goes on with the next", () => {

@@ -564,12 +564,14 @@ with the strict schema.
   the cache of 8 evicts theirs, and once they drain, the terrain of the chunks they had not written
   yet is generated again ahead of a flooded queue, and each commits within three periods; a chunk a
   transaction cannot read is served first the next period and held until it reads it, and one whose
-  generation throws drops its client; no client may need more than 73 chunks; a generation that
-  throws removes its client from the queue, whatever the fault callback does, reports it once, and
-  the queue serves the next client in the same period; and in the presentation, a queued generation
-  that throws drops the client waiting for it alone, counted as a fault, while the others are served
-  and the plane runs on. Six cycles of clients closed by a fault, by strikes, and by slowness,
-  aborted, and waiting for terrain leave every count at zero.
+  generation throws drops its client; while clients wait, only the head generates at once; a terrain
+  read again with other bytes than planned drops its client alone; an aborted transaction that
+  waited for terrain leaves nothing in the queue; no client may need more than 73 chunks; a
+  generation that throws removes its client from the queue, whatever the fault callback does,
+  reports it once, and the queue serves the next client in the same period; and in the presentation,
+  a queued generation that throws drops the client waiting for it alone, counted as a fault, while
+  the others are served and the plane runs on. Six cycles of clients closed by a fault, by strikes,
+  and by slowness, aborted, and waiting for terrain leave every count at zero.
 
 ## Composition
 
