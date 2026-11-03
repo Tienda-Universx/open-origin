@@ -251,16 +251,6 @@ export class ViewClient implements ClientSink {
   onMessage: ((message: ServerMessage) => void) | undefined;
   /** Called after each commit the reducer applied. */
   onCommit: ((committed: Committed) => void) | undefined;
-  readonly #strict: boolean;
-
-  /**
-   * With `strict` false, frames skip the schema and only the reducer checks them: the worst cases
-   * do so for time, since their frames take the shapes other tests parse strictly, and the reducer
-   * still checks their order, their transactions, their parts, and their fragments.
-   */
-  constructor({ strict = true }: { readonly strict?: boolean } = {}) {
-    this.#strict = strict;
-  }
 
   send(frame: string): void {
     this.sizes.push(Buffer.byteLength(frame, "utf8"));
@@ -295,8 +285,6 @@ export class ViewClient implements ClientSink {
   }
 
   #parse(frame: string): ServerMessage {
-    // JSON.parse gives `any`: unchecked by design here, see the constructor.
-    if (!this.#strict) return JSON.parse(frame);
     const parsed = parseServerMessage(frame);
     if (!parsed.ok)
       throw new Error(`the server sent a message the schema rejects: ${frame.slice(0, 200)}`);

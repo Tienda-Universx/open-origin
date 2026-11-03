@@ -360,8 +360,8 @@ with the strict schema.
   largest view of `beings@2`, 73 such chunks, and one chunk of 65,536 such beings in parts of
   16 KiB, the smallest, each assemble in one transaction with no part past its limit and no period
   past its budget, within the reducer's 1,024 parts and the periods their bytes need, the view
-  unchanged until the commit; these two skip the schema for time and keep the reducer's checks. One
-  chunk of 65,536 narrow records also assembles.
+  unchanged until the commit, every frame read with the strict schema. One chunk of 65,536 narrow
+  records also assembles.
 
 ## Composition
 

@@ -237,7 +237,7 @@ describe("a view of dense chunks", () => {
       chunkKey([MIN_CHUNK + 1, MIN_CHUNK + 1]),
     ]);
     const presentation = still(chunks);
-    const client = new ViewClient({ strict: false });
+    const client = new ViewClient();
     const id = presentation.connect(client);
     presentation.subscribe(id, camera);
     presentation.follow(id, followed?.id ?? null);
@@ -260,7 +260,7 @@ describe("a view of dense chunks", () => {
     ).toBeGreaterThan(200);
     const chunks = [{ at, v: 0, upsert: records, gone: [] }];
     const presentation = still(chunks, { partBytes: MIN_PART_BYTES });
-    const client = new ViewClient({ strict: false });
+    const client = new ViewClient();
     presentation.subscribe(presentation.connect(client), [at]);
     const bytes = untilCommit(presentation, client);
     expect(shown(client.state)).toEqual(wholeView(chunks));
