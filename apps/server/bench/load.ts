@@ -11,12 +11,14 @@
  * to the 3 × 3 chunks of the default world's spawn area. Once every client committed, it measures
  * for S seconds (20 unless given):
  *
- * - the tick's time from the server's own C3 status: `stepMicros` (the step, the projection, and
+ * - the tick's time: from the server's own C3 status, `stepMicros` (the step, the projection, and
  *   the journal's append) over the last 1,024 ticks, boot included, with `projectionMicros`,
- *   `latenessMicros`, and `fanOutMicros`;
+ *   `latenessMicros`, and `fanOutMicros`; and the same span over the window alone, which the
+ *   server's process times (load-server.ts);
  * - the latency from playout to receipt: for each commit a client got, the wall-clock time it
  *   arrived less the time the period that played its tick out began, which the server marks out of
- *   band (load-server.ts), never in the protocol;
+ *   band (load-server.ts), never in the protocol; and at each mark, how many ticks the world had
+ *   executed beyond the one played out;
  * - each client's rate: its commits over the periods of the window, and its commits that came less
  *   than half a period after the one before;
  * - the server's resident and heap memory per client: after a full collection with the clients
