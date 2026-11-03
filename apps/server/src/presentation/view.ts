@@ -18,7 +18,7 @@ export const VIEW_BYTES = CLIENT_LIMITS.maxViewBytes;
 export type Trimmed = { readonly kept: ChunkCoord[]; readonly trimmed: ChunkCoord[] };
 
 /** The bytes the chunk `at` adds to a view at the mirror's tick. */
-export function chunkViewBytes(mirror: Mirror, at: ChunkCoord): number {
+function chunkViewBytes(mirror: Mirror, at: ChunkCoord): number {
   const { bytes, records } = mirror.current(at);
   return bytes + records.length + WIDEST_TERRAIN_BYTES;
 }

@@ -23,7 +23,7 @@ import type { Transaction, ViewState } from "./txn.ts";
 export const BUFFER_BYTES = 256 * 1024;
 
 /** How long a memory-guard abort counts, and how many close the client with 1013. */
-export const ABORT_WINDOW_MICROS = 60_000_000;
+const ABORT_WINDOW_MICROS = 60_000_000;
 export const ABORTS_TO_CLOSE = 3;
 
 /**

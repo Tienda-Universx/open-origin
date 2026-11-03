@@ -11,8 +11,8 @@ const MICROS_PER_SECOND = 1_000_000;
 const MICROS_PER_MS = 1000;
 
 /** How long a strike counts, and how many close the connection. */
-export const STRIKE_WINDOW_MICROS = 10 * MICROS_PER_SECOND;
-export const STRIKES_TO_CLOSE = 3;
+const STRIKE_WINDOW_MICROS = 10 * MICROS_PER_SECOND;
+const STRIKES_TO_CLOSE = 3;
 
 /** The window of the new-chunk bucket: CLIENT_LIMITS.newChunksPer2s every 2 s. */
 const NEW_CHUNKS_WINDOW_MICROS = 2 * MICROS_PER_SECOND;
@@ -21,7 +21,7 @@ const NEW_CHUNKS_WINDOW_MICROS = 2 * MICROS_PER_SECOND;
  * A token bucket counted in microseconds of refill, so every step is an integer: each token costs
  * `cost` microseconds, and the bucket holds at most `tokens` of them. It starts full.
  */
-export class TokenBucket {
+class TokenBucket {
   readonly #cost: number;
   readonly #capacity: number;
   #credit: number;
