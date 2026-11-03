@@ -14,8 +14,9 @@ transport and the entry point (T6-7) arrive in a later batch.
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
-`presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`, and
-`observer-invariance`), and `tests/repo/server-boundaries.test.ts`.
+`presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`,
+`presentation-terrain`, `presentation-liveness`, and `observer-invariance`), and
+`tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 

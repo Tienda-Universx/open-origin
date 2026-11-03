@@ -8,11 +8,12 @@
  *
  * Each period, in a task of its own and never inside a step's callback, the playout hands the
  * mirror at most one published tick; a change of the world's state is announced to every client;
- * the terrain queue serves its head; the fan-out serves the clients in rotating order within its
- * budget of time: each one's pending messages, then the parts of its transaction, within its budget
- * of bytes and while its buffer has room; what is left of the terrain budget goes to the clients
- * that wait for terrain; and the memory guard aborts the clients that pin the oldest retained
- * versions while they pass their limit.
+ * the terrain queue serves the chunks transactions in flight missed, within their share, then its
+ * head; the fan-out serves the clients in rotating order within its budget of time: each one's
+ * pending messages, then the parts of its transaction, within its budget of bytes and while its
+ * buffer has room, and its state when it got nothing else; what is left of the terrain budget goes
+ * to the transactions and clients that wait for terrain; and the memory guard aborts the clients
+ * that pin the oldest retained versions while they pass their limit.
  *
  * A client's transaction starts only after its previous one committed, and only once the playout
  * tick passed that commit's, so a client that is up to date gets one commit per period. Every
