@@ -86,6 +86,25 @@ describe("liveness", () => {
     expect(watcher.anomalies).toEqual([]);
   });
 
+  test("a follower whose being moves into chunks whose terrain waits keeps the being's record every period", () => {
+    const home: [number, number] = [32 * 500, 32 * 500];
+    const model = new ModelWorld(0, [being(1, home)]);
+    const { presentation, advance } = presentationOver(model);
+    // A client ahead in the queue takes the budget for four periods.
+    presentation.subscribe(presentation.connect(new ViewClient()), camera(0));
+    const follower = new ViewClient();
+    presentation.follow(presentation.connect(follower), 1);
+    const followed: unknown[] = [];
+    for (let period = 1; period <= 4; period += 1) {
+      advance({ set: [being(1, [home[0] + 32 * period, home[1]])] });
+      followed.push(follower.state.view?.followed);
+    }
+    // Its window's terrain waits, so the view shows none of it; each commit still names the being.
+    expect(keysOf(follower)).toEqual([]);
+    expect(followed).toEqual([1, 2, 3, 4].map((n) => being(1, [home[0] + 32 * n, home[1]])));
+    expect(follower.anomalies).toEqual([]);
+  });
+
   test("a client whose transaction waits for terrain hears status meanwhile, and the transaction stays in flight until it commits", () => {
     const { presentation, advance } = presentationOver(new ModelWorld(0), {
       terrainEntries: 2,

@@ -496,6 +496,27 @@ describe("terrain in the presentation", () => {
     expect(presentation.usage().terrain.queued).toBe(back - 1);
   });
 
+  test("an aborted transaction leaves its client its place in the queue", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const { calls, read } = countingTerrain();
+    const { presentation, advance } = presentationOver(model, {
+      readTerrain: read,
+      partBytes: 16_384,
+      periodBytes: 16_384,
+    });
+    // The head takes 16 chunks at once into a transaction that spans periods, and waits for 4;
+    // another client waits behind it.
+    const head = presentation.connect(new ViewClient());
+    presentation.subscribe(head, row(0, 20));
+    presentation.subscribe(presentation.connect(new ViewClient()), row(1, 8));
+    advance();
+    presentation.abort(head);
+    // Its place stays: the next period serves its four chunks first.
+    const before = calls.length;
+    advance();
+    expect(calls.slice(before, before + 4)).toEqual(row(0, 20).slice(16).map(chunkKey));
+  });
+
   test("a queued generation that throws drops the client that waits for it alone, and the queue goes on with the next", () => {
     const model = new ModelWorld(0, [being(1, [5, 5])]);
     const failure = new Error("no terrain for chunk 9,51");

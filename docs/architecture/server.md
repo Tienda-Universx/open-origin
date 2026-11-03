@@ -586,16 +586,18 @@ with the strict schema.
   theirs, and once they drain, the terrain of the chunks they had not written yet is generated again
   ahead of a flooded queue, and each commits within three periods; a terrain read again with other
   bytes than planned drops its client alone; an aborted transaction that waited for terrain leaves
-  nothing in the queue; and a queued generation that throws drops the client waiting for it alone,
-  counted as a fault, while the others are served and the plane runs on.
+  nothing in the queue, and its client keeps its place; and a queued generation that throws drops
+  the client waiting for it alone, counted as a fault, while the others are served and the plane
+  runs on.
 - `presentation-liveness.test.ts` (ADR 0026, "Ordering and liveness"): four clients, each entering
   64 new chunks, hear from the server in every one of the 17 periods their terrain takes, and end up
   showing their whole cameras; a client that pans to 64 new chunks while three others wait for
   terrain hears from the server every period, and its view shows its followed being's move at every
-  tick. A client whose transaction's next part waits for terrain the LRU evicted hears `status` in
-  that period, its transaction in flight and uncommitted, and never goes a period in silence until
-  it commits; a transaction whose part waits says so with `TERRAIN_PENDING`, keeps its pins, and
-  goes on once the terrain comes.
+  tick; a follower whose being moves into chunks whose terrain waits shows none of them yet keeps
+  the being's record every period. A client whose transaction's next part waits for terrain the LRU
+  evicted hears `status` in that period, its transaction in flight and uncommitted, and never goes a
+  period in silence until it commits; a transaction whose part waits says so with `TERRAIN_PENDING`,
+  keeps its pins, and goes on once the terrain comes.
 
 ## Composition
 
