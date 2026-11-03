@@ -11,8 +11,9 @@
  * A client's transaction starts only after its previous one committed, and only once the playout
  * tick passed that commit's, so a client that is up to date gets one commit per period. Every
  * connection's first transaction is a reset. A throw while serving one client drops that client
- * alone, and the period goes on with the others; a throw of the playout or the mirror is a fault
- * of the whole plane, which stops its periods.
+ * alone, and the period goes on with the others; any other throw of a period, from the playout,
+ * the mirror, or a drop, is a fault of the whole plane: the presentation stops and detaches, and
+ * the throw goes on.
  */
 import { type ChunkCoord, MAX_PART_BYTES, type TerrainPublic } from "@open-origin/protocol/public";
 import type { PublishedListener } from "../world/published.ts";
@@ -107,6 +108,8 @@ export type PresentationUsage = {
   readonly retainedBytes: number;
   /** Clients dropped because serving them threw (C3). */
   readonly faults: number;
+  /** Whether a fault of the whole plane stopped the presentation (C3). */
+  readonly failed: boolean;
 };
 
 const MICROS_PER_SECOND = 1_000_000;
@@ -148,6 +151,7 @@ export class Presentation {
   #cancel: (() => void) | undefined;
   readonly #unsubscribe: () => void;
   #faults = 0;
+  #failed = false;
   #anchor = 0;
   #periods = 0;
 
@@ -255,20 +259,25 @@ export class Presentation {
       pins: mirror.pins,
       retainedBytes: mirror.retainedBytes,
       faults: this.#faults,
+      failed: this.#failed,
     };
   }
 
-  /** One period: the playout's release, then the fan-out to every client. */
+  /**
+   * One period: the playout's release, then the fan-out to every client. A throw that is not one
+   * client's is a fault of the whole plane, whose state may be inconsistent: the presentation stops
+   * and detaches, `failed` turns true, and the throw goes on.
+   */
   period(): void {
     this.#period += 1;
-    this.#playout.release((published) => this.#mirror.apply(published));
-    // Deleting the entry being visited, as a fault does, leaves a Map's iteration well defined.
-    for (const client of this.#clients.values()) {
-      try {
-        this.#serve(client);
-      } catch (cause) {
-        this.#fault(client, cause);
-      }
+    try {
+      this.#playout.release((published) => this.#mirror.apply(published));
+      // Deleting the entry being visited, as a fault does, leaves a Map's iteration well defined.
+      for (const client of this.#clients.values()) this.#serveIsolated(client);
+    } catch (cause) {
+      this.#failed = true;
+      this.stop();
+      throw cause;
     }
   }
 
@@ -306,6 +315,15 @@ export class Presentation {
     this.#releaseView(client.view);
     this.#interest.remove(client.id);
     this.#clients.delete(client.id);
+  }
+
+  /** Serves `client`: a throw drops it alone, and a throw of the drop itself reaches the plane. */
+  #serveIsolated(client: Client): void {
+    try {
+      this.#serve(client);
+    } catch (cause) {
+      this.#fault(client, cause);
+    }
   }
 
   /** Serving `client` threw `cause`: it is dropped and counted, and its transport told to end it. */

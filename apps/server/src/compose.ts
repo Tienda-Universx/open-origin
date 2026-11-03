@@ -237,9 +237,10 @@ export function composeServer(config: Config, deps: ServerDeps): Server {
   return Object.freeze({
     world,
     presentation,
+    // The presentation starts first: one that cannot start leaves no world clock running.
     start: () => {
-      world.start();
       presentation.start();
+      world.start();
     },
     stop: () => {
       presentation.stop();

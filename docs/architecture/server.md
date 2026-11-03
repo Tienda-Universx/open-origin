@@ -238,10 +238,11 @@ those frozen C0 records, and no network: the transport of T6-7 will drive it thr
 A throw while serving one client, from its sink's `send`, the terrain, or the start of its
 transaction, drops that client alone: its interest, pins, and transaction go, the drop is counted as
 `faults` (C3), and its sink's `end(cause)` tells the transport to close the connection, which must
-not call `close` for it again. The period goes on with the next client. A throw of the playout or
-the mirror is a fault of the whole plane: it leaves the period and stops the schedule. `stop()`
-stops the periods and unsubscribes from the world plane for good, so a stopped presentation
-receives no published tick and cannot start again.
+not call `close` for it again. The period goes on with the next client. Any other throw of a
+period, from the playout, the mirror, or a drop, is a fault of the whole plane, whose state may be
+inconsistent: the presentation stops, `usage().failed` turns true, and the throw goes on to the
+runtime. `stop()` stops the periods and unsubscribes from the world plane for good, so a stopped
+presentation receives no published tick, holds no growing playout, and cannot start again.
 
 ### Playout
 
@@ -379,8 +380,9 @@ channel. T6-7's entry point installs the process handler that calls `unhandledRe
 `composeServer(config, deps)` wires both planes: it calls `compose`, then builds the `Presentation`
 from the world plane's `subscribeToPublished` and `readTerrain` alone, with the same clock and
 timer, the configured rate and F, and hello's world: a random id of 16 bytes, fresh at every boot
-unless a test gives `worldId`, and the configured durability. Its `start()` starts the world's
-clock and the presentation's periods; `stop()` stops the periods and detaches the presentation, then
+unless a test gives `worldId`, and the configured durability. Its `start()` starts the
+presentation's periods, then the world's clock, so a presentation that cannot start leaves no
+world running; `stop()` stops the periods and detaches the presentation, then
 stops the world, resolving once every executed tick is published. T6-7's entry point calls it.
 
 ## Observer invariance

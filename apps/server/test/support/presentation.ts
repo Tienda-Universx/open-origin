@@ -315,11 +315,12 @@ export function presentationOver(
 ) {
   const publisher = new Publisher(model.boot());
   const clock = new FakeClock();
+  const timer = new FakeTimer(clock);
   const presentation = new Presentation({
     subscribeToPublished: publisher.subscribe,
     readTerrain: terrainAt,
     clock,
-    timer: new FakeTimer(clock),
+    timer,
     tickRateHz: 5,
     batchTicks: 5,
     world: { id: WORLD_ID, durability: "ephemeral" },
@@ -330,7 +331,7 @@ export function presentationOver(
     publisher.publish(model.step(changes));
     presentation.period();
   };
-  return { presentation, publisher, advance };
+  return { presentation, publisher, timer, advance };
 }
 
 /** What a view shows, in the shape of the model's state: by chunk key, version and beings. */

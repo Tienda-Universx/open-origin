@@ -364,6 +364,20 @@ describe("compose", () => {
 });
 
 describe("composeServer", () => {
+  test("starts the presentation first, so one that cannot start leaves no world clock", () => {
+    const clock = new FakeClock();
+    const timer = new FakeTimer(clock);
+    const server = composeServer(configOf(), {
+      clock,
+      timer,
+      source: new ScriptedSource(countingWorld(9), []),
+      projectionOf: emptyProjection,
+    });
+    server.presentation.stop();
+    expect(() => server.start()).toThrow("a stopped presentation cannot start again");
+    expect(timer.pending).toBe(0);
+  });
+
   test("feeds the presentation from the world plane alone, and stop leaves no timer", async () => {
     const clock = new FakeClock();
     const timer = new FakeTimer(clock);

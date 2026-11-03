@@ -476,6 +476,7 @@ describe("closing", () => {
       pins: 0,
       retainedBytes: 0,
       faults: 0,
+      failed: false,
     });
   });
 });
@@ -568,6 +569,23 @@ describe("faults", () => {
       retainedBytes: 0,
       faults: 1,
     });
+  });
+
+  test("a throw of the mirror stops and detaches the whole plane, and goes on", () => {
+    const model = new ModelWorld(0, [being(1, [5, 5])]);
+    const { presentation, publisher, timer } = presentationOver(model);
+    const client = new ViewClient();
+    presentation.connect(client);
+    presentation.start();
+    model.step();
+    // Tick 2 right after tick 0: the mirror refuses a gap, which no client caused.
+    publisher.publish(model.step());
+    expect(() => presentation.period()).toThrow("the mirror is at tick 0 and cannot apply tick 2");
+    expect(presentation.usage()).toMatchObject({ failed: true, faults: 0 });
+    expect(publisher.listeners).toBe(0);
+    expect(client.messages).toEqual([]);
+    expect(timer.pending).toBe(0);
+    expect(() => presentation.start()).toThrow("a stopped presentation cannot start again");
   });
 
   test("stop detaches the presentation from the world plane for good", () => {

@@ -208,17 +208,17 @@ export class Transaction {
    */
   static start(start: TransactionStart): Transaction {
     const pins = new Map<string, ChunkVersion>();
-    for (const at of start.interest) {
-      const version = start.mirror.current(at);
-      start.mirror.pin(version);
-      pins.set(version.key, version);
-    }
     try {
+      for (const at of start.interest) {
+        const version = start.mirror.current(at);
+        start.mirror.pin(version);
+        pins.set(version.key, version);
+      }
       const transaction = new Transaction(start, pins);
       start.view.needsReset = false;
       return transaction;
     } catch (cause) {
-      // Its content could not be fixed, from the terrain or the mirror: nothing stays pinned.
+      // Its versions or its content could not be fixed: nothing it pinned stays pinned.
       for (const version of pins.values()) start.mirror.unpin(version);
       throw cause;
     }
