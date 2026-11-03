@@ -92,6 +92,16 @@ allows: 73 chunks a view (`MAX_VIEW_CHUNKS`), 65,536 beings a chunk, and 2,048 i
 `parseServerMessage(text)` reads a server frame into `{ok: true, message}` or `{ok: false, code}`,
 with `bad_json` or `bad_message`, and never throws.
 
+What the server sends besides transactions:
+
+- **`status`** goes to every client when the world's state changes, at its visible tick, before
+  anything else; `hello` carries the state at connection. While the world is not running, a client
+  that gets nothing else in a period, and is not lagging, gets `status` again, so a client of a
+  stopped world that keeps up does not take the silence for a lost connection.
+- **Answers that wait.** A message goes out only while the client's socket buffers less than
+  256 KiB and within the period's budget of 256 KiB. While a client does not read, a newer
+  `status` replaces the one that waits.
+
 ### Field classes
 
 Every field above is C0. No public field carries the tick rate or the simulated seconds per tick,

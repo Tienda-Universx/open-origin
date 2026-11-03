@@ -183,6 +183,7 @@ describe("the playout", () => {
       tickRateHz: 5,
       batchTicks: 5,
       world: { id: WORLD_ID, durability: "ephemeral" },
+      worldState: () => "running",
     });
     const client = new ViewClient();
     presentation.connect(client);
@@ -593,7 +594,7 @@ describe("closing", () => {
       // A sink that drops what it gets: these clients only hold pins and interest.
       const id = presentation.connect({
         send: () => undefined,
-        lagging: () => false,
+        buffered: () => 0,
         end: rethrow,
       });
       presentation.subscribe(id, [
@@ -656,21 +657,21 @@ describe("faults", () => {
         sent += 1;
         if (sent === 2) throw failure;
       },
-      lagging: () => false,
-      end: (cause) => ended.push(cause),
+      buffered: () => 0,
+      end: (ending) => ended.push(ending),
     });
     presentation.subscribe(faulty, [[0, 0]]);
     const healthy = new ViewClient();
     const id = presentation.connect(healthy);
     presentation.subscribe(id, [[0, 0]]);
     presentation.period();
-    expect(ended).toEqual([failure]);
+    expect(ended).toEqual([{ reason: "fault", cause: failure }]);
     expect(healthy.commits.map(({ tick }) => tick)).toEqual([0]);
     expect(presentation.usage()).toMatchObject({ clients: 1, faults: 1 });
     expect(() => presentation.close(faulty)).toThrow(`client ${faulty} is not connected`);
     advance();
     expect(healthy.commits.map(({ tick }) => tick)).toEqual([0, 1]);
-    expect(ended).toEqual([failure]);
+    expect(ended).toEqual([{ reason: "fault", cause: failure }]);
     presentation.close(id);
     expect(presentation.usage()).toMatchObject({
       clients: 0,
@@ -692,8 +693,8 @@ describe("faults", () => {
     const ended: unknown[] = [];
     const faulty = presentation.connect({
       send: () => undefined,
-      lagging: () => false,
-      end: (cause) => ended.push(cause),
+      buffered: () => 0,
+      end: (ending) => ended.push(ending),
     });
     presentation.subscribe(faulty, [
       [0, 0],
@@ -703,7 +704,7 @@ describe("faults", () => {
     const id = presentation.connect(healthy);
     presentation.subscribe(id, [[0, 0]]);
     presentation.period();
-    expect(ended).toEqual([failure]);
+    expect(ended).toEqual([{ reason: "fault", cause: failure }]);
     expect(healthy.commits.map(({ tick }) => tick)).toEqual([0]);
     presentation.close(id);
     expect(presentation.usage()).toMatchObject({
@@ -773,6 +774,7 @@ describe("faults", () => {
         tickRateHz: 5,
         batchTicks: 5,
         world: { id: WORLD_ID, durability: "ephemeral" },
+        worldState: () => "running",
       });
     expect(build).toThrow("the world plane gave the presentation no boot record");
     expect(gate.listenerFaults).toBe(1);

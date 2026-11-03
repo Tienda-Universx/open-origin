@@ -97,6 +97,7 @@ function still(
     tickRateHz: 5,
     batchTicks: 5,
     world: { id: WORLD_ID, durability: "ephemeral" },
+    worldState: () => "running",
     ...options,
   });
 }

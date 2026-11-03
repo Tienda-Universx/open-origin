@@ -68,12 +68,11 @@ export type WorldInfo = {
   readonly durability: (typeof DURABILITIES)[number];
 };
 
+/** The state of the world, the same for every client. */
+export type WorldState = (typeof WORLD_STATES)[number];
+
 /** The first message of a connection, with the visible tick `clock.tick` and the world's state. */
-export function helloFrame(
-  world: WorldInfo,
-  clock: Clock,
-  state: (typeof WORLD_STATES)[number],
-): Frame {
+export function helloFrame(world: WorldInfo, clock: Clock, state: WorldState): Frame {
   return frameFrom("hello", {
     tick: clock.tick,
     protocol: PROTOCOL_ID,
@@ -94,4 +93,9 @@ export function commitFrame(txn: number, clock: Clock): Frame {
 /** Cancels the transaction `txn` of tick `tick`: the client discards its parts. */
 export function abortFrame(txn: number, tick: number): Frame {
   return frameFrom("abort", { tick, txn });
+}
+
+/** The world's state, at the client's visible tick. */
+export function statusFrame(tick: number, state: WorldState): Frame {
+  return frameFrom("status", { tick, state });
 }

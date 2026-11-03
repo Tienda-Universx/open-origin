@@ -94,6 +94,7 @@ describe("compose", () => {
       rebases: 0,
       connections: 0,
     });
+    expect(world.state()).toBe("paused");
     world.start();
     await timer.runUntilSettled(10 * P);
     // Ticks 1 to 11 ran at 0, P, …, 10P; the batches of F = 5 that the journal acknowledged hold
@@ -105,6 +106,7 @@ describe("compose", () => {
       state: "running",
       shortfallTicks: 0,
     });
+    expect(world.state()).toBe("running");
     expect(published).toEqual(ticks(1, 10));
     expect(world.halted()).toBeUndefined();
   });
@@ -393,7 +395,7 @@ describe("composeServer", () => {
         const parsed = parseServerMessage(frame);
         if (parsed.ok) messages.push(parsed.message);
       },
-      lagging: () => false,
+      buffered: () => 0,
       end: (cause) => {
         throw cause;
       },
@@ -422,7 +424,7 @@ describe("composeServer", () => {
       const hello: string[] = [];
       presentation.connect({
         send: (frame) => hello.push(frame),
-        lagging: () => false,
+        buffered: () => 0,
         end: (cause) => {
           throw cause;
         },

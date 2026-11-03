@@ -111,8 +111,9 @@ Capacity is refused at the upgrade, with HTTP 503 and `Retry-After`.
   - A `seq` gap, or a `commit` whose tick does not exceed the previous one, is an anomaly. The client
     then sends `resync`.
 - **The server's duty.** While a client is not lagging, it gets at least one message per period: a
-  part or a `commit`. A lagging client is quiet only while its own buffer is full, and Bun's idle
-  timeout and pings still apply.
+  part or a `commit`, or, while the world is stopped and its playout gives no new tick, `status`.
+  A lagging client is quiet only while its own buffer is full, and Bun's idle timeout and pings
+  still apply.
 - **Fields.**
   - `v` is the tick at which a chunk's C0 content last changed.
   - `followed` is the followed being's `BeingPublic`, or `null` when it is outside the view or gone.

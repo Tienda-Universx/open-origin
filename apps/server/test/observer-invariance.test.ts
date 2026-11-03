@@ -45,6 +45,7 @@ import type { SuiteRuleset } from "../../../packages/engine/test/support/determi
 import { Random } from "../../../packages/protocol/test/support/random.ts";
 import { composeServer, type Server, type WorldPlaneDeps } from "../src/compose.ts";
 import { parseConfig } from "../src/config/config.ts";
+import { BUFFER_BYTES } from "../src/presentation/client.ts";
 import type { Presentation } from "../src/presentation/presentation.ts";
 import { BeingsProjection, type WorldProjection } from "../src/projection/projection.ts";
 import { EphemeralJournal, type JournalBatch, type TickJournal } from "../src/world/journal.ts";
@@ -266,9 +267,10 @@ class Audience {
         observer.bytes += frame.length;
         this.activity.received += 1;
       },
-      lagging: () => observer.lag,
-      end: (cause) => {
-        throw cause;
+      // A lagging observer's socket holds as much as the presentation lets it.
+      buffered: () => (observer.lag ? BUFFER_BYTES : 0),
+      end: (ending) => {
+        throw ending.reason === "fault" ? ending.cause : new Error(`ended: ${ending.reason}`);
       },
     });
     this.activity.connects += 1;

@@ -1,20 +1,21 @@
-# Server: the world plane and the presentation core
+# Server: the world plane and the presentation plane
 
 `apps/server` runs the public universe in one Bun process. Its world plane steps the engine at a fixed
 rate, makes each tick durable before it publishes it, and hands the rest of the server only frozen
 published records. Its presentation plane turns those records into each client's view.
 [ADR 0025](../decisions/0025-real-time-world-host.md) and
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
-describes what the code implements as of T6-6a: the configuration, the scheduler, the world host
-and its sources, the C0 projection, the journal port, the publication gate, the presentation core
-(playout, mirror, interest, and transactions), their composition, and the test of observer
-invariance. Sessions and the limits that act on clients (T6-6b), the transport, and the entry point
-(T6-7) arrive in later batches.
+describes what the code implements as of T6-6b: the configuration, the scheduler, the world host
+and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
+(playout, mirror, interest, transactions, the send discipline, and the fan-out), their composition,
+and the test of observer invariance. Sessions, the limits of memory and terrain, the transport, and
+the entry point (T6-7) arrive later.
 
 Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
 `scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
 `leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
-`presentation-sizes`, and `observer-invariance`), and `tests/repo/server-boundaries.test.ts`.
+`presentation-sizes`, `presentation-backpressure`, and `observer-invariance`), and
+`tests/repo/server-boundaries.test.ts`.
 
 ## Layout
 
@@ -23,7 +24,7 @@ Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`c
 | `src/config/` | — | `parseConfig`: the environment, parsed and deep-frozen |
 | `src/world/` | World | `time.ts` (the `Clock` and `Timer` ports), `scheduler.ts`, `samples.ts`, `host.ts`, `source.ts`, `journal.ts`, `publication.ts`, `published.ts`, `rejection.ts`, and `fault.ts` (what a fault leaves to log) |
 | `src/projection/` | World | `projection.ts` (`BeingsProjection`), `being.ts`, `events.ts`, `clock.ts`, and `terrain.ts`: the C0 projection of a world of beings |
-| `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, and `terrain.ts`: the presentation core |
+| `src/presentation/` | Presentation | `presentation.ts` (`Presentation`), `playout.ts`, `mirror.ts`, `version.ts`, `ring.ts`, `interest.ts`, `txn.ts`, `parts.ts`, `frames.ts`, `client.ts` (a client and its sink), `terrain.ts`, and `telemetry.ts` |
 | `src/adapters/` | — | `systemClock` (`performance.now()`, in whole microseconds) and `systemTimer` (one `setTimeout` per deadline) |
 | `src/compose.ts` | — | `compose(config, deps)`: the wiring of the world plane; `composeServer(config, deps)`: both planes |
 
@@ -229,23 +230,30 @@ nothing it acknowledged can be lost. T7 adds a durable journal behind the same p
 
 ## Presentation plane
 
-`Presentation` receives from the world plane two functions only: the subscription to published
-ticks, which delivers the boot record first, and `readTerrain`. It holds nothing of the world but
-those frozen C0 records, and no network: the transport of T6-7 will drive it through `connect(sink)`,
-`subscribe`, `follow`, `resync`, `abort`, and `close`, where a sink is
-`{send(frame), lagging(), end(cause)}`.
+`Presentation` receives from the world plane three functions only: the subscription to published
+ticks, which delivers the boot record first; `readTerrain`; and the world's state. It holds nothing
+of the world but those frozen C0 records and that state, which every client shares, and no network:
+the transport of T6-7 drives it through `connect(sink)`, `subscribe`, `follow`, and `resync` with
+what a client asked, `drained(client)` when a socket's buffer drains, and `close(client)` when a
+socket closes. `abort` acts on a client directly.
+
+A sink is `{send(frame), buffered(), end(ending)}`. `buffered()` is the bytes the client's socket
+holds and has not written, Bun's `getBufferedAmount()`. `end` closes the connection, once: the
+presentation already released the client, so the transport must not call `drained` or `close` for
+it again. Its `ending` says why: `strikes`, with close code 1008; `too_slow`, with 1013;
+or `fault`, with what serving the client threw and no code, since the protocol fixes none (T6-7
+chooses one).
 
 A throw while serving one client, from its sink's `send`, the terrain, or the start of its
-transaction, drops that client alone: its interest, pins, and transaction go, the drop is counted as
-`faults` (C3), and its sink's `end(cause)` tells the transport to close the connection, which must
-not call `close` for it again. The period goes on with the next client. Any other throw of a
-period, from the playout, the mirror, or a drop, is a fault of the whole plane, whose state may be
-inconsistent: the presentation stops, `usage().failed` turns true, and the throw goes on to the
-runtime. `stop()` stops the periods and unsubscribes from the world plane for good, so a stopped
-presentation receives no published tick, holds no growing playout, and cannot start again. A
-presentation whose boot record could not be applied unsubscribes and throws from its constructor:
-the world plane counts a listener's throw and keeps the listener, so one that was never built must
-leave no listener behind.
+transaction, drops that client alone: its interest, pins, and transaction go, the drop is counted
+as `faults` (C3), and its sink's `end` gets the fault. The period goes on with the next client. Any
+other throw of a period, from the playout, the
+mirror, or a drop, is a fault of the whole plane, whose state may be inconsistent: the presentation
+stops, `usage().failed` turns true, and the throw goes on to the runtime. `stop()` stops the
+periods and unsubscribes from the world plane for good, so a stopped presentation receives no
+published tick, holds no growing playout, and cannot start again. A presentation whose boot record
+could not be applied unsubscribes and throws from its constructor: the world plane counts a
+listener's throw and keeps the listener, so one that was never built must leave no listener behind.
 
 ### Playout
 
@@ -253,8 +261,8 @@ The listener of published ticks only queues them. Each period, `period()` runs i
 its own, never inside a step's callback: the playout hands the mirror the oldest waiting tick, or,
 when more than F wait, every waiting tick in order, and the period releases the newest; the rings
 still receive every tick. `start()` runs a period every `1/TICK_RATE_HZ` seconds on the injected
-timer, and a period that ran late resets the schedule rather than catching up. Then the fan-out
-serves each client that is not lagging.
+timer, and a period that ran late resets the schedule rather than catching up. Then a period
+announces a change of the world's state and runs the fan-out.
 
 ### Mirror
 
@@ -269,7 +277,7 @@ The mirror applies the boot record, then each released tick, in order.
 - **Pins.** Clients pin the versions they show and those their transaction reads. Pins are counted
   per version; a version replaced while pinned is retained until its last pin goes, and the bytes
   of retained versions are counted exactly. A version replaced with no pin is freed at once. The
-  limit of retained bytes that acts on that count is T6-6b's.
+  limit of retained bytes that acts on that count comes with the limits of memory.
 - **Index.** The chunk of every being, so the follow window and the followed record are found at
   once.
 - **Rings.** Local speech, one stream per chunk, and the feed, one stream, are kept for the last
@@ -281,18 +289,41 @@ The mirror applies the boot record, then each released tick, in order.
 ### Interest
 
 A client's effective interest is its follow window, the followed being's chunk ± 1 clipped to the
-world (at most 9 chunks), then its camera (at most 64 chunks), which each `subscribe` replaces, each
-chunk once. The window moves to the followed being's chunk when a transaction starts. An inverted
-index maps each chunk to the clients whose effective interest holds it, and `followers(being)` counts
-the clients that follow a being: observation telemetry (C3) that lives in this plane, where the world
-cannot import it.
+world (at most 9 chunks), then its camera (at most 64 chunks), which each `subscribe` replaces,
+each chunk once. The window moves to the followed being's chunk when a
+transaction starts. An inverted index maps each chunk to the clients whose effective interest holds
+it, and `followers(being)` counts the clients that follow a being: observation telemetry (C3) that
+lives in this plane, where the world cannot import it.
+
+### Send budget and backpressure
+
+A client gets at most 256 KiB a period, every message counted: hello, parts, commits, `status`,
+`abort`, and what a drain sends. The period's budget runs from one period to the next, so parts
+sent by `drained` between two periods take from the budget of the period before them; a drain never
+renews it. A message goes out
+only while the client's socket buffers less than 256 KiB, checked before each message, and a message
+is at most 64 KiB, so the buffer stays under 320 KiB, within the 512 KiB the ADR bounds and far from
+Bun's limit of 1 MiB. A client whose buffer is full at its turn in the fan-out gets nothing and
+starts no transaction; `drained` sends what waits of its messages and of its transaction in flight,
+and never starts a transaction.
+
+Messages that are not parts of a transaction wait in the client's outbox and go before any part. The
+outbox stays small however long a client does not read: a pending `status` is replaced by a newer
+one, so it holds at most hello, one abort, and one `status`. A transaction starts only when the
+outbox is empty.
+
+A period that leaves part of a transaction unsent sent more than the budget less a part, since the
+fan-out stops only when the next message does not fit. A transaction of B bytes, every message of
+its periods counted, therefore commits within ⌊B / (256 KiB − 64 KiB)⌋ + 1 periods while its client
+drains and while its turn comes each period. ⌈B / 256 KiB⌉ periods is the floor; the ceiling cannot
+reach it with whole messages.
 
 ### Transactions
 
 Each client has a visible tick `L` and the versions it shows, pinned. A transaction starts only
 after the previous one committed, never in the period of that commit, once the playout tick `L'`
-passed the last commit's (for a connection's first, reached hello's), and while the client is not
-lagging. It pins the versions of `L'` for the effective interest and fixes its whole content:
+passed the last commit's (for a connection's first, reached hello's), and while the client's buffer
+has room. It pins the versions of `L'` for the effective interest and fixes its whole content:
 
 1. `drop` of the chunks that leave the view;
 2. for each chunk that stays, the difference by id between its versions at `L` and at `L'`, sent when
@@ -308,23 +339,42 @@ record boundaries: a chunk's differences may span several parts, and a chunk tha
 fragments that each fit in a part, `frag{i, n}`, its terrain in the first. The parts read only pinned
 versions, so content stays that of `L'` however many periods the transaction takes. `seq` grows by
 one per message, written when the message is sent; the messages of a transaction carry `L'`, and
-hello the client's visible tick. At the commit the view takes the pins of `L'` and releases those of
-`L`. `abort` cancels the transaction in flight, whose pins go and which the client is told about
-first; with `releaseView`, the view's pins go too and the next transaction is a reset (the hook of
-T6-6b's memory guard). `close` releases the client's interest, index entries, following, pins, and
-transaction.
+every other message the client's visible tick. At the commit the view takes the pins of `L'` and
+releases those of `L`. `abort` cancels the transaction in flight, whose pins go and which the client
+is told about first; with `releaseView`, the view's pins go too and the next transaction is a reset.
+`close` releases the client's interest, index entries, following, pins, and transaction.
 
 The terrain of a chunk that enters is generated by `readTerrain` and kept, encoded, in an LRU of
-2,048 entries. Hello says the world is `running` until T6-6b brings the world's stops to the
-presentation.
+2,048 entries.
 
 ### Fan-out
 
-Each period, the fan-out sends a client that is not lagging its pending messages (hello, aborts),
-then its transaction's parts, up to a budget of 256 KiB per client and period, every message counted.
-A message that does not fit waits for the next period with its place in the order. The fan-out's
-budget of time, its rotating order, the strikes, and the limits of view, memory, and terrain are
-T6-6b's.
+Each period, the fan-out serves the clients in the order they connected, starting from the first
+client the last fan-out could not serve: its pending messages, then its transaction's parts, within
+its budget of bytes and while its buffer has room. Before each client but the first, it reads the
+injected clock: once 40 ms have passed since the fan-out began, that client and those after it wait
+for the next period, which serves them first. The first client of a period is always served, and a
+client deferred one period is first in the next, so a client waits only while the clients ahead of
+it in the rotation are served. The fan-out never runs inside the world's step and never touches
+it: under load, clients see fewer, larger steps, and the world runs on. Each fan-out's duration
+goes to `recordFanOut`, when one is given.
+
+### The world's state
+
+Hello carries the world's state as the last period read it. Each period reads the world plane's
+state first: when it changed, every client gets `status{state}` at its visible tick, before anything
+else of its period. While the world is not running, its playout soon gives no new tick and so no
+commit, so a client that got nothing else in a period, and whose buffer has room, gets `status` with
+the state again: the heartbeat that keeps a client of a stopped world from taking the silence for a
+dead connection. T6 sends no `reason`; T8's operator pause brings one.
+
+### Telemetry
+
+`telemetry()` reports, as C3: `connections`; `laggingClients`, the clients the last fan-out found
+with a full buffer; and the count since start of `faults`. No public message carries any of them:
+every public frame is built from the protocol's strict schemas. `usage()` reports, for tests, what
+the presentation holds: clients, interest, index entries, followings, pins, and retained bytes,
+every count zero once every client is gone.
 
 ### Tests
 
@@ -362,6 +412,13 @@ with the strict schema.
   past its budget, within the reducer's 1,024 parts and the periods their bytes need, the view
   unchanged until the commit, every frame read with the strict schema. One chunk of 65,536 narrow
   records also assembles.
+- `presentation-backpressure.test.ts` (plan tests 7b and 13 in process): exactly 256 KiB buffered
+  stops a client, and one byte less lets one message through; a drain sends only what is left of a
+  period's budget and starts no transaction, and every period that leaves a transaction unsent sent
+  more than the budget less a part. The fan-out serves four clients of ten a period when each takes
+  10 ms on the injected clock, in the rotation 1–4, 5–8, 9, 10, 1, 2, and so on, and records each
+  period's 40 ms. The world's state reaches hello, every client's `status` on each change, and a
+  client of a stopped world each period.
 
 ## Composition
 
@@ -375,6 +432,7 @@ host, and the scheduler, and returns:
 | `stop()` | Pauses the scheduler and flushes the gate: every executed tick is committed and published (RPO 0 once the journal is durable) |
 | `subscribeToPublished(listener)` | Adds a listener of published ticks and returns the function that removes it. The listener receives the boot record first; after the first publication this throws |
 | `readTerrain(chunk)` | The projection's `readTerrain`: the public terrain of a chunk, never materialized |
+| `state()` | The world's state: `halted` once the host halted or the journal failed, otherwise the scheduler's, with `journalStall` as `stalled` |
 | `status()` | The server's status, shaped for `ServerStatus` of `@open-origin/protocol/admin` |
 | `unhandledRejection()` | Asks `rejectionPolicy(AI_MODE)`; with `off`, the world halts |
 | `halted()` | Why the world halted, for the entry point's log (C3): the host's halt, its code, tick, and cause, or `undefined` while it runs |
@@ -383,23 +441,22 @@ host, and the scheduler, and returns:
 and, for tests, the journal, the source, the projection of its world, the scheduler (`schedulerOf`,
 a `TickScheduler` over the options a `FixedRateScheduler` takes), and K. A journal failure
 halts the host with `journal_failed` and the gate's `failure`. The status reads `E`, `C`, and `P`
-from the gate; the state is `halted` once the host halted or the journal failed, and otherwise the
-scheduler's (`journalStall` is `stalled`). `projectionMicros` holds the percentiles of each
+from the gate, and its state is `state()`. `projectionMicros` holds the percentiles of each
 projection's duration on the injected clock over the last 1,024 ticks; `stepMicros` covers the
-whole tick, the projection included. `fanOutMicros` and `connections` are 0 until T6-6b measures
-them.
+whole tick, the projection included. `fanOutMicros` and `connections` stay 0 in this status: the
+presentation measures them.
 
 `rejectionPolicy` is a pure function: with `AI_MODE=off` an unhandled rejection halts the world,
 because no code of the world awaits anything, and async work in a brain would be a wall-clock
 channel. T6-7's entry point installs the process handler that calls `unhandledRejection`.
 
 `composeServer(config, deps)` wires both planes: it calls `compose`, then builds the `Presentation`
-from the world plane's `subscribeToPublished` and `readTerrain` alone, with the same clock and
-timer, the configured rate and F, and hello's world: a random id of 16 bytes, fresh at every boot
-unless a test gives `worldId`, and the configured durability. Its `start()` starts the
-presentation's periods, then the world's clock, so a presentation that cannot start leaves no
-world running; `stop()` stops the periods and detaches the presentation, then
-stops the world, resolving once every executed tick is published. T6-7's entry point calls it.
+from the world plane's `subscribeToPublished`, `readTerrain`, and `state` alone, with the same clock
+and timer, the configured rate and F, and hello's world: a random id of 16 bytes, fresh at every
+boot unless a test gives `worldId`, and the configured durability. Its
+`start()` starts the presentation's periods, then the world's clock, so a presentation that cannot
+start leaves no world running; `stop()` stops the periods and detaches the presentation, then stops
+the world, resolving once every executed tick is published. T6-7's entry point calls it.
 
 ## Observer invariance
 
