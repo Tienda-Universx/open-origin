@@ -6,6 +6,16 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  type Asks,
+  busiestBeing,
+  busiestChunk,
+  CountingSink,
+  panPath,
+  parseArguments as parseFanOut,
+  runFanOut,
+  WARM_UP_PERIODS,
+} from "../bench/fanout.ts";
+import {
   parseArguments as parseProjection,
   row,
   type Summary,
@@ -15,6 +25,8 @@ import {
   type WorldName,
 } from "../bench/projection.ts";
 import { field, fields, niceOf, percentilesOf, positiveArg, table } from "../bench/report.ts";
+import type { Stream } from "../bench/worlds.ts";
+import { being, ModelWorld, terrainAt } from "./support/presentation.ts";
 
 describe("what the benchmarks read of the machine", () => {
   const cpuinfo = "processor\t: 0\nmodel name\t: A CPU\nprocessor\t: 1\nmodel name\t: A CPU\n";
@@ -125,5 +137,85 @@ describe("the projection benchmark", () => {
     expect(judged([["dense", with_(0, 0.1001)]])).toEqual([
       "dispersed 1,000, projection ≤ 10 % of the step: 10.01 %, missed",
     ]);
+  });
+});
+
+describe("the fan-out benchmark", () => {
+  test("run every scenario with 1, 10, 100, and 1,000 clients for 100 periods by default", () => {
+    expect(parseFanOut([])).toEqual({
+      scenarios: ["same-chunk", "same-followed", "churn", "dense-chunk"],
+      clients: [1, 10, 100, 1_000],
+      periods: 100,
+    });
+    expect(parseFanOut(["churn", "--clients", "3,7", "--periods", "5"])).toEqual({
+      scenarios: ["churn"],
+      clients: [3, 7],
+      periods: 5,
+    });
+  });
+
+  test.each([
+    { argv: ["all"], message: 'unknown argument "all"' },
+    { argv: ["churn", "churn"], message: 'unknown argument "churn"' },
+    { argv: ["--clients", "1,1"], message: "--clients repeats a number" },
+    { argv: ["--clients", "1,,2"], message: '--clients must be a positive integer, not ""' },
+    { argv: ["--clients", "1", "--clients", "2"], message: "--clients is given twice" },
+    { argv: ["--periods", "0"], message: '--periods must be a positive integer, not "0"' },
+    { argv: ["--periods", "1", "--periods", "2"], message: "--periods is given twice" },
+  ])("refuse $argv", ({ argv, message }) => {
+    expect(() => parseFanOut(argv)).toThrow(message);
+  });
+
+  test("find the busiest chunk at boot and the being published most often, the first on a tie", () => {
+    const model = new ModelWorld(0, [being(1, [3, 3]), being(2, [40, 3]), being(3, [41, 3])]);
+    expect(busiestChunk(model.boot())).toEqual([1, 0]);
+    const ticks = [
+      model.step({ set: [being(3, [42, 3]), being(2, [43, 3])] }),
+      model.step({ set: [being(2, [44, 3])] }),
+      model.step({ set: [being(3, [45, 3])] }),
+    ];
+    expect(busiestBeing(ticks)).toBe(2);
+    expect(() => busiestBeing([])).toThrow("no being changed in the recorded ticks");
+  });
+
+  test("pan a camera one chunk a period around a ring of chunks 4 away, and back to its start", () => {
+    const path = panPath([10, -5]);
+    expect(path).toHaveLength(32);
+    expect(new Set(path.map(String)).size).toBe(32);
+    path.forEach(([x, y], index) => {
+      const [nx, ny] = path[(index + 1) % path.length] ?? [x, y];
+      expect(Math.max(Math.abs(x - 10), Math.abs(y + 5))).toBe(4);
+      expect(Math.abs(nx - x) + Math.abs(ny - y)).toBe(1);
+    });
+  });
+
+  test("count each period's UTF-8 bytes and commits at a sink that never lags", () => {
+    const sink = new CountingSink();
+    sink.send('{"type":"commit","seq":1,"tick":2}');
+    sink.send('{"type":"status","seq":2,"tick":2,"state":"running","é":1}');
+    expect(sink.buffered()).toBe(0);
+    expect(sink.synced).toBe(true);
+    expect(sink.take()).toEqual({ bytes: 35 + 58, commits: 1 });
+    expect(sink.take()).toEqual({ bytes: 0, commits: 0 });
+  });
+
+  test("replay a stream to a presentation: every client syncs, then commits once a period", () => {
+    const model = new ModelWorld(0, [being(1, [3, 3]), being(2, [40, 3])]);
+    const boot = model.boot();
+    const ticks = Array.from({ length: WARM_UP_PERIODS + 3 }, (_, tick) =>
+      model.step({ set: [being(1, [3 + (tick % 9), 3])] }),
+    );
+    const stream: Stream = { boot, ticks, readTerrain: terrainAt };
+    const subscribe = JSON.stringify({ type: "subscribe", chunks: [[0, 0]] });
+    const asks: Asks = { first: () => [subscribe] };
+    const result = runFanOut(stream, asks, 3, 3);
+    expect(result).toMatchObject({ clients: 3, synced: true, ended: 0 });
+    expect(result.warmUp).toHaveLength(1);
+    expect(result.samples).toHaveLength(3);
+    for (const sample of result.samples) {
+      expect(sample).toMatchObject({ mostCommits: 1, committed: 3, deferred: 0 });
+      expect(sample.bytes).toHaveLength(3);
+      expect(sample.bytes.every((bytes) => bytes > 0)).toBe(true);
+    }
   });
 });

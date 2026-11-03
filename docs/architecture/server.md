@@ -906,6 +906,34 @@ ticks 101 to 6,400, one simulated day. It prints the step's and the projection's
 p99, the projection's share of the step (the sum of its times over the sum of the step's), the
 chunks the step changed and the records published per tick, and the bytes of each published tick.
 
+
+### Fan-out
+
+```sh
+taskset -c 0 nice -n 19 bun apps/server/bench/fanout.ts [same-chunk] [same-followed] [churn]
+  [dense-chunk] [--clients 1,10,100,1000] [--periods N]
+```
+
+N clients in the benchmark's process, each a sink that counts the bytes and commits it is sent and
+never lags, watch a `Presentation` that replays published ticks recorded once, one tick a period:
+
+| Scenario | What every client does |
+|---|---|
+| `same-chunk` | Subscribes to the chunk of the default world that holds the most beings |
+| `same-followed` | Follows the being of the default world whose record changes most often |
+| `churn` | Pans a camera of 3 × 3 chunks one chunk a period around the spawn area, each from its own place on a ring 4 chunks out: a `subscribe` a period through `receive`, 3 chunks new each time |
+| `dense-chunk` | Subscribes to the chunk of the beings benchmark's "concentrated 1,000 in 1 × 1", 1,000 beings in one chunk |
+
+The default world is recorded from tick 501, once its beings are awake (they sleep from tick 2 until
+past tick 260); the dense one from tick 3, after its spawns and first decisions. The presentation's
+clock is the system's, moved ahead 200 ms at each period, so its buckets see periods 200 ms apart
+while the fan-out's budget of 40 ms and the duration it records (`recordFanOut`, the status's
+`fanOutMicros`) are real. A run warms up until every client committed once, at most 60 periods, and
+measures 100. It prints the sync's periods and slowest fan-out, the fan-out's and the whole period's
+p50 and p99, the churn's input, each client's bytes a period (p50 and p99), the most commits a client
+got in a period, the share of client-periods with a commit, and the most clients deferred to the next
+period, which got nothing in it.
+
 ## Observer invariance
 
 `observer-invariance.test.ts` checks P9 (ADR 0005, control 1 as ADR 0025 refines it) through
