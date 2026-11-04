@@ -1,11 +1,13 @@
 /**
  * The limits on one client's input (ADR 0026, "Limits and backpressure"), on the presentation's
  * clock in whole microseconds: a token bucket of messages, 10 a second with a burst of 20; a token
- * bucket of chunks new to its camera, 64 every 2 s; strikes, 3 in 10 s closing the connection with
+ * bucket of chunks new to its interest, 64 every 2 s, which holds a full view (MAX_VIEW_CHUNKS: a
+ * camera and a follow window), so a client's subscribe and follow fit at once; strikes, 3 in 10 s
+ * closing the connection with
  * 1008; and resyncs, at most one every 2 s. Every rule reads only the times it is given, never real
  * time, so its outcome follows from the clock the presentation injects.
  */
-import { CLIENT_LIMITS, RESYNC_INTERVAL_MS } from "@open-origin/protocol/public";
+import { CLIENT_LIMITS, MAX_VIEW_CHUNKS, RESYNC_INTERVAL_MS } from "@open-origin/protocol/public";
 
 const MICROS_PER_SECOND = 1_000_000;
 const MICROS_PER_MS = 1000;
@@ -74,7 +76,8 @@ export class Session {
   constructor(now: number) {
     const { burst, messagesPerSecond, newChunksPer2s } = CLIENT_LIMITS;
     this.#messages = new TokenBucket(burst, MICROS_PER_SECOND / messagesPerSecond, now);
-    this.#chunks = new TokenBucket(newChunksPer2s, NEW_CHUNKS_WINDOW_MICROS / newChunksPer2s, now);
+    const perChunk = NEW_CHUNKS_WINDOW_MICROS / newChunksPer2s;
+    this.#chunks = new TokenBucket(MAX_VIEW_CHUNKS, perChunk, now);
   }
 
   /** Whether a message at `now` fits the bucket of messages, which it then takes from. */
@@ -82,7 +85,7 @@ export class Session {
     return this.#messages.take(now);
   }
 
-  /** Whether `count` chunks new to the camera fit their bucket at `now`, then taken from it. */
+  /** Whether `count` chunks new to the interest fit their bucket at `now`, then taken from it. */
   admitChunks(now: number, count: number): boolean {
     return count === 0 || this.#chunks.take(now, count);
   }

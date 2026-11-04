@@ -8,6 +8,7 @@
     "packages/*/test/**/*.ts",
     "packages/*/bench/**/*.ts",
     "apps/*/test/**/*.ts",
-    "apps/*/bench/**/*.ts"
+    "apps/*/bench/**/*.ts",
+    "apps/*/tools/**/*.ts"
   ]
 }

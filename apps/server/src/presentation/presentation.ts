@@ -53,7 +53,7 @@ import {
   type WorldInfo,
   type WorldState,
 } from "./frames.ts";
-import { type ClientId, Interest } from "./interest.ts";
+import { type ClientId, followWindow, Interest } from "./interest.ts";
 import { FEED, Mirror } from "./mirror.ts";
 import type { EncodedText } from "./parts.ts";
 import { Playout } from "./playout.ts";
@@ -289,11 +289,11 @@ export class Presentation {
 
   /**
    * One raw text message of `client`, which the transport already held to 4 KiB and to text: read
-   * with the protocol's strict schema, then held to the bucket of messages, and, for a subscribe,
-   * to the bucket of new chunks. A rejected message gets `error` with its code alone, and, unless
-   * a correct client may meet it too (`unknown_being`, `resync_too_soon`), a strike: the third
-   * within 10 s closes the client with 1008, with no `error` for it. An answer goes out at once,
-   * within the client's budget and buffer; what does not fit waits.
+   * with the protocol's strict schema, then held to the bucket of messages, and, for a subscribe or
+   * a follow, to the bucket of new chunks. A rejected message gets `error` with its code alone,
+   * and, unless a correct client may meet it too (`unknown_being`, `resync_too_soon`), a strike:
+   * the third within 10 s closes the client with 1008, with no `error` for it. An answer goes out
+   * at once, within the client's budget and buffer; what does not fit waits.
    */
   receive(client: ClientId, text: string): void {
     const connected = this.#client(client);
@@ -314,18 +314,27 @@ export class Presentation {
     }
   }
 
-  /** Replaces the camera of `client`, already checked; its next transaction shows it. */
+  /**
+   * Replaces the camera of `client`, already checked; its next transaction shows it.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
+   */
   subscribe(client: ClientId, chunks: readonly ChunkCoord[]): void {
     this.#client(client);
     this.#interest.subscribe(client, chunks);
   }
 
-  /** Makes `client` follow `being`, or nothing for null; its next transaction shows it. */
+  /**
+   * Makes `client` follow `being`, or nothing for null; its next transaction shows it.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
+   */
   follow(client: ClientId, being: number | null): void {
     this.#follow(this.#client(client), being);
   }
 
-  /** The client asked for a resync: its next transaction is a reset. */
+  /**
+   * The client asked for a resync: its next transaction is a reset.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
+   */
   resync(client: ClientId): void {
     this.#client(client).view.needsReset = true;
   }
@@ -334,6 +343,7 @@ export class Presentation {
    * Cancels the transaction in flight of `client`, if any, which gets `abort` before anything else
    * and whose pins are released. With `releaseView`, the view's own pins go too, and its next
    * transaction is a reset: what the memory guard does to the clients it aborts.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
    */
   abort(client: ClientId, options: { readonly releaseView?: boolean } = {}): void {
     this.#abort(this.#client(client), options.releaseView === true);
@@ -518,12 +528,8 @@ export class Presentation {
         this.#interest.subscribe(client.id, message.chunks);
         return undefined;
       }
-      case "follow": {
-        const { being } = message;
-        if (being !== null && this.#mirror.locate(being) === undefined) return "unknown_being";
-        this.#follow(client, being);
-        return undefined;
-      }
+      case "follow":
+        return this.#applyFollow(client, message.being, now);
       case "ping":
         client.queue(pongFrame(client.view.tick, message.nonce), "pong");
         return undefined;
@@ -532,6 +538,27 @@ export class Presentation {
         client.view.needsReset = true;
         return undefined;
     }
+  }
+
+  /**
+   * Applies a client's `follow` of `being`: a being the mirror does not hold is `unknown_being`,
+   * and the chunks its window adds to the effective interest are held to the bucket of new chunks,
+   * as a subscribe's are; a refused follow changes nothing. The window's later moves with its being
+   * are not the client's doing and take nothing from the bucket.
+   */
+  #applyFollow(client: Client, being: number | null, now: number): ErrorCode | undefined {
+    const center = being === null ? undefined : this.#mirror.locate(being);
+    if (being !== null && center === undefined) return "unknown_being";
+    if (!client.session.admitChunks(now, this.#windowAdds(client, center))) return "rate_limited";
+    this.#follow(client, being);
+    return undefined;
+  }
+
+  /** How many chunks of the window around `center` the effective interest of `client` lacks. */
+  #windowAdds(client: Client, center: ChunkCoord | undefined): number {
+    if (center === undefined) return 0;
+    const held = new Set(this.#interest.effective(client.id).map(chunkKey));
+    return followWindow(center).filter((at) => !held.has(chunkKey(at))).length;
   }
 
   /**

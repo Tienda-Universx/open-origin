@@ -47,6 +47,7 @@ request in this order, and the first refusal wins:
 
 | Request | Answer |
 |---|---|
+| A `Content-Length` above 0, on any path and with any method | 413, Bun's own, with `Connection: close`, before the listener sees the request and without waiting for the body: the listener reads no body (`maxRequestBodySize` 0). A chunked body, which declares no length, is never read, and its request goes on to the rows below |
 | A `Host` header off the allowlist, or none, on any path and with any method | 403 |
 | `GET /healthz` | 200, `{"ok":true}` |
 | Any other method or path but `GET /ws` | 404 |
@@ -59,7 +60,9 @@ request in this order, and the first refusal wins:
 
 No answer carries a CORS header, and none repeats what the request sent: each refusal has a fixed
 text. The allowlist of `Host` is `ALLOWED_HOSTS`, or, unset, the listener's own name and address at
-the port it bound (`localhost:<port>` and `<host>:<port>`), compared whatever their case.
+the port it bound (`localhost:<port>` and `<host>:<port>`), compared whatever their case. At port 80
+they are allowed without the port too (`localhost` and `<host>`), since a client names the port only
+when it is not the default (RFC 6455, 4.1); the listener has no TLS, so 443 has no such case.
 
 ## Client to server
 
@@ -87,15 +90,18 @@ that applies:
 | `bad_message` | Any other problem: an extra key (`__proto__` and `constructor` included), a wrong type, a fraction, an unsafe integer, a repeated chunk |
 
 The server then holds each message to the client's limits, in this order: the bucket of messages
-(`messagesPerSecond` with a burst of `burst`), and, for a `subscribe`, the bucket of chunks new to
-the camera (`newChunksPer2s` every 2 s). A message the schema refuses takes no token. Every other
-message takes one from the bucket of messages, whatever its outcome, so even a refusal that earns no
-strike, such as `unknown_being` or `resync_too_soon`, cannot repeat faster than that bucket allows;
-a `subscribe` the bucket of chunks refuses takes no chunk from it. It answers:
+(`messagesPerSecond` with a burst of `burst`), and the bucket of new chunks (`newChunksPer2s` every
+2 s, holding at most a full view, `maxChunks` + `maxFollowChunks`, so a camera and a follow sent
+together fit at once): for a `subscribe`, the chunks new to the camera, and for a `follow`, the
+chunks the followed being's window adds to the interest. The window's moves with its being take
+nothing from it. A message the schema refuses takes no token. Every other message takes one from the
+bucket of messages, whatever its outcome, so even a refusal that earns no strike, such as
+`unknown_being` or `resync_too_soon`, cannot repeat faster than that bucket allows; a `subscribe` or
+a `follow` the bucket of chunks refuses takes no chunk from it and changes nothing. It answers:
 
 | Code | When |
 |---|---|
-| `rate_limited` | A message beyond the bucket of messages, or a `subscribe` whose chunks new to the camera are beyond theirs |
+| `rate_limited` | A message beyond the bucket of messages, or a `subscribe` or a `follow` whose new chunks are beyond theirs |
 | `unknown_being` | A `follow` of a being the world the server plays out does not hold |
 | `resync_too_soon` | A `resync` less than 2 s after the last one the server allowed |
 
@@ -311,6 +317,27 @@ Semantics:
 
 The silence timer, the resync rate, and reconnecting are the client's: they read the clock, which
 the reducer never does.
+
+### A client around the reducer
+
+The terminal probe ([`apps/server/tools/probe.ts`](server.md#terminal-probe)) is the smallest
+client that does all of it, and the order it keeps is the one a client needs:
+
+1. On every connection, before anything else, send `subscribe`, and `follow` when following: the
+   server keeps no session, so a reconnect that skips them shows nothing.
+2. Read each text frame with `parseServerMessage`, and apply only what it accepts; a frame it
+   refuses is dropped, and the next one shows the gap.
+3. Apply each message with `applyMessage`, and show the view only from a commit's result:
+   `state.view` is the whole view at one tick, and `committed` holds the speech and the feed of
+   `(L, L']`, which a client that shows history keeps itself.
+4. After an anomaly, send `resync` once `RESYNC_INTERVAL_MS` passed since the last one, even if
+   more anomalies came meanwhile: until the reset arrives, the reducer applies nothing but a reset.
+5. Reconnect when the socket closes or after `STALE_AFTER_MS` without a message, after
+   `reconnectDelayMs(attempt, draw, unavailable)`, and count the attempts again from 0 at `hello`.
+   Ignore every event of a socket the client gave up.
+
+Text from the server is data: a terminal client writes its controls as visible escapes, and a web
+client renders it as text, never as markup.
 
 ## Admin contracts
 

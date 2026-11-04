@@ -23,6 +23,7 @@ import { listenerHosts, policyOf, type RequestFacts, route } from "../src/transp
 import {
   closeCodeOf,
   FAULT_CLOSE,
+  Listener,
   type PresentationPort,
   SOCKET_OPTIONS,
   serveTransport,
@@ -110,8 +111,8 @@ describe("route", () => {
     protocols: PROTOCOL_ID,
     version: "13",
   };
-  const routeOf = (facts: Partial<RequestFacts>): string => {
-    const routed = route({ ...socket, ...facts }, policy);
+  const routeOf = (facts: Partial<RequestFacts>, under = policy): string => {
+    const routed = route({ ...socket, ...facts }, under);
     return routed.kind === "refuse" ? routed.reason : routed.kind;
   };
 
@@ -155,6 +156,22 @@ describe("route", () => {
     expect(listenerHosts("127.0.0.1", 9000)).toEqual(["localhost:9000", "127.0.0.1:9000"]);
     expect(listenerHosts("::1", 9000)).toEqual(["localhost:9000", "[::1]:9000"]);
   });
+
+  test("allows them without the port too at port 80, which a client leaves out of its Host", () => {
+    expect(listenerHosts("127.0.0.1", 80)).toEqual([
+      "localhost:80",
+      "127.0.0.1:80",
+      "localhost",
+      "127.0.0.1",
+    ]);
+    expect(listenerHosts("::1", 80)).toEqual(["localhost:80", "[::1]:80", "localhost", "[::1]"]);
+    const routed = (host: string, port: number) =>
+      routeOf({ host }, policyOf(listenerHosts("127.0.0.1", port), []));
+    const bare = ["localhost", "LOCALHOST", "127.0.0.1"];
+    expect(bare.map((host) => routed(host, 80))).toEqual(["socket", "socket", "socket"]);
+    expect(bare.map((host) => routed(host, 8080))).toEqual(["host", "host", "host"]);
+    expect(routed("localhost:8080", 80)).toBe("host");
+  });
 });
 
 describe("Capacity", () => {
@@ -197,6 +214,36 @@ describe("the HTTP surface", () => {
     const post = await fetch(`${base}/healthz`, { method: "POST" });
     expect(post.status).toBe(404);
     expect([...answers, post].flatMap(corsOf)).toEqual([]);
+  });
+
+  test("refuses a request whose Content-Length passes 0 with Bun's 413, before the listener sees it and with none of its body sent", async () => {
+    const { port, logs, counting } = listen(modelPresentation().presentation);
+    const host = `Host: ${LOOPBACK}:${port}`;
+    // Not one byte of either body is sent: Bun answers from the length alone, buffering nothing.
+    for (const [path, length] of [
+      ["/healthz", 1],
+      ["/ws", 1_000_000_000],
+    ] as const) {
+      const head = `POST ${path} HTTP/1.1\r\n${host}\r\nContent-Length: ${length}\r\n\r\n`;
+      const answer = await rawRequest(port, head);
+      answer.close();
+      expect([path, answer.head]).toEqual([
+        path,
+        "http/1.1 413 request entity too large\r\nconnection: close",
+      ]);
+    }
+    expect([logs, counting.last]).toEqual([[], undefined]);
+    // An empty body passes, and a chunked one, which declares no length, is answered unread.
+    const empty = await rawRequest(
+      port,
+      `GET /healthz HTTP/1.1\r\n${host}\r\nContent-Length: 0\r\n\r\n`,
+    );
+    const chunked = await rawRequest(
+      port,
+      `POST /healthz HTTP/1.1\r\n${host}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n`,
+    );
+    for (const answer of [empty, chunked]) answer.close();
+    expect([empty.status, chunked.status]).toEqual([200, 404]);
   });
 
   test("refuses /ws with 426 before the upgrade without the subprotocol or an upgrade", async () => {
@@ -468,6 +515,48 @@ describe("sockets", () => {
     expect([counting.closes, transport.connections()]).toEqual([[id], 0]);
     expect(logs).toContainEqual({ event: "handler_error", error: "Error" });
     expect(JSON.stringify(logs)).not.toContain("zq-canary");
+  });
+
+  test("give the slot back when the upgrade throws", () => {
+    const { presentation } = modelPresentation();
+    const logs: TransportEvent[] = [];
+    const listener = new Listener({
+      ...transportOptions(presentation, logs),
+      connections: { global: 1, perIp: 1 },
+    });
+    // A double of Bun's server, which Bun's own `upgrade` cannot be made to throw through.
+    const serverOf = (upgrade: () => boolean) => ({
+      port: 8080,
+      requestIP: () => ({ address: LOOPBACK, family: "IPv4" as const, port: 50_000 }),
+      upgrade,
+    });
+    const request = new Request(`http://${LOOPBACK}:8080/ws`, {
+      headers: {
+        Host: `${LOOPBACK}:8080`,
+        Upgrade: "websocket",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Protocol": PROTOCOL_ID,
+      },
+    });
+    const throwing = serverOf(() => {
+      throw new Error("a planted upgrade fault");
+    });
+    expect(() => listener.answer(request, throwing)).toThrow("a planted upgrade fault");
+    expect(listener.connections).toBe(0);
+    // The only slot is free: the next upgrade takes it, and the one after is refused.
+    expect(
+      listener.answer(
+        request,
+        serverOf(() => true),
+      ),
+    ).toBeUndefined();
+    expect([
+      listener.connections,
+      listener.answer(
+        request,
+        serverOf(() => true),
+      )?.status,
+    ]).toEqual([1, 503]);
   });
 
   test("give the slot back when a client goes in the middle of its handshake", async () => {

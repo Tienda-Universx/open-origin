@@ -2,11 +2,12 @@
  * Sessions and untrusted input (plan test 12 in process; ADR 0026, "Client to server" and "Limits
  * and backpressure"): one raw text message of a client, through `Presentation.receive`, is read
  * with the protocol's strict schema, then held to the bucket of messages, 10 a second with a burst
- * of 20, and, for a subscribe, to the bucket of chunks new to its camera, 64 every 2 s. A rejected
- * message gets `error` with one of the fixed codes and nothing of its input, and a strike, unless a
- * correct client may meet it too (`unknown_being`, `resync_too_soon`); the third strike within
- * 10 s closes the client with 1008, with no `error` for it. `ping` gets `pong` with its nonce, and
- * `resync` a reset, at most once every 2 s. Every timing is exact on the fake clock.
+ * of 20, and to the bucket of new chunks, 64 every 2 s: a subscribe's chunks new to its camera, and
+ * the chunks a follow's window adds to its interest, but not the window's moves with its being. A
+ * rejected message gets `error` with one of the fixed codes and nothing of its input, and a strike,
+ * unless a correct client may meet it too (`unknown_being`, `resync_too_soon`); the third strike
+ * within 10 s closes the client with 1008, with no `error` for it. `ping` gets `pong` with its
+ * nonce, and `resync` a reset, at most once every 2 s. Every timing is exact on the fake clock.
  */
 import { describe, expect, test } from "bun:test";
 import type { ChunkCoord, ErrorCode, ServerMessage } from "@open-origin/protocol/public";
@@ -175,28 +176,92 @@ describe("a client's message", () => {
     expect(since(client, burst).map(({ type }) => type)).toEqual(Array(20).fill("pong"));
   });
 
-  test("subscribe passes 64 chunks new to the camera every 2 s, one each 31.25 ms", () => {
+  test("subscribe passes a full view of new chunks at once, 73, then 64 every 2 s, one each 31.25 ms", () => {
     const { presentation, client, clock, advance, id } = served();
     const before = client.messages.length;
+    // 64 new chunks, then 9 more: the bucket holds a full view, a camera and a follow window.
     send(presentation, id, { type: "subscribe", chunks: row(0, 64) });
+    send(presentation, id, { type: "subscribe", chunks: row(9, 64) });
     send(presentation, id, { type: "subscribe", chunks: row(64, 64) });
     // The same camera again brings no new chunk.
-    send(presentation, id, { type: "subscribe", chunks: row(0, 64) });
+    send(presentation, id, { type: "subscribe", chunks: row(9, 64) });
     clock.advance(31_249);
-    send(presentation, id, { type: "subscribe", chunks: row(1, 64) });
+    send(presentation, id, { type: "subscribe", chunks: row(10, 64) });
     clock.advance(1);
-    send(presentation, id, { type: "subscribe", chunks: row(1, 64) });
+    send(presentation, id, { type: "subscribe", chunks: row(10, 64) });
     expect(codes(since(client, before))).toEqual(["rate_limited", "rate_limited"]);
     expect(presentation.telemetry().strikes).toBe(2);
-    // The camera is the last one passed, chunks 1 to 64: their terrain is generated in four
+    // The camera is the last one passed, chunks 10 to 73: their terrain is generated in four
     // periods, 16 a period, and their content, 270 KB, takes two.
     for (let period = 0; period < 5; period += 1) advance();
     const view = [...(client.state.view?.chunks.keys() ?? [])].sort();
     expect(view).toEqual(
-      row(1, 64)
+      row(10, 64)
         .map(([x, y]) => `${x},${y}`)
         .sort(),
     );
+  });
+
+  test("a full camera and then a follow of a being outside it pass at once, as a client resends them on reconnecting", () => {
+    const model = new ModelWorld(0, [being(1, [325, 325])]);
+    const { presentation } = presentationOver(model);
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.period();
+    const before = client.messages.length;
+    send(presentation, id, { type: "subscribe", chunks: row(0, 64) });
+    send(presentation, id, { type: "follow", being: 1 });
+    expect(codes(since(client, before))).toEqual([]);
+    expect(presentation.followers(1)).toBe(1);
+    expect(presentation.telemetry().strikes).toBe(0);
+  });
+
+  test("follow takes from the same bucket the chunks its window adds to the interest, and a refused one changes nothing", () => {
+    // Beings 10 chunks apart: each follow from one to the other adds a whole window of 9 chunks.
+    const model = new ModelWorld(0, [being(1, [5, 5]), being(2, [325, 325])]);
+    const { presentation, clock } = presentationOver(model);
+    const client = new ViewClient();
+    const id = presentation.connect(client);
+    presentation.period();
+    const before = client.messages.length;
+    // Eight follows take 72 of the 73 chunks; the ninth needs 9 and finds 1.
+    for (const target of [1, 2, 1, 2, 1, 2, 1, 2, 1]) {
+      send(presentation, id, { type: "follow", being: target });
+    }
+    expect(codes(since(client, before))).toEqual(["rate_limited"]);
+    const following = () => [presentation.followers(1), presentation.followers(2)];
+    expect(following()).toEqual([0, 1]);
+    expect(presentation.usage().interest.indexEntries).toBe(9);
+    // The 8 chunks missing come back in 250 ms, one each 31.25 ms.
+    clock.advance(249_999);
+    send(presentation, id, { type: "follow", being: 1 });
+    clock.advance(1);
+    send(presentation, id, { type: "follow", being: 1 });
+    expect(codes(since(client, before))).toEqual(["rate_limited", "rate_limited"]);
+    expect(following()).toEqual([1, 0]);
+    // The bucket is empty, and a follow of nothing adds no chunk.
+    send(presentation, id, { type: "follow", being: null });
+    expect(codes(since(client, before))).toHaveLength(2);
+    expect(following()).toEqual([0, 0]);
+    expect(presentation.telemetry().strikes).toBe(2);
+  });
+
+  test("a window the interest holds, and the window moving with its being, take nothing from the bucket of new chunks", () => {
+    const { presentation, client, advance, id } = served();
+    const before = client.messages.length;
+    // The follow takes 9 of the 73 chunks, and the same follow again none: the interest holds its
+    // window. The clock never moves: no chunk comes back.
+    send(presentation, id, { type: "follow", being: 1 });
+    send(presentation, id, { type: "follow", being: 1 });
+    // The being crosses into the chunk (1, 0), and its window moves with it, three chunks east.
+    advance({ set: [being(1, [37, 5])] });
+    expect(client.commits.at(-1)?.tick).toBe(1);
+    expect(client.state.view?.chunks.has("2,0")).toBe(true);
+    // The 64 chunks left pass at once, and not one more.
+    send(presentation, id, { type: "subscribe", chunks: row(100, 64) });
+    expect(codes(since(client, before))).toEqual([]);
+    send(presentation, id, { type: "subscribe", chunks: row(101, 64) });
+    expect(codes(since(client, before))).toEqual(["rate_limited"]);
   });
 
   test("resync gets a reset at most once every 2 s; resync_too_soon earns no strike", () => {

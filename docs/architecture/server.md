@@ -5,18 +5,19 @@ rate, makes each tick durable before it publishes it, and hands the rest of the 
 published records. Its presentation plane turns those records into each client's view.
 [ADR 0025](../decisions/0025-real-time-world-host.md) and
 [ADR 0026](../decisions/0026-public-protocol-v1.md) record the design and why; this document
-describes what the code implements as of T6-7: the configuration, the scheduler, the world host
+describes what the code implements as of T6-8: the configuration, the scheduler, the world host
 and its sources, the C0 projection, the journal port, the publication gate, the presentation plane
 (playout, mirror, interest, transactions, sessions, the send discipline, the fan-out, and the
-limits of memory and terrain), the transport, their composition, the entry point, and the tests
-of observer invariance.
+limits of memory and terrain), the transport, their composition, the entry point, the tests of
+observer invariance, the terminal probe, and the benchmarks with the budgets they measured.
 
-Code: `apps/server/src/` (`@open-origin/server`). Tests: `apps/server/test/` (`config`,
-`scheduler`, `fault`, `adapters`, `publication`, `host`, `rejection`, `compose`, `projection`,
-`leak`, `presentation-mirror`, `presentation`, `presentation-reconstruction`,
-`presentation-sizes`, `presentation-input`, `presentation-backpressure`, `presentation-limits`,
-`presentation-terrain`, `presentation-liveness`, `observer-invariance`, `transport`, `ws-world`,
-and `main`),
+Code: `apps/server/src/` (`@open-origin/server`), `apps/server/tools/` (the probe), and
+`apps/server/bench/` (the benchmarks). Tests: `apps/server/test/` (`config`, `scheduler`, `fault`,
+`adapters`, `publication`, `host`, `rejection`, `compose`, `projection`, `leak`,
+`presentation-mirror`, `presentation`, `presentation-reconstruction`, `presentation-sizes`,
+`presentation-input`, `presentation-backpressure`, `presentation-limits`, `presentation-terrain`,
+`presentation-liveness`, `observer-invariance`, `transport`, `ws-world`, `main`, `probe`, and
+`bench`),
 `tests/e2e/server.test.ts`, and `tests/repo/server-boundaries.test.ts`.
 
 ## Layout
@@ -49,7 +50,7 @@ naming the variable and its rule, never its value.
 | `TICK_RATE_HZ` | `5` | An integer from 1 to 1000, the bounds of the admin contract's `tickRateHz` |
 | `PUBLICATION_BATCH_TICKS` | `5` | F, an integer from 1 to 300, so a batch never spans more than one checkpoint interval |
 | `PUBLIC_ORIGINS` | empty | A comma-separated list of exact `http` or `https` origins |
-| `ALLOWED_HOSTS` | The listener's own: `localhost:<port>` and `<host>:<port>` at the port it bound, with an IPv6 host in brackets; the transport derives it once it listens, so port 0 works | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
+| `ALLOWED_HOSTS` | The listener's own: `localhost:<port>` and `<host>:<port>` at the port it bound, with an IPv6 host in brackets, and at port 80 `localhost` and `<host>` too, which a client sends there; the transport derives it once it listens, so port 0 works | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
 | `MAX_CONNECTIONS` | `1024` | An integer from 1 to 65536 |
 | `MAX_CONNECTIONS_PER_IP` | `16`, or `MAX_CONNECTIONS` when that is lower | An integer from 1 to 65536; when set, at most `MAX_CONNECTIONS`, compared only when both are valid, so a cap at fault is reported alone |
 | `MAX_RETAINED_BYTES` | `134217728` (128 MiB) | The limit of replaced chunk versions clients keep pinned, in all: an integer from 1,048,576 (1 MiB) to 17,179,869,184 (16 GiB) |
@@ -240,8 +241,8 @@ ticks, which delivers the boot record first; `readTerrain`; and the world's stat
 of the world but those frozen C0 records and that state, which every client shares, and no network:
 the transport of T6-7 drives it through `connect(sink)`, `receive(client, text)` for each raw text
 message, `drained(client)` when a socket's buffer drains, and `close(client)` when a socket closes.
-`subscribe`, `follow`, `resync`, and `abort` act on a client directly, for tests; the transport
-never calls them.
+`subscribe`, `follow`, `resync`, and `abort` act on a client directly, for tests, past the input
+limits; the transport never calls them.
 
 A sink is `{send(frame), buffered(), end(ending)}`. `buffered()` is the bytes the client's socket
 holds and has not written, Bun's `getBufferedAmount()`. `end` closes the connection, once: the
@@ -310,20 +311,27 @@ to text frames, and applies, in order:
 1. `parseClientMessage`: `JSON.parse` in a try, then the strict schema, which rejects `__proto__`,
    extra keys, and every type but the four;
 2. the bucket of messages, 10 a second with a burst of 20;
-3. for a `subscribe`, the bucket of chunks new to the camera, 64 every 2 s;
+3. the bucket of new chunks, 64 every 2 s, which holds a full view, 73 chunks (a camera and a follow
+   window), so a reconnecting client's `subscribe` and `follow` pass at once: for a `subscribe`, the
+   chunks new to the camera; for a
+   `follow` of a being the mirror holds, the chunks its window adds to the effective interest. The
+   window's moves with the followed being, which the client did not ask for, take nothing from it:
+   the terrain's budget bounds them;
 4. the message itself: `subscribe` replaces the camera; `follow` of a being the mirror does not hold
-   is `unknown_being`; `ping` gets `pong{nonce}`; `resync` within 2 s of the last one allowed is
-   `resync_too_soon`, and otherwise makes the next transaction a reset.
+   is `unknown_being`, checked before the bucket of new chunks; `ping` gets `pong{nonce}`; `resync`
+   within 2 s of the last one allowed is `resync_too_soon`, and otherwise makes the next transaction
+   a reset.
 
 A rejected message gets `error{code}`, the code alone, never anything of the input, and a strike,
 unless a correct client may meet the code too: `unknown_being`, after a being it saw died, and
 `resync_too_soon`, after two anomalies close together. The third strike within 10 s ends the client
 with 1008 and no `error` for it. Both buckets are counted in whole microseconds on the injected
 clock, so every timing is exact: a message costs 100,000 µs of a bucket of 2,000,000, and a chunk
-31,250 µs of a bucket of 2,000,000. A message the schema refuses takes no token; every other one
+31,250 µs of a bucket of 2,281,250, 73 chunks. A message the schema refuses takes no token; every other one
 takes a token of the bucket of messages whatever its outcome, so a refusal that earns no strike is
-still paced; a `subscribe` the bucket of chunks refuses takes no chunk. A strike counts
-while it is younger than 10 s, and a resync waits 2 s from the last one allowed.
+still paced; a `subscribe` or a `follow` the bucket of chunks refuses takes no chunk and changes
+nothing. A strike counts while it is younger than 10 s, and a resync waits 2 s from the last one
+allowed.
 
 ### Send budget and backpressure
 
@@ -542,7 +550,12 @@ with the strict schema.
   no byte of its input, and a strike; a strike 10 s old no longer counting, a third strike exactly
   10 s after the first closing nothing, and a third strike within 9.999999 s closing with 1008 and
   no `error`; 20 messages at once, then one at 100 ms and none at 99.999 ms, and 20 at most after a
-  minute idle; no token taken by a message the schema rejects; 64 new chunks, then one at 31.25 ms; resyncs at most every 2 s,
+  minute idle; no token taken by a message the schema rejects; a full view of 73 new chunks at once,
+  then one at 31.25 ms; a full camera and a follow outside it at once;
+  follows alternating between beings 10 chunks apart refused once their windows spent the bucket,
+  with nothing changed, and passed again 250 ms later, not 1 µs sooner, while a follow of nothing,
+  a follow again of the same being, and the window's move with its being take no chunk; resyncs at
+  most every 2 s,
   `resync_too_soon` and `unknown_being` with no strike; and the answers to a lagging client
   coalesced and sent first once it drains.
 - `presentation-backpressure.test.ts` (plan tests 7b and 13 in process): exactly 256 KiB buffered
@@ -622,8 +635,12 @@ only. Its options are the presentation, the address and port to bind (0 lets the
 - **HTTP.** `http.ts` routes each request with a pure function, `route(facts, policy)`: the order
   of its checks and its answers are the protocol's [HTTP surface](protocol.md#http-surface).
   `capacity.ts` holds the caps: an upgrade takes a slot, in all and for its address, which
-  `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes.
-  Bun runs the open handler within `upgrade`, so two upgrades never pass a cap together.
+  `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes,
+  or at once when `upgrade` returns false or throws, since no socket opened. Bun runs the open
+  handler within `upgrade`, so two upgrades never pass a cap together.
+  `REQUEST_OPTIONS`, spread last into `Bun.serve`'s options, sets `maxRequestBodySize` to 0: the
+  listener reads no body, so Bun answers a `Content-Length` above 0 with its own 413 before the
+  listener sees the request, without waiting for the body. In Bun, 0 means no body, not no limit.
 - **Socket limits.** `SOCKET_OPTIONS`, one constant that `websocketOptions` spreads after the
   handlers, so no handler's key can override a limit: `maxPayloadLength` is 4,096 bytes, so Bun closes a larger frame with 1009 before any of it reaches the presentation;
   `backpressureLimit` is 1 MiB with `closeOnBackpressureLimit`, a backstop, since the presentation
@@ -661,14 +678,18 @@ the server's warning at start says.
 `transport.test.ts` runs the listener on a free loopback port over a presentation of a model
 world, driven period by period:
 
-- `route` on a table of cases, the `Host` before the method among them, and `Capacity` on its own;
-- the health check, 404 with no CORS header, 426 before the upgrade, and the listener's own 426
+- `route` on a table of cases, the `Host` before the method among them; the default `Host` list,
+  which at port 80 alone allows the name and address without the port; and `Capacity` on its own;
+- the health check, 404 with no CORS header, Bun's 413 for a `Content-Length` of 1 or 1 GB with
+  none of the body sent, which the listener never sees, while an empty body and a chunked one pass
+  to it, 426 before the upgrade, and the listener's own 426
   for a WebSocket version other than 13; a handshake Bun cannot complete, answered with the
   listener's 400, its slot back for the next client; 500 when answering a request throws;
 - an `Origin` matched exactly and its absence accepted; a `Host` refused on every path and method;
 - 503 with `Retry-After` at the cap of one address, with a second address, 127.0.0.2, still
   admitted, and at the global cap, until a socket closes; a client that leaves in the middle of
-  its handshake gives its slot back;
+  its handshake gives its slot back, and so does an upgrade that throws, which only a double of
+  Bun's server, given to the exported `Listener`, can plant;
 - the close codes 1003, 1009 (a frame of 4,096 bytes passes), 1008, 1011 (a planted terrain fault,
   a `connect` that throws, and a `receive` that throws), and 1001; a close that releases the client
   unless the presentation ended it; and logs that hold no address and nothing a client sent;
@@ -755,8 +776,11 @@ world is the default world of T5, a new one with a new id at every start; a clie
    stay private.
 3. It wires `composeServer` with the real clock and timer of `src/adapters/` (tests may give fake
    ones, a source, its projection, a journal, or a server of their own, `serverOf`) and the
-   transport. A port it cannot bind is logged as `listen_failed` with the error's code
-   (`EADDRINUSE`) and no message.
+   transport. A throw while composing the server, before anything is bound, is logged as
+   `start_failed` with `stage: "compose"`, the error's name, and its message, which composition takes
+   only from the configuration and the scenario, never from a client, and returned as the cause. A
+   port it cannot bind is logged as `listen_failed` with the error's code (`EADDRINUSE`) and no
+   message, and the composed server is stopped, a stop that fails logged as `stop_failed`.
 4. It starts the server. When that throws once the listener bound, it logs `start_failed` with the
    error's name and the port it bound, then stops the transport and the server, logging each stop
    that fails as `stop_failed` with its part and the error's name, and returns the start's error as
@@ -773,7 +797,7 @@ supervisor that signals on that line always finds the handlers in place.
 
 | Event | What happens |
 |---|---|
-| A refused configuration, a port it cannot bind, or a start that throws once bound | Exit code 1, after the `config_error`, `listen_failed`, or `start_failed` lines; no crash |
+| A refused configuration, a server that cannot be composed, a port it cannot bind, or a start that throws once bound | Exit code 1, after the `config_error`, `start_failed`, or `listen_failed` lines; no crash |
 | SIGTERM or SIGINT | `signal`, then `stop()`, then exit code 0, or 1 if stopping failed (`stop_failed`, with the error's name) |
 | Another SIGTERM or SIGINT less than 1 s after the first | `signal_ignored`, with the signal: a duplicate, such as the copies a terminal's Ctrl-C sends both a wrapper (`bun run`) and the server |
 | Another SIGTERM or SIGINT 1 s or more after the first | `forced_exit`, with the signal, then exit code 1 at once |
@@ -794,17 +818,20 @@ report on stderr, flushing nothing: with the ephemeral journal there is nothing 
 `main.test.ts` runs `start` and `main` in process over the counting world on a fake clock and a
 double of the process:
 
-- `start` refuses every problem at once, reports a port in use as `listen_failed`, and, given a
-  server whose start throws and whose stop then rejects, closes the listener on the port it bound
-  and returns the start's error as the cause; and it stops the transport before the world flushes:
+- `start` refuses every problem at once; logs a server whose composition throws as
+  `start_failed` with its stage and returns that error; reports a port in use as `listen_failed`
+  and stops the composed server, whose presentation then cannot start, logging a stop that rejects;
+  given a server whose start throws and whose stop then rejects, closes the listener on the port
+  it bound and returns the start's error as the cause; and it stops the transport before the world
+  flushes:
   a journal that counts the open sockets at each append sees one at the first batch and none at
   the last;
 - `main` binds every handler before `listening`; SIGTERM and SIGINT each close a client with
   1001, publish the two ticks a batch held (seven executed, five committed before), and exit with 0
   only once the pipe took the `stopped` line; on a stdout that never drains, a signal 1 µs short of
   1 s after the first is ignored and one at 1 s forces exit 1 at once; an unhandled rejection halts
-  the world; a refused configuration, a port in use, and a start that throws exit with 1 once
-  written.
+  the world; a refused configuration, a port in use, a start that throws, and a composition that
+  throws exit with 1 once written.
 
 `tests/e2e/server.test.ts` (ADR 0019) spawns `main.ts` with `Bun.spawn` on port 0:
 
@@ -820,6 +847,242 @@ double of the process:
 
 A stdout line that is not JSON is kept and expected absent, so a failure shows it. The server's
 code has no switch for tests.
+
+## Terminal probe
+
+`apps/server/tools/probe.ts` is a minimal public client for a terminal: it connects to a running
+server, applies every message with the protocol's reference reducer, `applyMessage`, and prints a
+screen at each commit. To watch the spawn area of the default world, following its being 1, on a
+server started as above:
+
+```sh
+bun apps/server/tools/probe.ts --around 0,0 --follow 1
+```
+
+| Option | What it does |
+|---|---|
+| `--url ws://host:port/ws` | The server's listener; `ws://127.0.0.1:8080/ws` unless given. A `ws:` or `wss:` URL |
+| `--chunk x,y` | Adds a chunk to the camera; may be given more than once |
+| `--around x,y` | Adds the square of chunks within `--radius` of a chunk, 1 unless given: 9 chunks, at most 49 (radius 3) |
+| `--follow id` | Follows a being: its window of 3 × 3 chunks joins the view |
+| `--commits n` | Exits with 0 after n commits |
+
+With neither `--chunk` nor `--around`, it subscribes to no chunk and shows the clock and the feed.
+The camera is checked with the protocol's own schema before anything is sent, so a camera of more
+than 64 chunks, a repeated chunk, or one outside the world is refused at start; any argument it
+does not know, or gives twice (but `--chunk`), exits with 2 and the usage.
+
+A screen shows the link, the world's id, durability, and state, the clock of the last commit (its
+tick, day, and thousandths of the day), the followed being, the visible chunks with their version
+and count of beings, the beings, the last 16 items of speech and of the feed, the chunks the view's
+limit left out (the last `notice`), the count of `error` messages and the last one's code, and its
+counts of commits, anomalies, frames the strict schema refused, resyncs, and reconnects. On a
+terminal it redraws in place; otherwise it prints each screen after a blank line. A `follow` of a
+being the world does not hold yet, as right after a start, before the spawns of tick 1 are played
+out, gets `unknown_being`, which the screen shows; the probe asks again only on its next
+connection.
+
+It behaves as ADR 0026 asks of a client:
+
+- On each connection it sends `subscribe` and, when asked, `follow`: the server keeps no session.
+- After an anomaly the reducer reports, it sends `resync`, at most once every 2 s
+  (`RESYNC_INTERVAL_MS`); the reducer keeps the old view, marked stale, until the reset. The server
+  measures the 2 s between the times it receives two resyncs, which the network's jitter can bring
+  under 2 s though the probe sent them 2 s apart: after `resync_too_soon`, the probe asks again
+  once its own 2 s allow.
+- A connection that does not open, or hears nothing, for 3 s (`STALE_AFTER_MS`) is given up. It
+  then reconnects, as after a close, with `reconnectDelayMs`: 0.5 s to 1 s at first, doubling up to
+  30 s, and at least 5 s after an HTTP 503, which Bun's client reports only in the text of its
+  error event (`Expected 101 status code: 503`). A `hello` starts the backoff over. Each connection
+  has a generation, and the events of a socket it gave up are ignored.
+- Ctrl-C (SIGINT) or SIGTERM closes the socket with 1000 and exits with 0.
+
+**Nothing the server sends reaches the terminal raw.** `sanitize` (`tools/probe-screen.ts`) writes
+every code point a terminal could act on as `\u{XXXX}`: the C0 and C1 controls, DEL, the line and
+paragraph separators, the bidirectional controls and every invisible code point of the protocol's
+`FORBIDDEN_CODE_POINTS`, and lone surrogates. So `\x1b[2J` prints as `\u{1B}[2J` and clears
+nothing, and U+202E prints as `\u{202E}` and reorders nothing. A backslash is doubled, so text that
+spells `\u{1B}` out never reads like an escaped ESC. Markup such as `<script>` is text, kept as it
+is. Every line of a screen passes through it, so the protocol's refusal of text that is not plain
+text is not the probe's only defense.
+
+`probe.test.ts` checks `sanitize` on hostile inputs with exact outputs (ANSI, OSC, C1, NUL, DEL, a
+line feed, U+202E, U+2028, U+200D, a lone surrogate, a tag, and a backslash), at both ends of
+every range of `FORBIDDEN_CODE_POINTS` and of the surrogates, and just outside them; the arguments; the backoff, 7.5 s after a 503 at the test's draw of 0.5, and
+its reset at `hello`; a socket given up that cannot act; the silence of 3 s; one `resync` per 2 s;
+a resync the server, a presentation in the test's process, refuses at 1.999999 s by its clock,
+asked again at 2 s by the probe's and not 1 ms sooner, and the view current again after the reset;
+frames the schema refuses; an `error`, shown at once; and `stop`. Then a probe connects over a real socket to a presentation
+of a model world in the test's process and prints two commits: the clock, the followed being, the
+nine chunks of its window, a greeting in the feed, and speech holding `<script>` shown as text.
+
+## Benchmarks
+
+Three manual benchmarks measure the budgets of plan §11 that tests cannot: `bench/projection.ts`,
+`bench/fanout.ts`, and `bench/load.ts`. They measure wall-clock time, so `bun test` and `check`
+never run them; `bench.test.ts` checks their arguments, statistics, budgets, and the core of each run
+with tiny parameters. Each prints the machine class (CPU model, logical cores, memory, and Bun's
+version) and the CPUs and nice value its processes run with, read from `/proc`. Percentiles are by
+nearest rank, as the server's status takes them. Run one at a time, each under a minute, while the
+load average is below 2, pinned to one CPU and at the lowest priority, as AGENTS.md lists them.
+
+### Projection
+
+```sh
+taskset -c 0 nice -n 19 bun apps/server/bench/projection.ts [default] [dense] [--ticks N]
+```
+
+Each tick is stepped with the engine's `step` and projected by `BeingsProjection`, as the host does,
+each timed apart. `default` is the default world of T5, ticks 101 to 20,100; `dense` is the beings
+benchmark's "dispersed 1,000" (1,000 beings under `utility@1`, one to a chunk, two chunks apart),
+ticks 101 to 2,100, a third of a simulated day, so a run of both stays under a minute on one core.
+It prints the step's and the projection's p50, p95, and p99, the projection's share of the step
+(the sum of its times over the sum of the step's), the chunks the step changed and the records
+published per tick, and the bytes of each published tick.
+
+### Fan-out
+
+```sh
+taskset -c 0 nice -n 19 bun apps/server/bench/fanout.ts [same-chunk] [same-followed] [churn]
+  [dense-chunk] [--clients 1,10,100,1000] [--periods N]
+```
+
+N clients in the benchmark's process, each a sink that counts the bytes and commits it is sent and
+never lags, watch a `Presentation` that replays published ticks recorded once, one tick a period:
+
+| Scenario | What every client does |
+|---|---|
+| `same-chunk` | Subscribes to the chunk of the default world that holds the most beings |
+| `same-followed` | Follows the being of the default world whose record changes most often |
+| `churn` | Pans a camera of 3 × 3 chunks one chunk a period around the spawn area, each from its own place on a ring 4 chunks out: a `subscribe` a period through `receive`, 3 chunks new each time |
+| `dense-chunk` | Subscribes to the chunk of the beings benchmark's "concentrated 1,000 in 1 × 1", 1,000 beings in one chunk |
+
+The default world is recorded from tick 501, once its beings are awake (they sleep from tick 2 until
+past tick 260); the dense one from tick 3, after its spawns and first decisions. The presentation's
+clock is the system's, moved ahead 200 ms at each period, so its buckets see periods 200 ms apart
+while the fan-out's budget of 40 ms and the duration it records (`recordFanOut`, the status's
+`fanOutMicros`) are real. A run warms up until every client committed once, at most 60 periods, and
+measures 100. It prints the sync's periods and slowest fan-out, the fan-out's and the whole period's
+p50 and p99, the churn's input, each client's bytes a period (p50 and p99), the most commits a client
+got in a period, the share of client-periods with a commit, and the most clients deferred to the next
+period, which got nothing in it.
+
+### Load
+
+```sh
+taskset -c 0 nice -n 19 bun apps/server/bench/load.ts --clients N [--seconds S] [--ramp R]
+taskset -c 0 nice -n 19 bun apps/server/bench/load.ts --sync
+```
+
+The real server runs in a process of its own, `bench/load-server.ts`: `start` of `src/main.ts`, in
+ephemeral mode on a free loopback port, with the real clock, timer, and transport, and its caps
+raised by configuration to hold N clients from 127.0.0.1 (`MAX_CONNECTIONS_PER_IP`). The clients run
+in another, `bench/load-clients.ts`, both children of the driver, `bench/load.ts`, and pinned as it
+is. The server boots for 2 s; the clients open R a second (100 unless given), each subscribed to the
+9 chunks of the spawn area, and once every client committed, the driver measures for S seconds (20
+unless given). Each load client reads only the head of a commit frame, its tick, and counts the bytes
+of every frame, so the clients' process costs the shared core as little as it can.
+
+The server's process adds what the protocol must never carry, over its own stdin and stdout:
+
+- **Marks.** Its presentation's `period` is wrapped on that instance, so each period that plays out
+  a new tick records the wall-clock time it began (`performance.timeOrigin + performance.now()`,
+  which every process of the machine reads alike), and how many ticks the world had executed beyond
+  it: E less the played-out tick, the publication's delay. The latency of a commit is the time a
+  client got it less the mark of its tick.
+- **Ticks.** It composes the server as `composeServer` does, through `start`'s `serverOf`, with a
+  `FixedRateScheduler` whose `runTick` is timed on the server's clock: the span the status's
+  `stepMicros` covers (the step, the projection, and the journal's append), read over the window
+  alone. The status's own window is the last 1,024 ticks, which in a run of under a minute holds the
+  boot. The scheduler's ticks are counted too, which is E, since the default world boots at tick 0.
+- **Status and memory.** The server's C3 status, as `server.status()` gives it and the admin
+  contract checks it, and the process's resident and heap memory after a full collection: before any
+  client connected and once every client synced. Their difference over N is the memory per client
+  at rest.
+
+It prints the clients that failed to open, the time to open and sync them, the tick (from the status
+and over the window), the status's projection, lateness, and fan-out, the latency from playout to
+receipt (p50, p95, and p99), the ticks executed beyond the played-out one, each client's commits per
+period played out in the window and its commits that came less than half a period after the one
+before, the memory per client, the status's lagging clients, slow closes, aborts, and faults, and
+the highest load average it saw.
+
+With `--sync`, a fresh server, whose terrain is all uncached, gets one client of the reference
+reducer, which subscribes, once its first (empty) commit arrived, to the 64 chunks of 8 × 8 around
+the spawn area: the milliseconds and bytes from that `subscribe` to the commit that shows all 64.
+
+The driver refuses to start while the load average is 2 or more, stops a run when it stays above 2
+for 15 s, and stops its children, killing any that does not exit within 5 s.
+
+### Measured budgets
+
+Measured on 2026-11-03 with the code of `48c5973`, on a GitHub Codespace: an AMD EPYC 7763, 2 logical
+cores, 7.8 GiB of memory, and Bun 1.4.4. **Every process of every run, the benchmark, the server,
+and the clients alike, ran on CPU 0 alone at nice 19** (`taskset -c 0 nice -n 19`): half the
+machine, shared with the editor's own processes, and in `load.ts` the server and up to 1,000 clients
+share that one core. The numbers are pessimistic for this machine and promise nothing of another;
+compare runs on one machine only. The load average stayed under 1 in every run of `load.ts`.
+
+| Budget (plan §11) | Measured | Verdict |
+|---|---|---|
+| Server tick (step, projection, journal), default world: p99 ≤ 20 ms | Over each run's window of 20 s: p99 0.68, 2.53, 3.04, and 1.71 ms with 1, 10, 100, and 1,000 clients (p50 0.25 to 0.29 ms). The status's `stepMicros`: p99 35.9 to 38.9 ms, the second-slowest tick of the about 115 to 170 a run held, before its window: the boot, the ramp, or the sync (`load.ts`) | Met over the window; the status's own p99 misses while its 1,024 ticks hold the boot, which leaves them after 3.4 minutes at 5 Hz |
+| Fan-out per period: p99 ≤ 5 ms with 100 clients; a target of 40 ms with 1,000 | 100 clients, 100 periods: 4.71 on one chunk, 25.49 following one being, 40.57 panning, and 4.85 ms on the dense chunk; a second run 7.99, 21.09, and 7.83 ms (panning not run again); over 500 periods 5.10, 21.69, 40.07, and 8.54 ms. 1,000 clients: 26.63, 44.79, 46.95, and 30.17 ms (`fanout.ts`). The real server's status with 100 clients on 9 chunks each, since boot: 40.8 and 70.6 ms (`load.ts`) | Missed with 100 clients: on one chunk and on the dense chunk the p99 straddles the budget (4.71 to 8.54 ms over three runs), and following a being or panning exceeds it four to eight times. With 1,000, met on one chunk and on the dense chunk; following and panning reach the fan-out's own budget of 40 ms, which defers up to 883 and 956 clients to the next period |
+| Projection of changed chunks: p99 ≤ 2 ms on the default world; ≤ 10 % of the step in dispersed 1,000 | 0.69 ms over 20,000 ticks; 8.33 % over 2,000 ticks (its p99 4.40 ms, the step's p50 13.4 ms) (`projection.ts`) | Met; met |
+| Playout to receipt, localhost: p99 ≤ 50 ms with 100 clients | 15.10 and 27.15 ms in two runs; 1.98 with 1 client, 5.03 with 10, and 40.02 with 1,000 (`load.ts`) | Met |
+| Publication delay, E to playout: ≤ 2F ticks and an acknowledgement (≈2 s in ephemeral mode) | E ran 4 ticks ahead of the played-out tick at p50 and p99, 5 at most, with 1 to 1,000 clients: 0.8 to 1.0 s (`load.ts`) | Met; the estimate of 2 s is a bound, and the delay is half of it |
+| Rate per client: at most 1 commit a period, no bursts; exactly 1 in the steady state | No client got a commit within half a period of its last in any run, nor two in one period (`fanout.ts`). Commits per client and period: 1.000 with 1 and 10 clients, 1.000 and 0.962 with 100, 0.485 and 0.511 with 1,000 (`load.ts`) | At most 1: met. Exactly 1: met to 10 clients; with 1,000 on one core shared with them, the fan-out's 40 ms serves about half the clients a period |
+| Memory per client: ≤ 64 KB at rest; its queue ≤ 1 MB | Resident memory per client at rest, after a full collection: 59.6 and 51.0 KiB with 100 clients, 29.2 and 31.2 KiB with 1,000; heap 17.0 and 8.1 KiB. With 1 and 10 clients the difference is the process's own growth (3.3 to 6.5 MiB, 0.7 MiB) and says nothing per client (`load.ts`) | At rest: met with 100 and 1,000. The queue: not measured, since no run makes a client lag; the outbox of at most 13 messages and the buffer under 320 KiB are held by tests |
+| Terrain: ≤ 16 chunks generated a period (≈8 ms), a fair queue, an LRU of 2,048 | The 64 uncached chunks of the sync entered in 4 commits, one a period (`load.ts --sync`) | Not measured as a cost; the cap, the queue, and the LRU are held by tests (`presentation-terrain`) |
+| Sync of 64 chunks, default world (≈450 KB estimated): ≤ 1 s with uncached terrain | 822.7 and 828.2 ms in two runs; 799,966 bytes from the `subscribe` to the commit (`load.ts --sync`) | Met. The estimate is corrected: 781 KiB, not 450 KB |
+| Delta per client, default world: median ≤ 1 KB, p99 ≤ 8 KB | Every client on one chunk: 92 B and 312 B over 100 periods, 95 B and 330 B over 500. Following one being: 92 to 93 B and 315 to 464 B, 95 B and 527 B over 500 (`fanout.ts`) | Met |
+| Resynchronization: as the sync, the previous view consistent meanwhile | Not measured apart: the sync of 64 uncached chunks bounds a resync whose terrain the LRU evicted, and a resync of cached terrain waits for none | Not measured |
+| Scenarios of 1, 10, 100, and 1,000 spectators, the cap per address raised by configuration | All four ran, in `load.ts` and `fanout.ts`, with no client refused, closed for slowness or strikes, aborted, or faulted | Measured |
+| Being record ≤ 256 B; part ≤ 64 KB; ≤ 256 KB a client and period, buffer ≤ 512 KB; view ≤ 32 MB; retained versions ≤ 128 MB; the largest chunks and view of `beings@2` and `beings@1`; input limits | Held by the tests the plan names for them, not by a benchmark. The most a client got in a period in `fanout.ts`: 110 KiB (p99, panning, 1,000 clients) | Not measured by a benchmark |
+| CI: T6 adds ≤ 3 s to the parallel step, each step ≤ 70 s | Measured by the CI of each pull request | Not measured here |
+
+Not measured either, and why:
+
+- **The terrain a lagging client holds** (tracker L73: at most 64 KiB of terrain text, down from
+  905,273 B): no benchmark makes a client stop reading while its transaction's terrain is evicted,
+  and a process's resident memory cannot single one client out. Tests hold the bound.
+- **Clients beyond 1,000, and several machines.** Nothing was run past 1,000 clients, nor with the
+  server and its clients on cores of their own.
+
+What the runs show besides the budgets:
+
+- The world plane keeps its time under every load measured: its tick stays under 3.1 ms at p99
+  whatever the clients do, and the fan-out delays it within a period (lateness p50 39.5 ms and p99
+  45.2 ms with 1,000 clients). Plan §12's trigger for a Worker, a tick p99 above half a period, is
+  far off.
+- Following a being costs about seven times as much per client as watching one chunk (fan-out p50
+  4.85 against 0.66 ms with 100 clients).
+- Past 40 ms the fan-out defers clients rather than delay the world: with 1,000 clients each one
+  commits about every other period, and none is closed.
+
+The tables the runs printed, condensed (times in ms):
+
+| `projection.ts` | Ticks | Step p50 / p95 / p99 | Projection p50 / p95 / p99 | Share | Records a tick, p50 / max | Bytes a tick, p50 / p99 |
+|---|---|---|---|---|---|---|
+| default | 20,000 | 0.025 / 1.468 / 4.527 | 0.004 / 0.244 / 0.689 | 17.07 % | 0 / 8 | 97 / 388 |
+| dense (dispersed 1,000) | 2,000 | 13.429 / 31.114 / 46.079 | 1.117 / 2.898 / 4.398 | 8.33 % | 32 / 78 | 4,951 / 10,741 |
+
+| `fanout.ts`, 100 periods | Clients | Sync periods | Fan-out p50 / p99 | Bytes a client and period, p50 / p99 | Client-periods with a commit | Most deferred |
+|---|---|---|---|---|---|---|
+| same-chunk | 1 / 10 / 100 / 1,000 | 1 / 1 / 1 / 4 | 0.047 / 1.085; 0.179 / 2.959; 0.662 / 4.706; 7.439 / 26.628 | 92 / 312 | 100 % to 100; 99.7 % | 0; 271 with 1,000 |
+| same-followed | 1 / 10 / 100 / 1,000 | 1 / 1 / 2 / 12 | 0.077 / 3.669; 0.360 / 4.660; 4.851 / 25.492; 40.025 / 44.786 | 92 / 315 to 464 | 100 % to 10; 99.7 %; 80.2 % | 30; 883 |
+| churn | 1 / 10 / 100 / 1,000 | 1 / 1 / 1 / 4 | 0.265 / 8.756; 2.457 / 14.808; 14.265 / 40.565; 40.198 / 46.945 | 37,656 / 37,662 to 112,576; p50 0 with 1,000, most deferred | 100 % to 10; 99.2 %; 11.5 % | 44; 956 |
+| dense-chunk | 1 / 10 / 100 / 1,000 | 1 / 1 / 2 / 12 | 0.063 / 2.068; 0.165 / 3.249; 1.289 / 4.852; 8.833 / 30.165 | 91 / 418 | 100 % | 0 |
+
+| `load.ts` | Ramp and sync s | Tick, window p50 / p99 | Tick, status p99 | Fan-out (status) p50 / p99 | Playout to receipt p50 / p95 / p99 | Commits a client and period | RSS / heap a client KiB |
+|---|---|---|---|---|---|---|---|
+| 1 client | 0.2 | 0.282 / 0.680 | 37.908 | 0.275 / 2.430 | 0.509 / 1.718 / 1.982 | 1.000 | (3,364 / 267: no per-client meaning) |
+| 10 clients | 0.4 | 0.267 / 2.529 | 35.888 | 0.951 / 13.931 | 1.194 / 3.237 / 5.028 | 1.000 | (699 / 55: no per-client meaning) |
+| 100 clients | 1.2 | 0.293 / 3.035 | 36.907 | 8.375 / 70.598 | 5.055 / 12.131 / 27.148 | 0.962 | 51.0 / 17.0 |
+| 1,000 clients | 10.4 | 0.250 / 1.705 | 38.936 | 40.112 / 42.855 | 21.120 / 38.514 / 40.020 | 0.511 | 31.2 / 8.1 |
+
+The `load.ts` rows are the second run of each; the first, before the delay of publication was
+measured, gave with 100 clients a latency p99 of 15.10 ms, commits 1.000 a period, and 59.6 KiB a
+client, and with 1,000 clients 40.04 ms, 0.485, and 29.2 KiB. The sync took 822.7 and 828.2 ms.
 
 ## Observer invariance
 

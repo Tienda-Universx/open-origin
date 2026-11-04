@@ -3,10 +3,12 @@
  * 18 and the shutdown's RPO), over the counting world on a fake clock, so the ticks are exact, and
  * a double of the process, which records the handlers, the lines, and the exits:
  *
- * - `start` refuses with every problem of the configuration at once and starts nothing; a port in
- *   use is `listen_failed` with its code; a server that cannot start once bound, injected, is
- *   `start_failed`, its listener closed and its error kept as the cause even when its stop rejects;
- *   and its `stop` closes the transport before the world flushes;
+ * - `start` refuses with every problem of the configuration at once and starts nothing; a server
+ *   whose composition throws, injected, is `start_failed` with the stage `compose`; a port in use
+ *   is `listen_failed` with its code, the composed server stopped even when its stop rejects; a
+ *   server that cannot start once bound, injected, is `start_failed`, its listener closed and its
+ *   error kept as the cause even when its stop rejects; and its `stop` closes the transport before
+ *   the world flushes;
  * - `main` binds every handler before it reports `listening`; SIGTERM and SIGINT each stop the
  *   server, closing a client with 1001 and publishing every executed tick, and exit with 0 only
  *   once the `stopped` line was written; a signal within 1 s of the first is ignored, and one at
@@ -207,6 +209,59 @@ describe("start", () => {
     expect(logs).toEqual([{ event: "listen_failed", code: "EADDRINUSE" }]);
   });
 
+  test("logs a server that cannot be composed as start_failed with its stage, and binds nothing", async () => {
+    const logs: LogEntry[] = [];
+    const fault = new Error("a planted compose fault");
+    const result = await start(EPHEMERAL, (entry) => logs.push(entry), {
+      ...worldDeps().deps,
+      serverOf: () => {
+        throw fault;
+      },
+    });
+    expect(result).toEqual({ ok: false, reason: "compose", cause: fault });
+    expect(logs).toEqual([
+      {
+        event: "start_failed",
+        stage: "compose",
+        error: "Error",
+        message: "a planted compose fault",
+      },
+    ]);
+  });
+
+  test("stops the composed server when the port cannot be bound, though its stop rejects", async () => {
+    const env = { ...EPHEMERAL, OPEN_ORIGIN_PORT: String(blocker().port) };
+    let composed: Server | undefined;
+    const logs: LogEntry[] = [];
+    const result = await start(env, (entry) => logs.push(entry), {
+      ...worldDeps().deps,
+      serverOf: (config, deps) => {
+        composed = composeServer(config, deps);
+        return composed;
+      },
+    });
+    expect([result, logs]).toEqual([
+      { ok: false, reason: "listen", code: "EADDRINUSE" },
+      [{ event: "listen_failed", code: "EADDRINUSE" }],
+    ]);
+    // A stopped presentation is detached from the world for good.
+    expect(() => composed?.presentation.start()).toThrow(
+      "a stopped presentation cannot start again",
+    );
+    const rejecting: LogEntry[] = [];
+    const failed = await start(env, (entry) => rejecting.push(entry), {
+      ...worldDeps().deps,
+      serverOf: failingServer().serverOf,
+    });
+    expect([failed, rejecting]).toEqual([
+      { ok: false, reason: "listen", code: "EADDRINUSE" },
+      [
+        { event: "listen_failed", code: "EADDRINUSE" },
+        { event: "stop_failed", part: "server", error: "Error" },
+      ],
+    ]);
+  });
+
   test("closes the listener when the server cannot start once bound, and keeps its error as the cause though a stop rejects", async () => {
     const logs: LogEntry[] = [];
     const { fault, serverOf } = failingServer();
@@ -346,7 +401,7 @@ describe("main", () => {
     });
   });
 
-  test("exits with 1 once written when the configuration is refused, the port is in use, or the start throws", async () => {
+  test("exits with 1 once written when the configuration is refused, the port is in use, the start throws, or the server cannot be composed", async () => {
     const refused = await mainOf({ AI_MODE: "on" });
     expect(refused.host.calls).toEqual(["write:config_error", "write:config_error"]);
     expect(refused.host.exits).toEqual([]);
@@ -364,5 +419,24 @@ describe("main", () => {
     expect(failed.host.exits).toEqual([]);
     failed.host.flush();
     expect(failed.host.exits).toEqual([1]);
+    // And so does a server that cannot be composed.
+    const unbuilt = await mainOf(EPHEMERAL, {
+      serverOf: () => {
+        throw new Error("a planted compose fault");
+      },
+    });
+    expect([unbuilt.host.lines, unbuilt.host.exits]).toEqual([
+      [
+        {
+          event: "start_failed",
+          stage: "compose",
+          error: "Error",
+          message: "a planted compose fault",
+        },
+      ],
+      [],
+    ]);
+    unbuilt.host.flush();
+    expect(unbuilt.host.exits).toEqual([1]);
   });
 });
