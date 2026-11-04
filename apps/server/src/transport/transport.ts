@@ -5,9 +5,9 @@
  * import of `bun`, so the plane's boundary holds.
  *
  * - **HTTP.** A request whose `Content-Length` passes 0 gets Bun's 413 first (REQUEST_OPTIONS).
- *   `http.ts` routes each other request: `GET /healthz`, `GET /ws` with the subprotocol, or a refusal (403
- *   for a `Host` or an `Origin` off its list, 404, 426). An upgrade then takes a slot under the
- *   caps, in all and per IP, or is refused with 503 and `Retry-After`.
+ *   `http.ts` routes each other request: `GET /healthz`, `GET /ws` with the subprotocol, or a
+ *   refusal (403 for a `Host` or an `Origin` off its list, 404, 426). An upgrade then takes a slot
+ *   under the caps, in all and per IP, or is refused with 503 and `Retry-After`.
  * - **Input.** Bun closes a frame over 4 KiB with 1009 (`maxPayloadLength`); a binary frame is
  *   closed here with 1003; every text frame goes to `receive`, which reads it.
  * - **Output.** The sink sends text frames, reports `getBufferedAmount()`, and closes with the

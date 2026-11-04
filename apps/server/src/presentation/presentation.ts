@@ -541,10 +541,10 @@ export class Presentation {
   }
 
   /**
-   * Applies a client's `follow` of `being`: a being the mirror does not hold is `unknown_being`, and
-   * the chunks its window adds to the effective interest are held to the bucket of new chunks, as a
-   * subscribe's are; a refused follow changes nothing. The window's later moves with its being are
-   * not the client's doing and take nothing from the bucket.
+   * Applies a client's `follow` of `being`: a being the mirror does not hold is `unknown_being`,
+   * and the chunks its window adds to the effective interest are held to the bucket of new chunks,
+   * as a subscribe's are; a refused follow changes nothing. The window's later moves with its being
+   * are not the client's doing and take nothing from the bucket.
    */
   #applyFollow(client: Client, being: number | null, now: number): ErrorCode | undefined {
     const center = being === null ? undefined : this.#mirror.locate(being);
@@ -554,7 +554,7 @@ export class Presentation {
     return undefined;
   }
 
-  /** How many chunks of the follow window around `center` the effective interest of `client` lacks. */
+  /** How many chunks of the window around `center` the effective interest of `client` lacks. */
   #windowAdds(client: Client, center: ChunkCoord | undefined): number {
     if (center === undefined) return 0;
     const held = new Set(this.#interest.effective(client.id).map(chunkKey));
