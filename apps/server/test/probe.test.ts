@@ -11,9 +11,17 @@ import {
   CLIENT_LIMITS,
   FORBIDDEN_CODE_POINTS,
   initialClientState,
+  RECONNECT_BACKOFF,
   reconnectDelayMs,
+  STALE_AFTER_MS,
 } from "@open-origin/protocol/public";
-import { errorFrame, frameText, helloFrame, statusFrame } from "../src/presentation/frames.ts";
+import {
+  errorFrame,
+  frameText,
+  helloFrame,
+  pongFrame,
+  statusFrame,
+} from "../src/presentation/frames.ts";
 import { serveTransport, type Transport } from "../src/transport/transport.ts";
 import {
   DEFAULT_URL,
@@ -159,6 +167,8 @@ describe("the probe's arguments", () => {
     { argv: ["--chunk", "1;2"], message: 'a chunk is written x,y, not "1;2"' },
     { argv: ["--radius", "1"], message: "--radius needs --around" },
     { argv: ["--around", "0,0", "--radius", "4"], message: "at most 64 chunks" },
+    // Refused before the square is built: 200,001 × 200,001 chunks would never fit in memory.
+    { argv: ["--around", "0,0", "--radius", "100000"], message: "asks for 200001 × 200001" },
     { argv: ["--chunk", "1,2", "--chunk", "1,2"], message: "each once" },
     { argv: ["--chunk", "99999999,0"], message: "inside the world" },
     { argv: ["--url", "http://127.0.0.1/ws"], message: "--url must be a ws: or wss: URL" },
@@ -319,6 +329,25 @@ describe("the probe's connection", () => {
     );
   });
 
+  test("shows at once a status of the world, and a view an anomaly made stale", () => {
+    const link = new FakeLink();
+    const probe = new Probe(OPTIONS, link.deps);
+    probe.start();
+    link.socket.events.open();
+    link.socket.events.message(helloText(3));
+    const shown = link.screens.length;
+    link.socket.events.message(frameText(statusFrame(3, "halted"), 1));
+    expect(link.screens).toHaveLength(shown + 1);
+    expect(link.screens.at(-1)).toContain("ephemeral  halted");
+    // A pong, which alone redraws nothing, at seq 3 after 1: a message was lost, and the screen
+    // says the view is stale at once.
+    const before = link.screens.length;
+    link.socket.events.message(frameText(pongFrame(3, 7), 3));
+    expect(probe.counts.anomalies).toBe(1);
+    expect(link.screens).toHaveLength(before + 1);
+    expect(link.screens.at(-1)?.split("\n")[0]).toContain("(view stale)");
+  });
+
   test("counts a frame the schema refuses and applies nothing of it", () => {
     const link = new FakeLink();
     const probe = new Probe(OPTIONS, link.deps);
@@ -412,5 +441,50 @@ describe("the probe against a server in this process", () => {
       "errors from the server: 0",
       "commits 2  anomalies 0  bad frames 0  resyncs 0  reconnects 0",
     ]);
+  });
+
+  test("waits the protocol's floor after a real 503: Bun's error text carries the status", async () => {
+    const model = new ModelWorld(0, [being(1, [3, 3])]);
+    const { presentation } = presentationOver(model);
+    const transport = serveTransport({
+      presentation: new CountingPort(presentation),
+      hostname: LOOPBACK,
+      port: 0,
+      publicOrigins: [],
+      allowedHosts: undefined,
+      connections: { global: 1, perIp: 1 },
+      log: () => undefined,
+    });
+    transports.push(transport);
+    const url = `ws://${LOOPBACK}:${transport.port}/ws`;
+    const options = {
+      url,
+      chunks: [[0, 0]] as ChunkCoord[],
+      follow: undefined,
+      commits: undefined,
+    };
+    let held = false;
+    const holder = new Probe(options, { ...processDeps(), show: () => (held = true) });
+    probes.push(holder);
+    holder.start();
+    // The holder's hello shows its first screen: it holds the only slot.
+    await until(() => held, "the first probe's hello");
+    const delays: number[] = [];
+    const refused = new Probe(options, {
+      ...processDeps(),
+      show: () => undefined,
+      // No jitter: an ordinary retry would wait 0 ms, so only the 503 floor gives more.
+      random: () => 0,
+      schedule: (ms) => {
+        delays.push(ms);
+        return () => undefined;
+      },
+    });
+    probes.push(refused);
+    refused.start();
+    // The silence timer is armed as the socket opens; the retry's delay comes after it.
+    const retries = () => delays.filter((ms) => ms !== STALE_AFTER_MS);
+    await until(() => retries().length > 0, "the refused probe's retry");
+    expect(retries()).toEqual([RECONNECT_BACKOFF.afterUnavailableMs]);
   });
 });

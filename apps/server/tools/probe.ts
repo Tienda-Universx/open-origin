@@ -22,6 +22,7 @@
 import {
   applyMessage,
   type ChunkCoord,
+  CLIENT_LIMITS,
   type ClientState,
   type Committed,
   type FeedItem,
@@ -144,7 +145,15 @@ function checkedUrl(url: string): string {
 function cameraOf(read: Read): ChunkCoord[] {
   if (read.radius !== undefined && read.around === undefined)
     throw new RangeError("--radius needs --around");
-  const around = read.around === undefined ? [] : square(read.around, read.radius ?? 1);
+  const radius = read.radius ?? 1;
+  // The square's size is checked before it is built: a mistyped radius would ask for billions.
+  const side = 2 * radius + 1;
+  if (side * side > CLIENT_LIMITS.maxChunks) {
+    throw new RangeError(
+      `the camera holds at most ${CLIENT_LIMITS.maxChunks} chunks, and --radius ${radius} asks for ${side} × ${side}`,
+    );
+  }
+  const around = read.around === undefined ? [] : square(read.around, radius);
   const chunks = [...read.chunks, ...around];
   if (!SubscribeMessage.safeParse({ type: "subscribe", chunks }).success)
     throw new RangeError("the camera holds at most 64 chunks, each once and inside the world");
@@ -202,8 +211,16 @@ export type ProbeDeps = {
   readonly show: (screen: string) => void;
 };
 
-/** The messages besides a commit that change the screen at once. */
-const SHOWN_AT_ONCE: ReadonlySet<ServerMessage["type"]> = new Set(["hello", "notice", "error"]);
+/**
+ * The messages besides a commit that change the screen at once: a status above all, which matters
+ * most when the world stops committing.
+ */
+const SHOWN_AT_ONCE: ReadonlySet<ServerMessage["type"]> = new Set([
+  "hello",
+  "notice",
+  "error",
+  "status",
+]);
 
 /** How many items of speech and of the feed the probe keeps: what one screen shows. */
 const KEPT = ROWS;
@@ -335,8 +352,9 @@ export class Probe {
     this.#state = applied.state;
     this.#note(message, applied.anomaly !== undefined);
     this.#resyncWhenAllowed();
+    // An anomaly marks the view stale at once, as a status does the world's state.
     if (applied.committed !== undefined) this.#committed(applied.committed);
-    else if (SHOWN_AT_ONCE.has(message.type)) this.#show();
+    else if (SHOWN_AT_ONCE.has(message.type) || applied.anomaly !== undefined) this.#show();
   }
 
   /**
