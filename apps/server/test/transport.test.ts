@@ -199,6 +199,36 @@ describe("the HTTP surface", () => {
     expect([...answers, post].flatMap(corsOf)).toEqual([]);
   });
 
+  test("refuses a request whose Content-Length passes 0 with Bun's 413, before the listener sees it and with none of its body sent", async () => {
+    const { port, logs, counting } = listen(modelPresentation().presentation);
+    const host = `Host: ${LOOPBACK}:${port}`;
+    // Not one byte of either body is sent: Bun answers from the length alone, buffering nothing.
+    for (const [path, length] of [
+      ["/healthz", 1],
+      ["/ws", 1_000_000_000],
+    ] as const) {
+      const head = `POST ${path} HTTP/1.1\r\n${host}\r\nContent-Length: ${length}\r\n\r\n`;
+      const answer = await rawRequest(port, head);
+      answer.close();
+      expect([path, answer.head]).toEqual([
+        path,
+        "http/1.1 413 request entity too large\r\nconnection: close",
+      ]);
+    }
+    expect([logs, counting.last]).toEqual([[], undefined]);
+    // An empty body passes, and a chunked one, which declares no length, is answered unread.
+    const empty = await rawRequest(
+      port,
+      `GET /healthz HTTP/1.1\r\n${host}\r\nContent-Length: 0\r\n\r\n`,
+    );
+    const chunked = await rawRequest(
+      port,
+      `POST /healthz HTTP/1.1\r\n${host}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n`,
+    );
+    for (const answer of [empty, chunked]) answer.close();
+    expect([empty.status, chunked.status]).toEqual([200, 404]);
+  });
+
   test("refuses /ws with 426 before the upgrade without the subprotocol or an upgrade", async () => {
     const { port, counting } = listen(modelPresentation().presentation);
     const heads = [

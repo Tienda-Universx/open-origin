@@ -4,9 +4,10 @@
  * `close`, and gives it one sink per socket. It reaches Bun through the global `Bun`, never an
  * import of `bun`, so the plane's boundary holds.
  *
- * - **HTTP.** `http.ts` routes each request: `GET /healthz`, `GET /ws` with the subprotocol, or a
- *   refusal (403 for a `Host` or an `Origin` off its list, 404, 426). An upgrade then takes a slot
- *   under the caps, in all and per IP, or is refused with 503 and `Retry-After`.
+ * - **HTTP.** A request whose `Content-Length` passes 0 gets Bun's 413 first (REQUEST_OPTIONS).
+ *   `http.ts` routes each other request: `GET /healthz`, `GET /ws` with the subprotocol, or a refusal (403
+ *   for a `Host` or an `Origin` off its list, 404, 426). An upgrade then takes a slot under the
+ *   caps, in all and per IP, or is refused with 503 and `Retry-After`.
  * - **Input.** Bun closes a frame over 4 KiB with 1009 (`maxPayloadLength`); a binary frame is
  *   closed here with 1003; every text frame goes to `receive`, which reads it.
  * - **Output.** The sink sends text frames, reports `getBufferedAmount()`, and closes with the
@@ -52,6 +53,14 @@ export const SOCKET_OPTIONS = Object.freeze({
   idleTimeout: 120,
   sendPings: true,
 });
+
+/**
+ * Bun's options for every request: no body. The listener reads none, so Bun answers a request whose
+ * `Content-Length` passes 0 with its own 413 and `Connection: close` before the listener sees it,
+ * waiting for none of the body. In Bun, unlike some servers, 0 is no body and not "no limit"; a
+ * chunked body, which declares no length, is never read. `serveTransport` spreads them last.
+ */
+export const REQUEST_OPTIONS = Object.freeze({ maxRequestBodySize: 0 });
 
 /**
  * The options Bun's WebSocket server takes: `handlers`, then SOCKET_OPTIONS, spread last, so no
@@ -262,6 +271,7 @@ export function serveTransport(options: TransportOptions): Transport {
     fetch: listener.answer,
     error: listener.failed,
     websocket: listener.handlers,
+    ...REQUEST_OPTIONS,
   });
   const port = server.port;
   if (port === undefined) throw new Error("the public listener bound no port");

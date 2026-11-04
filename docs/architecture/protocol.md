@@ -47,6 +47,7 @@ request in this order, and the first refusal wins:
 
 | Request | Answer |
 |---|---|
+| A `Content-Length` above 0, on any path and with any method | 413, Bun's own, with `Connection: close`, before the listener sees the request and without waiting for the body: the listener reads no body (`maxRequestBodySize` 0). A chunked body, which declares no length, is never read, and its request goes on to the rows below |
 | A `Host` header off the allowlist, or none, on any path and with any method | 403 |
 | `GET /healthz` | 200, `{"ok":true}` |
 | Any other method or path but `GET /ws` | 404 |

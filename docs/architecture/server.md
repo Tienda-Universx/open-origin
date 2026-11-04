@@ -633,6 +633,9 @@ only. Its options are the presentation, the address and port to bind (0 lets the
   `capacity.ts` holds the caps: an upgrade takes a slot, in all and for its address, which
   `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes.
   Bun runs the open handler within `upgrade`, so two upgrades never pass a cap together.
+  `REQUEST_OPTIONS`, spread last into `Bun.serve`'s options, sets `maxRequestBodySize` to 0: the
+  listener reads no body, so Bun answers a `Content-Length` above 0 with its own 413 before the
+  listener sees the request, without waiting for the body. In Bun, 0 means no body, not no limit.
 - **Socket limits.** `SOCKET_OPTIONS`, one constant that `websocketOptions` spreads after the
   handlers, so no handler's key can override a limit: `maxPayloadLength` is 4,096 bytes, so Bun closes a larger frame with 1009 before any of it reaches the presentation;
   `backpressureLimit` is 1 MiB with `closeOnBackpressureLimit`, a backstop, since the presentation
@@ -671,7 +674,9 @@ the server's warning at start says.
 world, driven period by period:
 
 - `route` on a table of cases, the `Host` before the method among them, and `Capacity` on its own;
-- the health check, 404 with no CORS header, 426 before the upgrade, and the listener's own 426
+- the health check, 404 with no CORS header, Bun's 413 for a `Content-Length` of 1 or 1 GB with
+  none of the body sent, which the listener never sees, while an empty body and a chunked one pass
+  to it, 426 before the upgrade, and the listener's own 426
   for a WebSocket version other than 13; a handshake Bun cannot complete, answered with the
   listener's 400, its slot back for the next client; 500 when answering a request throws;
 - an `Origin` matched exactly and its absence accepted; a `Host` refused on every path and method;
