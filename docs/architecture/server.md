@@ -772,8 +772,10 @@ world is the default world of T5, a new one with a new id at every start; a clie
    stay private.
 3. It wires `composeServer` with the real clock and timer of `src/adapters/` (tests may give fake
    ones, a source, its projection, a journal, or a server of their own, `serverOf`) and the
-   transport. A port it cannot bind is logged as `listen_failed` with the error's code
-   (`EADDRINUSE`) and no message.
+   transport. A throw while composing the server, before anything is bound, is logged as
+   `start_failed` with `stage: "compose"` and the error's name, and returned as the cause. A port
+   it cannot bind is logged as `listen_failed` with the error's code (`EADDRINUSE`) and no message,
+   and the composed server is stopped, a stop that fails logged as `stop_failed`.
 4. It starts the server. When that throws once the listener bound, it logs `start_failed` with the
    error's name and the port it bound, then stops the transport and the server, logging each stop
    that fails as `stop_failed` with its part and the error's name, and returns the start's error as
@@ -790,7 +792,7 @@ supervisor that signals on that line always finds the handlers in place.
 
 | Event | What happens |
 |---|---|
-| A refused configuration, a port it cannot bind, or a start that throws once bound | Exit code 1, after the `config_error`, `listen_failed`, or `start_failed` lines; no crash |
+| A refused configuration, a server that cannot be composed, a port it cannot bind, or a start that throws once bound | Exit code 1, after the `config_error`, `start_failed`, or `listen_failed` lines; no crash |
 | SIGTERM or SIGINT | `signal`, then `stop()`, then exit code 0, or 1 if stopping failed (`stop_failed`, with the error's name) |
 | Another SIGTERM or SIGINT less than 1 s after the first | `signal_ignored`, with the signal: a duplicate, such as the copies a terminal's Ctrl-C sends both a wrapper (`bun run`) and the server |
 | Another SIGTERM or SIGINT 1 s or more after the first | `forced_exit`, with the signal, then exit code 1 at once |
@@ -811,17 +813,20 @@ report on stderr, flushing nothing: with the ephemeral journal there is nothing 
 `main.test.ts` runs `start` and `main` in process over the counting world on a fake clock and a
 double of the process:
 
-- `start` refuses every problem at once, reports a port in use as `listen_failed`, and, given a
-  server whose start throws and whose stop then rejects, closes the listener on the port it bound
-  and returns the start's error as the cause; and it stops the transport before the world flushes:
+- `start` refuses every problem at once; logs a server whose composition throws as
+  `start_failed` with its stage and returns that error; reports a port in use as `listen_failed`
+  and stops the composed server, whose presentation then cannot start, logging a stop that rejects;
+  given a server whose start throws and whose stop then rejects, closes the listener on the port
+  it bound and returns the start's error as the cause; and it stops the transport before the world
+  flushes:
   a journal that counts the open sockets at each append sees one at the first batch and none at
   the last;
 - `main` binds every handler before `listening`; SIGTERM and SIGINT each close a client with
   1001, publish the two ticks a batch held (seven executed, five committed before), and exit with 0
   only once the pipe took the `stopped` line; on a stdout that never drains, a signal 1 µs short of
   1 s after the first is ignored and one at 1 s forces exit 1 at once; an unhandled rejection halts
-  the world; a refused configuration, a port in use, and a start that throws exit with 1 once
-  written.
+  the world; a refused configuration, a port in use, a start that throws, and a composition that
+  throws exit with 1 once written.
 
 `tests/e2e/server.test.ts` (ADR 0019) spawns `main.ts` with `Bun.spawn` on port 0:
 

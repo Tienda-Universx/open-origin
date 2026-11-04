@@ -4,9 +4,11 @@
  *
  * `start` reads the configuration and refuses to start with every problem at once; logs the
  * warnings; wires `composeServer` with the real clock and timer and the transport; and starts both.
- * A port it cannot bind is logged as `listen_failed` with the error's code. A server that cannot
- * start after the listener bound is logged as `start_failed`, and the listener and the server are
- * stopped, each failure to stop logged too; the start's error is kept as the cause.
+ * A server that cannot be composed is logged as `start_failed` with the stage `compose`. A port it
+ * cannot bind is logged as `listen_failed` with the error's code, and the composed server is
+ * stopped. A server that cannot start after the listener bound is logged as `start_failed`, and the
+ * listener and the server are stopped. Each failure to stop is logged too, and never replaces the
+ * failure that came first.
  *
  * `main` binds a started server to its process before it reports `listening` with the port, so a
  * supervisor that signals on that line always finds the handlers in place:
@@ -77,12 +79,13 @@ export type Running = {
 };
 
 /**
- * A server that started, or why none did: every problem of the configuration, the bind's code, or
- * what the server's start threw.
+ * A server that started, or why none did: every problem of the configuration, what composing the
+ * server threw, the bind's code, or what the server's start threw.
  */
 export type Started =
   | { readonly ok: true; readonly running: Running }
   | { readonly ok: false; readonly reason: "config"; readonly errors: readonly string[] }
+  | { readonly ok: false; readonly reason: "compose"; readonly cause: unknown }
   | { readonly ok: false; readonly reason: "listen"; readonly code: string }
   | { readonly ok: false; readonly reason: "start"; readonly cause: unknown };
 
@@ -130,15 +133,14 @@ async function stopBoth(transport: Transport, server: Server): Promise<void> {
   }
 }
 
+/** A part a failed start stops: its name, for the log, and its stop. */
+type Part = readonly [part: "transport" | "server", stop: () => Promise<void>];
+
 /**
- * Stops the transport, then the server, after a failed start: a failure of either is logged by
- * its name as `stop_failed` and goes no further, so the start's own error stays the cause.
+ * Stops `parts` in order after a failed start: a failure of one is logged by its name as
+ * `stop_failed` and goes no further, so the start's own error stays the cause.
  */
-async function cleanUp(transport: Transport, server: Server, log: Log): Promise<void> {
-  const parts = [
-    ["transport", () => transport.stop()],
-    ["server", () => server.stop()],
-  ] as const;
+async function cleanUp(parts: readonly Part[], log: Log): Promise<void> {
   for (const [part, stop] of parts) {
     try {
       await stop();
@@ -187,10 +189,12 @@ function runningOf(config: Config, server: Server, transport: Transport, log: Lo
 /**
  * Starts the server of `env`, logging to `log`: its configuration, or every problem of it, each
  * logged as `config_error` and none started; then its warnings, the server, and the transport. A
- * port it cannot bind is logged as `listen_failed`, with the error's code and no message. A throw
- * of the server's start, after the bind, is logged as `start_failed`, by the error's name and with
- * the port it bound; the transport and the server are stopped (`cleanUp`), and the throw is
- * returned as the cause.
+ * throw while composing the server is logged as `start_failed` with the stage `compose`, by the
+ * error's name, and returned as the cause; nothing was bound. A port it cannot bind is logged as
+ * `listen_failed`, with the error's code and no message, and the composed server is stopped. A
+ * throw of the server's start, after the bind, is logged as `start_failed`, by the error's name
+ * and with the port it bound; the transport and the server are stopped, and the throw is returned
+ * as the cause. Every stop that fails is logged (`cleanUp`).
  */
 export async function start(env: Environment, log: Log, deps: EntryDeps = {}): Promise<Started> {
   const parsed = parseConfig(env);
@@ -200,20 +204,28 @@ export async function start(env: Environment, log: Log, deps: EntryDeps = {}): P
   }
   for (const message of parsed.warnings) log({ event: "config_warning", message });
   const { config } = parsed;
-  const server = (deps.serverOf ?? composeServer)(config, serverDeps(deps));
+  let server: Server;
+  try {
+    server = (deps.serverOf ?? composeServer)(config, serverDeps(deps));
+  } catch (cause) {
+    log({ event: "start_failed", stage: "compose", error: nameOf(cause) });
+    return { ok: false, reason: "compose", cause };
+  }
+  const stopServer: Part = ["server", () => server.stop()];
   let transport: Transport;
   try {
     transport = listen(config, server, log);
   } catch (error) {
     const code = codeOf(error);
     log({ event: "listen_failed", code });
+    await cleanUp([stopServer], log);
     return { ok: false, reason: "listen", code };
   }
   try {
     server.start();
   } catch (cause) {
     log({ event: "start_failed", error: nameOf(cause), port: transport.port });
-    await cleanUp(transport, server, log);
+    await cleanUp([["transport", () => transport.stop()], stopServer], log);
     return { ok: false, reason: "start", cause };
   }
   return { ok: true, running: runningOf(config, server, transport, log) };
@@ -278,9 +290,9 @@ const PROCESS: Host = Object.freeze({
 
 /**
  * Runs the server of `host`'s environment: it exits with 1 when the configuration is refused, the
- * port cannot be bound, or the server cannot start; otherwise it binds its handlers, reports
- * `listening`, and runs until a signal stops it. Tests give a double of the process and replace the
- * server's dependencies.
+ * server cannot be composed, the port cannot be bound, or the server cannot start; otherwise it
+ * binds its handlers, reports `listening`, and runs until a signal stops it. Tests give a double of
+ * the process and replace the server's dependencies.
  */
 export async function main(host: Host = PROCESS, deps: EntryDeps = {}): Promise<void> {
   const log: Log = (entry) => host.write(`${JSON.stringify(entry)}\n`);
