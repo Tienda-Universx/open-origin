@@ -550,8 +550,9 @@ with the strict schema.
   no `error`; 20 messages at once, then one at 100 ms and none at 99.999 ms, and 20 at most after a
   minute idle; no token taken by a message the schema rejects; 64 new chunks, then one at 31.25 ms;
   follows alternating between beings 10 chunks apart refused once their windows spent the bucket,
-  with nothing changed, and passed again 250 ms later, not 1 µs sooner, while a follow of nothing
-  and the window's move with its being take no chunk; resyncs at most every 2 s,
+  with nothing changed, and passed again 250 ms later, not 1 µs sooner, while a follow of nothing,
+  a follow again of the same being, and the window's move with its being take no chunk; resyncs at
+  most every 2 s,
   `resync_too_soon` and `unknown_being` with no strike; and the answers to a lagging client
   coalesced and sent first once it drains.
 - `presentation-backpressure.test.ts` (plan tests 7b and 13 in process): exactly 256 KiB buffered

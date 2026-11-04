@@ -230,10 +230,12 @@ describe("a client's message", () => {
     expect(presentation.telemetry().strikes).toBe(2);
   });
 
-  test("the follow window moving with its being takes nothing from the bucket of new chunks", () => {
+  test("a window the interest holds, and the window moving with its being, take nothing from the bucket of new chunks", () => {
     const { presentation, client, advance, id } = served();
     const before = client.messages.length;
-    // The follow takes 9 of the 64 chunks. The clock never moves: none comes back.
+    // The follow takes 9 of the 64 chunks, and the same follow again none: the interest holds its
+    // window. The clock never moves: no chunk comes back.
+    send(presentation, id, { type: "follow", being: 1 });
     send(presentation, id, { type: "follow", being: 1 });
     // The being crosses into the chunk (1, 0), and its window moves with it, three chunks east.
     advance({ set: [being(1, [37, 5])] });
