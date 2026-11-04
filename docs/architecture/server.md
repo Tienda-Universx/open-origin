@@ -868,7 +868,10 @@ It behaves as ADR 0026 asks of a client:
 
 - On each connection it sends `subscribe` and, when asked, `follow`: the server keeps no session.
 - After an anomaly the reducer reports, it sends `resync`, at most once every 2 s
-  (`RESYNC_INTERVAL_MS`); the reducer keeps the old view, marked stale, until the reset.
+  (`RESYNC_INTERVAL_MS`); the reducer keeps the old view, marked stale, until the reset. The server
+  measures the 2 s between the times it receives two resyncs, which the network's jitter can bring
+  under 2 s though the probe sent them 2 s apart: after `resync_too_soon`, the probe asks again
+  once its own 2 s allow.
 - A connection that does not open, or hears nothing, for 3 s (`STALE_AFTER_MS`) is given up. It
   then reconnects, as after a close, with `reconnectDelayMs`: 0.5 s to 1 s at first, doubling up to
   30 s, and at least 5 s after an HTTP 503, which Bun's client reports only in the text of its
@@ -889,6 +892,8 @@ text is not the probe's only defense.
 line feed, U+202E, U+2028, U+200D, a lone surrogate, a tag, and a backslash), at both ends of
 every range of `FORBIDDEN_CODE_POINTS` and of the surrogates, and just outside them; the arguments; the backoff, 7.5 s after a 503 at the test's draw of 0.5, and
 its reset at `hello`; a socket given up that cannot act; the silence of 3 s; one `resync` per 2 s;
+a resync the server, a presentation in the test's process, refuses at 1.999999 s by its clock,
+asked again at 2 s by the probe's and not 1 ms sooner, and the view current again after the reset;
 frames the schema refuses; an `error`, shown at once; and `stop`. Then a probe connects over a real socket to a presentation
 of a model world in the test's process and prints two commits: the clock, the followed being, the
 nine chunks of its window, a greeting in the feed, and speech holding `<script>` shown as text.

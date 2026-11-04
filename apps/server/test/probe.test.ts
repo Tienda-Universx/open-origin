@@ -3,8 +3,9 @@
  * point a terminal would act on as `\u{…}`, so a hostile text can neither clear the screen nor
  * reorder a line; its arguments are checked with the protocol's rules; it reconnects with the
  * protocol's backoff, gives up a silent connection, resyncs after an anomaly at most once every 2 s,
- * and sends its camera and followed being again on every connection; and, against a server in this
- * process on a free loopback port, it prints each commit's clock, view, speech, and feed.
+ * asks again for a resync the server refused as too soon, and sends its camera and followed being
+ * again on every connection; and, against a server in this process on a free loopback port, it
+ * prints each commit's clock, view, speech, and feed.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import {
@@ -41,6 +42,7 @@ import {
   ModelWorld,
   plain,
   presentationOver,
+  rethrow,
   WORLD_ID,
 } from "./support/presentation.ts";
 import { CountingPort, LOOPBACK, until } from "./support/sockets.ts";
@@ -315,6 +317,66 @@ describe("the probe's connection", () => {
     link.socket.events.message(frameText(statusFrame(3, "running"), 5));
     expect(resyncs()).toBe(2);
     expect(probe.counts).toMatchObject({ anomalies: 2, resyncs: 2 });
+  });
+
+  test("asks again for a resync the server refused as too soon, once its own 2 s allow, and the view recovers through a reset", () => {
+    const { presentation, clock, advance } = presentationOver(
+      new ModelWorld(0, [being(1, [3, 3])]),
+    );
+    const link = new FakeLink();
+    const probe = new Probe({ ...OPTIONS, chunks: [[0, 0]], follow: null }, link.deps);
+    probe.start();
+    const socket = link.socket;
+    // The server's side of the socket, which loses the frames the test says it loses.
+    let lose = 0;
+    const id = presentation.connect({
+      send: (frame) => {
+        if (lose > 0) lose -= 1;
+        else socket.events.message(frame);
+      },
+      buffered: () => 0,
+      end: rethrow,
+    });
+    let delivered = 0;
+    /** The server receives what the probe sent since the last delivery. */
+    const deliver = () => {
+      for (const text of socket.sent.slice(delivered)) presentation.receive(id, text);
+      delivered = socket.sent.length;
+    };
+    /** A frame is lost: the next one shows a gap, and the probe sends `resync`. */
+    const gap = () => {
+      lose = 1;
+      advance();
+      advance();
+      deliver();
+    };
+    const resyncs = () => socket.sent.filter((text) => text === '{"type":"resync"}').length;
+    socket.events.open();
+    deliver();
+    advance();
+    expect(probe.state.stale).toBe(false);
+    // At 10 s on both clocks, a resync the server allows.
+    link.time = 10_000;
+    clock.advance(10_000_000);
+    gap();
+    advance();
+    expect([resyncs(), probe.state.stale]).toEqual([1, false]);
+    // 2 s later by the probe's clock, but 1.999999 s by the server's, which refuses it.
+    link.time = 12_000;
+    clock.advance(1_999_999);
+    gap();
+    expect([resyncs(), probe.counts.errors, probe.state.stale]).toEqual([2, 1, true]);
+    // The probe asks again once its own interval allows, and not before.
+    link.time = 13_999;
+    advance();
+    expect(resyncs()).toBe(2);
+    link.time = 14_000;
+    clock.advance(2_000_001);
+    advance();
+    deliver();
+    advance();
+    expect([resyncs(), probe.counts.resyncs, probe.state.stale]).toEqual([3, 3, false]);
+    expect(probe.counts.errors).toBe(1);
   });
 
   test("shows at once the code of the last error the server sent", () => {

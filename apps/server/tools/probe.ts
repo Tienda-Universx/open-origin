@@ -14,10 +14,11 @@
  * feed. `--follow` follows a being. `--commits` exits after that many commits.
  *
  * It behaves as ADR 0026 asks of a client: after an anomaly it sends `resync`, at most once every
- * RESYNC_INTERVAL_MS; after STALE_AFTER_MS without a message, or when the socket closes, it
- * reconnects with the protocol's backoff (`reconnectDelayMs`), at least 5 s after an HTTP 503, and
- * sends its `subscribe` and `follow` again, since the server keeps no session. Ctrl-C (SIGINT) or
- * SIGTERM closes the socket and exits with 0; a bad argument exits with 2.
+ * RESYNC_INTERVAL_MS, and again after the server refuses one as too soon; after STALE_AFTER_MS
+ * without a message, or when the socket closes, it reconnects with the protocol's backoff
+ * (`reconnectDelayMs`), at least 5 s after an HTTP 503, and sends its `subscribe` and `follow`
+ * again, since the server keeps no session. Ctrl-C (SIGINT) or SIGTERM closes the socket and exits
+ * with 0; a bad argument exits with 2.
  */
 import {
   applyMessage,
@@ -359,7 +360,9 @@ export class Probe {
 
   /**
    * What `message` changes besides the view: a hello starts the backoff over and forgets a resync
-   * asked on the connection before; an anomaly asks for a resync; an error is counted and kept.
+   * asked on the connection before; an anomaly asks for a resync; an error is counted and kept, and
+   * `resync_too_soon` asks for the resync again: the server measures the interval when it receives
+   * each one, and the network's jitter can bring two resyncs sent 2 s apart under 2 s there.
    */
   #note(message: ServerMessage, anomaly: boolean): void {
     if (message.type === "hello") {
@@ -369,6 +372,7 @@ export class Probe {
     if (message.type === "error") {
       this.counts.errors += 1;
       this.#lastError = message.code;
+      if (message.code === "resync_too_soon") this.#wantResync = true;
     }
     if (!anomaly) return;
     this.counts.anomalies += 1;
