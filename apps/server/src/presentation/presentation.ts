@@ -314,18 +314,27 @@ export class Presentation {
     }
   }
 
-  /** Replaces the camera of `client`, already checked; its next transaction shows it. */
+  /**
+   * Replaces the camera of `client`, already checked; its next transaction shows it.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
+   */
   subscribe(client: ClientId, chunks: readonly ChunkCoord[]): void {
     this.#client(client);
     this.#interest.subscribe(client, chunks);
   }
 
-  /** Makes `client` follow `being`, or nothing for null; its next transaction shows it. */
+  /**
+   * Makes `client` follow `being`, or nothing for null; its next transaction shows it.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
+   */
   follow(client: ClientId, being: number | null): void {
     this.#follow(this.#client(client), being);
   }
 
-  /** The client asked for a resync: its next transaction is a reset. */
+  /**
+   * The client asked for a resync: its next transaction is a reset.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
+   */
   resync(client: ClientId): void {
     this.#client(client).view.needsReset = true;
   }
@@ -334,6 +343,7 @@ export class Presentation {
    * Cancels the transaction in flight of `client`, if any, which gets `abort` before anything else
    * and whose pins are released. With `releaseView`, the view's own pins go too, and its next
    * transaction is a reset: what the memory guard does to the clients it aborts.
+   * A test seam that bypasses the input limits; the transport uses only `receive`.
    */
   abort(client: ClientId, options: { readonly releaseView?: boolean } = {}): void {
     this.#abort(this.#client(client), options.releaseView === true);

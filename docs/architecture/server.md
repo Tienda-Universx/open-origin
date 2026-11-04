@@ -241,8 +241,8 @@ ticks, which delivers the boot record first; `readTerrain`; and the world's stat
 of the world but those frozen C0 records and that state, which every client shares, and no network:
 the transport of T6-7 drives it through `connect(sink)`, `receive(client, text)` for each raw text
 message, `drained(client)` when a socket's buffer drains, and `close(client)` when a socket closes.
-`subscribe`, `follow`, `resync`, and `abort` act on a client directly, for tests; the transport
-never calls them.
+`subscribe`, `follow`, `resync`, and `abort` act on a client directly, for tests, past the input
+limits; the transport never calls them.
 
 A sink is `{send(frame), buffered(), end(ending)}`. `buffered()` is the bytes the client's socket
 holds and has not written, Bun's `getBufferedAmount()`. `end` closes the connection, once: the
