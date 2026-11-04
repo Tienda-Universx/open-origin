@@ -631,8 +631,9 @@ only. Its options are the presentation, the address and port to bind (0 lets the
 - **HTTP.** `http.ts` routes each request with a pure function, `route(facts, policy)`: the order
   of its checks and its answers are the protocol's [HTTP surface](protocol.md#http-surface).
   `capacity.ts` holds the caps: an upgrade takes a slot, in all and for its address, which
-  `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes.
-  Bun runs the open handler within `upgrade`, so two upgrades never pass a cap together.
+  `server.requestIP` gives, before Bun upgrades it, and the slot goes back when its socket closes,
+  or at once when `upgrade` returns false or throws, since no socket opened. Bun runs the open
+  handler within `upgrade`, so two upgrades never pass a cap together.
   `REQUEST_OPTIONS`, spread last into `Bun.serve`'s options, sets `maxRequestBodySize` to 0: the
   listener reads no body, so Bun answers a `Content-Length` above 0 with its own 413 before the
   listener sees the request, without waiting for the body. In Bun, 0 means no body, not no limit.
@@ -683,7 +684,8 @@ world, driven period by period:
 - an `Origin` matched exactly and its absence accepted; a `Host` refused on every path and method;
 - 503 with `Retry-After` at the cap of one address, with a second address, 127.0.0.2, still
   admitted, and at the global cap, until a socket closes; a client that leaves in the middle of
-  its handshake gives its slot back;
+  its handshake gives its slot back, and so does an upgrade that throws, which only a double of
+  Bun's server, given to the exported `Listener`, can plant;
 - the close codes 1003, 1009 (a frame of 4,096 bytes passes), 1008, 1011 (a planted terrain fault,
   a `connect` that throws, and a `receive` that throws), and 1001; a close that releases the client
   unless the presentation ended it; and logs that hold no address and nothing a client sent;

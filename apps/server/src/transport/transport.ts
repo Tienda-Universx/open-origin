@@ -110,6 +110,9 @@ type Connection = { readonly ip: string; client: ClientId | undefined; ended: bo
 type Socket = Bun.ServerWebSocket<Connection>;
 type Server = Bun.Server<Connection>;
 
+/** What the listener uses of Bun's server while it answers a request. */
+type RequestServer = Pick<Server, "port" | "requestIP" | "upgrade">;
+
 /** The close code of `ending`: its own, or FAULT_CLOSE for a fault. */
 export function closeCodeOf(ending: Ending): number {
   return ending.reason === "fault" ? FAULT_CLOSE : ending.code;
@@ -120,8 +123,11 @@ function nameOf(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }
 
-/** The listener's state between Bun's callbacks: its caps and its policy. */
-class Listener {
+/**
+ * The listener's state between Bun's callbacks: its caps and its policy. Exported for tests, which
+ * drive `answer` with a double of Bun's server where Bun's own cannot be made to fail.
+ */
+export class Listener {
   readonly #options: TransportOptions;
   readonly #presentation: PresentationPort;
   readonly #capacity: Capacity;
@@ -138,7 +144,7 @@ class Listener {
   }
 
   /** Answers `request`: the health check, an upgrade, or a refusal. */
-  readonly answer = (request: Request, server: Server): Response | undefined => {
+  readonly answer = (request: Request, server: RequestServer): Response | undefined => {
     const routed = route(factsOf(request), this.#policyOf(server));
     if (routed.kind === "health") return healthy();
     if (routed.kind === "refuse") return this.#refuse(routed.reason);
@@ -167,7 +173,7 @@ class Listener {
   }
 
   /** The policy of the listener, whose default hosts need the port it bound. */
-  #policyOf(server: Server): Policy {
+  #policyOf(server: RequestServer): Policy {
     if (this.#policy !== undefined) return this.#policy;
     const { allowedHosts, hostname, publicOrigins } = this.#options;
     const port = server.port;
@@ -181,19 +187,26 @@ class Listener {
     return refusal(reason);
   }
 
-  /** Takes a slot for the request's address and upgrades it, or refuses it. */
-  #upgrade(request: Request, server: Server): Response | undefined {
+  /**
+   * Takes a slot for the request's address and upgrades it, or refuses it. A socket that opened
+   * gives its slot back when it closes; an upgrade that returns false or throws opened none, so its
+   * slot goes back here. Bun runs the open handler within `upgrade`, and returns true for a socket
+   * it opened even when that handler threw and the socket closed at once.
+   */
+  #upgrade(request: Request, server: RequestServer): Response | undefined {
     const ip = server.requestIP(request)?.address;
     if (ip === undefined) return this.#refuse("handshake");
     const full = this.#capacity.take(ip);
     if (full !== undefined) return this.#refuse(full === "global" ? "capacity" : "capacity_per_ip");
     const data: Connection = { ip, client: undefined, ended: false };
-    // Bun runs the open handler within upgrade; on failure nothing opened, so the slot goes back.
-    if (server.upgrade(request, { data, headers: { "Sec-WebSocket-Protocol": PROTOCOL_ID } })) {
-      return undefined;
+    const headers = { "Sec-WebSocket-Protocol": PROTOCOL_ID };
+    let upgraded = false;
+    try {
+      upgraded = server.upgrade(request, { data, headers });
+    } finally {
+      if (!upgraded) this.#capacity.release(ip);
     }
-    this.#capacity.release(ip);
-    return this.#refuse("handshake");
+    return upgraded ? undefined : this.#refuse("handshake");
   }
 
   /**

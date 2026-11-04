@@ -23,6 +23,7 @@ import { listenerHosts, policyOf, type RequestFacts, route } from "../src/transp
 import {
   closeCodeOf,
   FAULT_CLOSE,
+  Listener,
   type PresentationPort,
   SOCKET_OPTIONS,
   serveTransport,
@@ -514,6 +515,48 @@ describe("sockets", () => {
     expect([counting.closes, transport.connections()]).toEqual([[id], 0]);
     expect(logs).toContainEqual({ event: "handler_error", error: "Error" });
     expect(JSON.stringify(logs)).not.toContain("zq-canary");
+  });
+
+  test("give the slot back when the upgrade throws", () => {
+    const { presentation } = modelPresentation();
+    const logs: TransportEvent[] = [];
+    const listener = new Listener({
+      ...transportOptions(presentation, logs),
+      connections: { global: 1, perIp: 1 },
+    });
+    // A double of Bun's server, which Bun's own `upgrade` cannot be made to throw through.
+    const serverOf = (upgrade: () => boolean) => ({
+      port: 8080,
+      requestIP: () => ({ address: LOOPBACK, family: "IPv4" as const, port: 50_000 }),
+      upgrade,
+    });
+    const request = new Request(`http://${LOOPBACK}:8080/ws`, {
+      headers: {
+        Host: `${LOOPBACK}:8080`,
+        Upgrade: "websocket",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Protocol": PROTOCOL_ID,
+      },
+    });
+    const throwing = serverOf(() => {
+      throw new Error("a planted upgrade fault");
+    });
+    expect(() => listener.answer(request, throwing)).toThrow("a planted upgrade fault");
+    expect(listener.connections).toBe(0);
+    // The only slot is free: the next upgrade takes it, and the one after is refused.
+    expect(
+      listener.answer(
+        request,
+        serverOf(() => true),
+      ),
+    ).toBeUndefined();
+    expect([
+      listener.connections,
+      listener.answer(
+        request,
+        serverOf(() => true),
+      )?.status,
+    ]).toEqual([1, 503]);
   });
 
   test("give the slot back when a client goes in the middle of its handshake", async () => {
