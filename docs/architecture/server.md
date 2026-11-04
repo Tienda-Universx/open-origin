@@ -327,7 +327,7 @@ unless a correct client may meet the code too: `unknown_being`, after a being it
 `resync_too_soon`, after two anomalies close together. The third strike within 10 s ends the client
 with 1008 and no `error` for it. Both buckets are counted in whole microseconds on the injected
 clock, so every timing is exact: a message costs 100,000 µs of a bucket of 2,000,000, and a chunk
-31,250 µs of a bucket of 2,000,000. A message the schema refuses takes no token; every other one
+31,250 µs of a bucket of 2,281,250, 73 chunks. A message the schema refuses takes no token; every other one
 takes a token of the bucket of messages whatever its outcome, so a refusal that earns no strike is
 still paced; a `subscribe` or a `follow` the bucket of chunks refuses takes no chunk and changes
 nothing. A strike counts while it is younger than 10 s, and a resync waits 2 s from the last one
@@ -777,9 +777,10 @@ world is the default world of T5, a new one with a new id at every start; a clie
 3. It wires `composeServer` with the real clock and timer of `src/adapters/` (tests may give fake
    ones, a source, its projection, a journal, or a server of their own, `serverOf`) and the
    transport. A throw while composing the server, before anything is bound, is logged as
-   `start_failed` with `stage: "compose"` and the error's name, and returned as the cause. A port
-   it cannot bind is logged as `listen_failed` with the error's code (`EADDRINUSE`) and no message,
-   and the composed server is stopped, a stop that fails logged as `stop_failed`.
+   `start_failed` with `stage: "compose"`, the error's name, and its message, which composition takes
+   only from the configuration and the scenario, never from a client, and returned as the cause. A
+   port it cannot bind is logged as `listen_failed` with the error's code (`EADDRINUSE`) and no
+   message, and the composed server is stopped, a stop that fails logged as `stop_failed`.
 4. It starts the server. When that throws once the listener bound, it logs `start_failed` with the
    error's name and the port it bound, then stops the transport and the server, logging each stop
    that fails as `stop_failed` with its part and the error's name, and returns the start's error as

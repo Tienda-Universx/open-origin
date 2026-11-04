@@ -118,6 +118,11 @@ function nameOf(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }
 
+/** The message of a thrown Error, or its type's name for anything else. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : typeof error;
+}
+
 /** The string code a thrown value carries, such as EADDRINUSE, or "unknown". */
 function codeOf(error: unknown): string {
   const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
@@ -208,7 +213,14 @@ export async function start(env: Environment, log: Log, deps: EntryDeps = {}): P
   try {
     server = (deps.serverOf ?? composeServer)(config, serverDeps(deps));
   } catch (cause) {
-    log({ event: "start_failed", stage: "compose", error: nameOf(cause) });
+    // Composition reads only the configuration and the scenario, never a client's input, so its
+    // message is safe to log and the operator needs it to act.
+    log({
+      event: "start_failed",
+      stage: "compose",
+      error: nameOf(cause),
+      message: messageOf(cause),
+    });
     return { ok: false, reason: "compose", cause };
   }
   const stopServer: Part = ["server", () => server.stop()];

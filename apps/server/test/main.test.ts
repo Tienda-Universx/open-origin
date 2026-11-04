@@ -219,7 +219,14 @@ describe("start", () => {
       },
     });
     expect(result).toEqual({ ok: false, reason: "compose", cause: fault });
-    expect(logs).toEqual([{ event: "start_failed", stage: "compose", error: "Error" }]);
+    expect(logs).toEqual([
+      {
+        event: "start_failed",
+        stage: "compose",
+        error: "Error",
+        message: "a planted compose fault",
+      },
+    ]);
   });
 
   test("stops the composed server when the port cannot be bound, though its stop rejects", async () => {
@@ -419,7 +426,14 @@ describe("main", () => {
       },
     });
     expect([unbuilt.host.lines, unbuilt.host.exits]).toEqual([
-      [{ event: "start_failed", stage: "compose", error: "Error" }],
+      [
+        {
+          event: "start_failed",
+          stage: "compose",
+          error: "Error",
+          message: "a planted compose fault",
+        },
+      ],
       [],
     ]);
     unbuilt.host.flush();
