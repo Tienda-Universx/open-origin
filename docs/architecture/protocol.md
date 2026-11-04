@@ -91,8 +91,9 @@ that applies:
 
 The server then holds each message to the client's limits, in this order: the bucket of messages
 (`messagesPerSecond` with a burst of `burst`), and the bucket of new chunks (`newChunksPer2s` every
-2 s): for a `subscribe`, the chunks new to the camera, and for a `follow`, the chunks the followed
-being's window adds to the interest. The window's moves with its being take nothing from it. A
+2 s, holding at most a full view, `maxChunks` + `maxFollowChunks`, so a camera and a follow sent
+together fit at once): for a `subscribe`, the chunks new to the camera, and for a `follow`, the
+chunks the followed being's window adds to the interest. The window's moves with its being take nothing from it. A
 message the schema refuses takes no token. Every other message takes one from the bucket of
 messages, whatever its outcome, so even a refusal that earns no strike, such as `unknown_being` or
 `resync_too_soon`, cannot repeat faster than that bucket allows; a `subscribe` or a `follow` the

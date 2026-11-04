@@ -311,7 +311,9 @@ to text frames, and applies, in order:
 1. `parseClientMessage`: `JSON.parse` in a try, then the strict schema, which rejects `__proto__`,
    extra keys, and every type but the four;
 2. the bucket of messages, 10 a second with a burst of 20;
-3. the bucket of new chunks, 64 every 2 s: for a `subscribe`, the chunks new to the camera; for a
+3. the bucket of new chunks, 64 every 2 s, which holds a full view, 73 chunks (a camera and a follow
+   window), so a reconnecting client's `subscribe` and `follow` pass at once: for a `subscribe`, the
+   chunks new to the camera; for a
    `follow` of a being the mirror holds, the chunks its window adds to the effective interest. The
    window's moves with the followed being, which the client did not ask for, take nothing from it:
    the terrain's budget bounds them;
@@ -548,7 +550,8 @@ with the strict schema.
   no byte of its input, and a strike; a strike 10 s old no longer counting, a third strike exactly
   10 s after the first closing nothing, and a third strike within 9.999999 s closing with 1008 and
   no `error`; 20 messages at once, then one at 100 ms and none at 99.999 ms, and 20 at most after a
-  minute idle; no token taken by a message the schema rejects; 64 new chunks, then one at 31.25 ms;
+  minute idle; no token taken by a message the schema rejects; a full view of 73 new chunks at once,
+  then one at 31.25 ms; a full camera and a follow outside it at once;
   follows alternating between beings 10 chunks apart refused once their windows spent the bucket,
   with nothing changed, and passed again 250 ms later, not 1 µs sooner, while a follow of nothing,
   a follow again of the same being, and the window's move with its being take no chunk; resyncs at
