@@ -50,7 +50,7 @@ naming the variable and its rule, never its value.
 | `TICK_RATE_HZ` | `5` | An integer from 1 to 1000, the bounds of the admin contract's `tickRateHz` |
 | `PUBLICATION_BATCH_TICKS` | `5` | F, an integer from 1 to 300, so a batch never spans more than one checkpoint interval |
 | `PUBLIC_ORIGINS` | empty | A comma-separated list of exact `http` or `https` origins |
-| `ALLOWED_HOSTS` | The listener's own: `localhost:<port>` and `<host>:<port>` at the port it bound, with an IPv6 host in brackets; the transport derives it once it listens, so port 0 works | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
+| `ALLOWED_HOSTS` | The listener's own: `localhost:<port>` and `<host>:<port>` at the port it bound, with an IPv6 host in brackets, and at port 80 `localhost` and `<host>` too, which a client sends there; the transport derives it once it listens, so port 0 works | A non-empty comma-separated list of `Host` header values, each port from 1 to 65535. An empty list, which would let no `Host` header through, is refused; unset, the default applies |
 | `MAX_CONNECTIONS` | `1024` | An integer from 1 to 65536 |
 | `MAX_CONNECTIONS_PER_IP` | `16`, or `MAX_CONNECTIONS` when that is lower | An integer from 1 to 65536; when set, at most `MAX_CONNECTIONS`, compared only when both are valid, so a cap at fault is reported alone |
 | `MAX_RETAINED_BYTES` | `134217728` (128 MiB) | The limit of replaced chunk versions clients keep pinned, in all: an integer from 1,048,576 (1 MiB) to 17,179,869,184 (16 GiB) |
@@ -673,7 +673,8 @@ the server's warning at start says.
 `transport.test.ts` runs the listener on a free loopback port over a presentation of a model
 world, driven period by period:
 
-- `route` on a table of cases, the `Host` before the method among them, and `Capacity` on its own;
+- `route` on a table of cases, the `Host` before the method among them; the default `Host` list,
+  which at port 80 alone allows the name and address without the port; and `Capacity` on its own;
 - the health check, 404 with no CORS header, Bun's 413 for a `Content-Length` of 1 or 1 GB with
   none of the body sent, which the listener never sees, while an empty body and a chunked one pass
   to it, 426 before the upgrade, and the listener's own 426

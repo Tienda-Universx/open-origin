@@ -110,8 +110,8 @@ describe("route", () => {
     protocols: PROTOCOL_ID,
     version: "13",
   };
-  const routeOf = (facts: Partial<RequestFacts>): string => {
-    const routed = route({ ...socket, ...facts }, policy);
+  const routeOf = (facts: Partial<RequestFacts>, under = policy): string => {
+    const routed = route({ ...socket, ...facts }, under);
     return routed.kind === "refuse" ? routed.reason : routed.kind;
   };
 
@@ -154,6 +154,22 @@ describe("route", () => {
   test("allows the listener's own name and address at its port when no Host list is given", () => {
     expect(listenerHosts("127.0.0.1", 9000)).toEqual(["localhost:9000", "127.0.0.1:9000"]);
     expect(listenerHosts("::1", 9000)).toEqual(["localhost:9000", "[::1]:9000"]);
+  });
+
+  test("allows them without the port too at port 80, which a client leaves out of its Host", () => {
+    expect(listenerHosts("127.0.0.1", 80)).toEqual([
+      "localhost:80",
+      "127.0.0.1:80",
+      "localhost",
+      "127.0.0.1",
+    ]);
+    expect(listenerHosts("::1", 80)).toEqual(["localhost:80", "[::1]:80", "localhost", "[::1]"]);
+    const routed = (host: string, port: number) =>
+      routeOf({ host }, policyOf(listenerHosts("127.0.0.1", port), []));
+    const bare = ["localhost", "LOCALHOST", "127.0.0.1"];
+    expect(bare.map((host) => routed(host, 80))).toEqual(["socket", "socket", "socket"]);
+    expect(bare.map((host) => routed(host, 8080))).toEqual(["host", "host", "host"]);
+    expect(routed("localhost:8080", 80)).toBe("host");
   });
 });
 

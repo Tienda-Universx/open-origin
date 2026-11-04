@@ -60,7 +60,9 @@ request in this order, and the first refusal wins:
 
 No answer carries a CORS header, and none repeats what the request sent: each refusal has a fixed
 text. The allowlist of `Host` is `ALLOWED_HOSTS`, or, unset, the listener's own name and address at
-the port it bound (`localhost:<port>` and `<host>:<port>`), compared whatever their case.
+the port it bound (`localhost:<port>` and `<host>:<port>`), compared whatever their case. At port 80
+they are allowed without the port too (`localhost` and `<host>`), since a client names the port only
+when it is not the default (RFC 6455, 4.1); the listener has no TLS, so 443 has no such case.
 
 ## Client to server
 

@@ -122,10 +122,18 @@ export function policyOf(hosts: readonly string[], origins: readonly string[]): 
   };
 }
 
-/** The `Host` values of a listener bound to `hostname` and `port`: its name and its address. */
+/** The port a client leaves out of `Host`: http's and ws's default. The listener has no TLS. */
+const DEFAULT_PORT = 80;
+
+/**
+ * The `Host` values of a listener bound to `hostname` and `port`: its name and its address at the
+ * port, and, at port 80, without it too: a client names the port only when it is not the default
+ * (RFC 6455, 4.1).
+ */
 export function listenerHosts(hostname: string, port: number): string[] {
-  const address = hostname.includes(":") ? `[${hostname}]` : hostname;
-  return [`localhost:${port}`, `${address}:${port}`];
+  const names = ["localhost", hostname.includes(":") ? `[${hostname}]` : hostname];
+  const atPort = names.map((name) => `${name}:${port}`);
+  return port === DEFAULT_PORT ? [...atPort, ...names] : atPort;
 }
 
 /** Whether the comma-separated `header` lists `token`, compared as `normalize` makes them. */
