@@ -311,10 +311,14 @@ to text frames, and applies, in order:
 1. `parseClientMessage`: `JSON.parse` in a try, then the strict schema, which rejects `__proto__`,
    extra keys, and every type but the four;
 2. the bucket of messages, 10 a second with a burst of 20;
-3. for a `subscribe`, the bucket of chunks new to the camera, 64 every 2 s;
+3. the bucket of new chunks, 64 every 2 s: for a `subscribe`, the chunks new to the camera; for a
+   `follow` of a being the mirror holds, the chunks its window adds to the effective interest. The
+   window's moves with the followed being, which the client did not ask for, take nothing from it:
+   the terrain's budget bounds them;
 4. the message itself: `subscribe` replaces the camera; `follow` of a being the mirror does not hold
-   is `unknown_being`; `ping` gets `pong{nonce}`; `resync` within 2 s of the last one allowed is
-   `resync_too_soon`, and otherwise makes the next transaction a reset.
+   is `unknown_being`, checked before the bucket of new chunks; `ping` gets `pong{nonce}`; `resync`
+   within 2 s of the last one allowed is `resync_too_soon`, and otherwise makes the next transaction
+   a reset.
 
 A rejected message gets `error{code}`, the code alone, never anything of the input, and a strike,
 unless a correct client may meet the code too: `unknown_being`, after a being it saw died, and
@@ -323,8 +327,9 @@ with 1008 and no `error` for it. Both buckets are counted in whole microseconds 
 clock, so every timing is exact: a message costs 100,000 µs of a bucket of 2,000,000, and a chunk
 31,250 µs of a bucket of 2,000,000. A message the schema refuses takes no token; every other one
 takes a token of the bucket of messages whatever its outcome, so a refusal that earns no strike is
-still paced; a `subscribe` the bucket of chunks refuses takes no chunk. A strike counts
-while it is younger than 10 s, and a resync waits 2 s from the last one allowed.
+still paced; a `subscribe` or a `follow` the bucket of chunks refuses takes no chunk and changes
+nothing. A strike counts while it is younger than 10 s, and a resync waits 2 s from the last one
+allowed.
 
 ### Send budget and backpressure
 
@@ -543,7 +548,10 @@ with the strict schema.
   no byte of its input, and a strike; a strike 10 s old no longer counting, a third strike exactly
   10 s after the first closing nothing, and a third strike within 9.999999 s closing with 1008 and
   no `error`; 20 messages at once, then one at 100 ms and none at 99.999 ms, and 20 at most after a
-  minute idle; no token taken by a message the schema rejects; 64 new chunks, then one at 31.25 ms; resyncs at most every 2 s,
+  minute idle; no token taken by a message the schema rejects; 64 new chunks, then one at 31.25 ms;
+  follows alternating between beings 10 chunks apart refused once their windows spent the bucket,
+  with nothing changed, and passed again 250 ms later, not 1 µs sooner, while a follow of nothing
+  and the window's move with its being take no chunk; resyncs at most every 2 s,
   `resync_too_soon` and `unknown_being` with no strike; and the answers to a lagging client
   coalesced and sent first once it drains.
 - `presentation-backpressure.test.ts` (plan tests 7b and 13 in process): exactly 256 KiB buffered

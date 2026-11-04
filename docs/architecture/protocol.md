@@ -87,15 +87,17 @@ that applies:
 | `bad_message` | Any other problem: an extra key (`__proto__` and `constructor` included), a wrong type, a fraction, an unsafe integer, a repeated chunk |
 
 The server then holds each message to the client's limits, in this order: the bucket of messages
-(`messagesPerSecond` with a burst of `burst`), and, for a `subscribe`, the bucket of chunks new to
-the camera (`newChunksPer2s` every 2 s). A message the schema refuses takes no token. Every other
-message takes one from the bucket of messages, whatever its outcome, so even a refusal that earns no
-strike, such as `unknown_being` or `resync_too_soon`, cannot repeat faster than that bucket allows;
-a `subscribe` the bucket of chunks refuses takes no chunk from it. It answers:
+(`messagesPerSecond` with a burst of `burst`), and the bucket of new chunks (`newChunksPer2s` every
+2 s): for a `subscribe`, the chunks new to the camera, and for a `follow`, the chunks the followed
+being's window adds to the interest. The window's moves with its being take nothing from it. A
+message the schema refuses takes no token. Every other message takes one from the bucket of
+messages, whatever its outcome, so even a refusal that earns no strike, such as `unknown_being` or
+`resync_too_soon`, cannot repeat faster than that bucket allows; a `subscribe` or a `follow` the
+bucket of chunks refuses takes no chunk from it and changes nothing. It answers:
 
 | Code | When |
 |---|---|
-| `rate_limited` | A message beyond the bucket of messages, or a `subscribe` whose chunks new to the camera are beyond theirs |
+| `rate_limited` | A message beyond the bucket of messages, or a `subscribe` or a `follow` whose new chunks are beyond theirs |
 | `unknown_being` | A `follow` of a being the world the server plays out does not hold |
 | `resync_too_soon` | A `resync` less than 2 s after the last one the server allowed |
 
