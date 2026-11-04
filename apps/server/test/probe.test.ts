@@ -8,6 +8,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  type ChunkCoord,
   CLIENT_LIMITS,
   FORBIDDEN_CODE_POINTS,
   initialClientState,
@@ -460,7 +461,7 @@ describe("the probe against a server in this process", () => {
     const options = {
       url,
       chunks: [[0, 0]] as ChunkCoord[],
-      follow: undefined,
+      follow: null,
       commits: undefined,
     };
     let held = false;
