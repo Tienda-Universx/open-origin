@@ -21,9 +21,9 @@
     "test": "bun test --parallel --timeout 30000 --path-ignore-patterns=packages/agents/test/mind-evaluation.test.ts && bun test --timeout 30000 packages/agents/test/mind-evaluation.test.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
+    "@biomejs/biome": "2.6.4",
     "@types/bun": "1.4.4",
-    "oxlint": "1.88.0",
+    "oxlint": "1.90.0",
     "typescript": "7.0.2"
   }
 }
